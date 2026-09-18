@@ -1,0 +1,579 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
+import {
+  clientActor,
+  Harness,
+  makeHarness,
+  opsActor,
+  otherClientActor,
+  seedLine,
+  useControlledClock,
+} from "./testing/ready-to-ship-harness";
+
+describe("ReadyToShipService", () => {
+  let h: Harness;
+  let clock: ReturnType<typeof useControlledClock>;
+
+  beforeEach(() => {
+    clock = useControlledClock();
+    h = makeHarness();
+    // Line A = 1.5 containers, line B = 0.5 -> exactly 2 slots.
+    seedLine(h, {
+      id: "li-A",
+      piNumber: "100000001",
+      loadability: "100",
+      dispatchQty: "150",
+    });
+    seedLine(h, {
+      id: "li-B",
+      piNumber: "100000002",
+      loadability: "200",
+      dispatchQty: "100",
+    });
+  });
+
+  afterEach(() => clock.restore());
+
+  const containerId = (index: number) => h.containers.rows[index].id as string;
+
+  async function move(
+    piLineItemId: string,
+    index: number,
+    qty: number,
+    actor = clientActor,
+  ) {
+    clock.tick();
+    return h.service.move(
+      { piLineItemId, containerId: containerId(index), qty },
+      actor,
+    );
+  }
+
+  describe("getView", () => {
+    it("creates exactly totalPossibleContainers empty slots on the first visit, and none on the next", async () => {
+      const first = await h.service.getView(clientActor);
+
+      expect(first.totalPossibleContainers).toBe(2);
+      expect(first.containers.map((c) => c.label)).toEqual([
+        "Контейнер 1",
+        "Контейнер 2",
+      ]);
+      expect(
+        first.containers.every(
+          (c) => c.allocations.length === 0 && !c.isConfirmed,
+        ),
+      ).toBe(true);
+
+      await h.service.getView(clientActor);
+      expect(h.containers.rows).toHaveLength(2);
+    });
+
+    it("sizes the slot set from qty/loadability, not the stored (unreliable) load factor column", async () => {
+      // seedLine gives every line currentWeekDispatchLoadFactor = 99.9999.
+      const view = await h.service.getView(clientActor);
+
+      expect(view.totalPossibleContainers).toBe(2);
+    });
+
+    it("counts only this client's active lines that have a dispatch qty", async () => {
+      seedLine(h, {
+        id: "li-archived",
+        archived: true,
+        loadability: "100",
+        dispatchQty: "900",
+      });
+      seedLine(h, {
+        id: "li-other",
+        customerId: "cust-2",
+        loadability: "100",
+        dispatchQty: "900",
+      });
+      seedLine(h, { id: "li-zero", loadability: "100", dispatchQty: "0" });
+      seedLine(h, { id: "li-null", loadability: "100", dispatchQty: null });
+
+      const view = await h.service.getView(clientActor);
+
+      expect(view.totalPossibleContainers).toBe(2);
+      expect(view.unallocatedLines.map((l) => l.piLineItemId).sort()).toEqual([
+        "li-A",
+        "li-B",
+      ]);
+    });
+
+    it("keeps already-allocated quantity in the slot total but out of the remaining list", async () => {
+      await h.service.getView(clientActor);
+      await move("li-B", 0, 100);
+      const view = await move("li-A", 1, 60);
+
+      expect(view.totalPossibleContainers).toBe(2);
+      expect(view.unallocatedLines).toEqual([
+        expect.objectContaining({
+          piLineItemId: "li-A",
+          allocatedQty: 60,
+          remainingQty: 90,
+        }),
+      ]);
+    });
+
+    it("does not top up slots when the client already has containers", async () => {
+      await h.service.getView(clientActor);
+      h.containers.rows.pop();
+
+      const view = await h.service.getView(clientActor);
+
+      expect(view.containers).toHaveLength(1);
+    });
+
+    it("reports fill percent, overfill and the marking-file counter per container", async () => {
+      await h.service.getView(clientActor);
+      await move("li-A", 0, 100); // 1.0
+      const view = await move("li-B", 0, 100); // + 0.5 -> 1.5
+
+      const [first, second] = view.containers;
+      expect(first.fillPercent).toBe(150);
+      expect(first.isOverfilled).toBe(true);
+      expect(first.markingFilesTotal).toBe(2);
+      expect(first.markingFilesUploaded).toBe(0);
+      expect(second.fillPercent).toBe(0);
+      expect(view.canConfirm).toBe(false);
+    });
+
+    it("tolerates two first visits racing: the loser's unique violation is swallowed and the winner's slots are used", async () => {
+      h.containers.save.mockImplementationOnce(async () => {
+        h.containers.seed({
+          id: "won-1",
+          customer: { id: "cust-1" },
+          label: "Контейнер 1",
+          isConfirmed: false,
+        } as any);
+        h.containers.seed({
+          id: "won-2",
+          customer: { id: "cust-1" },
+          label: "Контейнер 2",
+          isConfirmed: false,
+        } as any);
+        throw Object.assign(new Error("duplicate key"), { code: "23505" });
+      });
+
+      const view = await h.service.getView(clientActor);
+
+      expect(view.containers.map((c) => c.id)).toEqual(["won-1", "won-2"]);
+    });
+
+    it("lets ops read any customer's view, but ops must name the customer", async () => {
+      await expect(h.service.getView(opsActor)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+
+      const view = await h.service.getView(opsActor, "cust-1");
+
+      expect(view.customerId).toBe("cust-1");
+      expect(view.unallocatedLines).toHaveLength(2);
+    });
+
+    it("404s a client who asks for another customer's view", async () => {
+      await expect(
+        h.service.getView(clientActor, "cust-2"),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("gives another client their own (empty) view, never this client's containers", async () => {
+      await h.service.getView(clientActor);
+
+      const view = await h.service.getView(otherClientActor);
+
+      expect(view.customerId).toBe("cust-2");
+      expect(view.containers).toEqual([]);
+      expect(view.unallocatedLines).toEqual([]);
+    });
+  });
+
+  describe("move", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+    });
+
+    it("creates an allocation and an undo-log entry", async () => {
+      await move("li-A", 0, 60);
+
+      expect(h.allocations.rows).toHaveLength(1);
+      expect(h.allocations.rows[0]).toMatchObject({
+        container: { id: containerId(0) },
+        piLineItem: { id: "li-A" },
+        allocatedQty: "60",
+      });
+      expect(h.actions.rows).toHaveLength(1);
+      expect(h.actions.rows[0]).toMatchObject({
+        deltaQty: "60",
+        customer: { id: "cust-1" },
+      });
+    });
+
+    it("adds to an existing allocation for the same container and line instead of making a second row", async () => {
+      await move("li-A", 0, 60);
+      await move("li-A", 0, 30);
+
+      expect(h.allocations.rows).toHaveLength(1);
+      expect(h.allocations.rows[0].allocatedQty).toBe("90");
+      expect(h.actions.rows).toHaveLength(2);
+    });
+
+    it("can split one line across containers", async () => {
+      await move("li-A", 0, 100);
+      await move("li-A", 1, 50);
+
+      expect(h.allocations.rows.map((a) => a.allocatedQty).sort()).toEqual([
+        "100",
+        "50",
+      ]);
+    });
+
+    it("allows moving into a container beyond 100% (confirm is what blocks it)", async () => {
+      await move("li-A", 0, 100);
+      const view = await move("li-B", 0, 100);
+
+      expect(view.containers[0].isOverfilled).toBe(true);
+    });
+
+    it("locks the line row so concurrent moves can't over-allocate it", async () => {
+      await move("li-A", 0, 10);
+
+      expect(h.lines.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: "pessimistic_write" } }),
+      );
+    });
+
+    it.each([
+      ["a fractional qty", 1.5],
+      ["zero", 0],
+      ["a negative qty", -5],
+      ["NaN", Number.NaN],
+    ])("rejects %s with 400 and writes nothing", async (_label, qty) => {
+      await expect(move("li-A", 0, qty)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(h.allocations.rows).toHaveLength(0);
+      expect(h.actions.rows).toHaveLength(0);
+    });
+
+    it("rejects more than the line's unallocated remainder, counting allocations in every container", async () => {
+      await move("li-A", 0, 100);
+
+      await expect(move("li-A", 1, 51)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(h.allocations.rows).toHaveLength(1);
+
+      await expect(move("li-A", 1, 50)).resolves.toBeDefined();
+    });
+
+    it("rejects a move into a confirmed container", async () => {
+      await move("li-A", 0, 100);
+      await h.service.confirm(clientActor);
+
+      await expect(move("li-B", 0, 10)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects a line with no usable loadability (its fill can't be computed)", async () => {
+      seedLine(h, { id: "li-noload", loadability: null, dispatchQty: "10" });
+
+      await expect(move("li-noload", 0, 5)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("rejects a line from an archived PI card", async () => {
+      seedLine(h, { id: "li-archived", archived: true, dispatchQty: "10" });
+
+      await expect(move("li-archived", 0, 5)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("404s another customer's line and another customer's container (not 403)", async () => {
+      seedLine(h, { id: "li-other", customerId: "cust-2", dispatchQty: "10" });
+      h.containers.seed({
+        id: "c-other",
+        customer: { id: "cust-2" },
+        label: "Контейнер 1",
+        isConfirmed: false,
+      } as any);
+
+      await expect(
+        h.service.move(
+          { piLineItemId: "li-other", containerId: containerId(0), qty: 1 },
+          clientActor,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        h.service.move(
+          { piLineItemId: "li-A", containerId: "c-other", qty: 1 },
+          clientActor,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        h.service.move(
+          { piLineItemId: "no-such-line", containerId: containerId(0), qty: 1 },
+          clientActor,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(h.allocations.rows).toHaveLength(0);
+    });
+
+    it("is client-only: ops is rejected with 403", async () => {
+      await expect(move("li-A", 0, 10, opsActor)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(h.allocations.rows).toHaveLength(0);
+    });
+  });
+
+  describe("undoLast", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+    });
+
+    it("rolls back only the newest move and removes its log entry", async () => {
+      await move("li-A", 0, 60);
+      await move("li-B", 1, 100);
+
+      const view = await h.service.undoLast(clientActor);
+
+      expect(h.actions.rows).toHaveLength(1);
+      expect(h.allocations.rows).toHaveLength(1);
+      expect(h.allocations.rows[0].piLineItem).toMatchObject({ id: "li-A" });
+      expect(
+        view.unallocatedLines.find((l) => l.piLineItemId === "li-B")
+          ?.remainingQty,
+      ).toBe(100);
+    });
+
+    it("decrements an allocation that has several moves, and deletes the row when it reaches zero", async () => {
+      await move("li-A", 0, 60);
+      await move("li-A", 0, 30);
+
+      await h.service.undoLast(clientActor);
+      expect(h.allocations.rows[0].allocatedQty).toBe("60");
+
+      await h.service.undoLast(clientActor);
+      expect(h.allocations.rows).toHaveLength(0);
+    });
+
+    it("404s when there is nothing to undo", async () => {
+      await expect(h.service.undoLast(clientActor)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("never undoes moves inside a confirmed container", async () => {
+      await move("li-A", 0, 100);
+      await h.service.confirm(clientActor);
+
+      await expect(h.service.undoLast(clientActor)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(h.allocations.rows).toHaveLength(1);
+    });
+
+    it("only sees this client's own actions", async () => {
+      await move("li-A", 0, 60);
+
+      await expect(h.service.undoLast(otherClientActor)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(h.allocations.rows).toHaveLength(1);
+    });
+
+    it("is client-only", async () => {
+      await expect(h.service.undoLast(opsActor)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe("undoAll", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+    });
+
+    it("rolls every move back, drops the emptied containers and recreates the full slot set", async () => {
+      const oldIds = h.containers.rows.map((c) => c.id);
+      await move("li-A", 0, 100);
+      await move("li-A", 1, 50);
+      await move("li-B", 1, 100);
+
+      const view = await h.service.undoAll(clientActor);
+
+      expect(h.allocations.rows).toHaveLength(0);
+      expect(h.actions.rows).toHaveLength(0);
+      expect(view.containers.map((c) => c.label)).toEqual([
+        "Контейнер 1",
+        "Контейнер 2",
+      ]);
+      expect(view.containers.some((c) => oldIds.includes(c.id))).toBe(false);
+      expect(view.unallocatedLines.map((l) => l.remainingQty).sort()).toEqual([
+        100, 150,
+      ]);
+    });
+
+    it("leaves confirmed containers alone and recreates only the missing slots", async () => {
+      await move("li-A", 0, 100); // C1 = 1.0
+      await h.service.confirm(clientActor); // C1 confirmed; C2 stays an empty draft
+      await move("li-A", 1, 50); // C2 = 0.5, draft
+
+      const view = await h.service.undoAll(clientActor);
+
+      // Total need is 2; one is confirmed, so exactly one draft slot comes
+      // back — numbered after the highest label still in use.
+      expect(view.containers.map((c) => [c.label, c.isConfirmed])).toEqual([
+        ["Контейнер 1", true],
+        ["Контейнер 2", false],
+      ]);
+      expect(h.allocations.rows).toHaveLength(1);
+      expect(h.allocations.rows[0].allocatedQty).toBe("100");
+    });
+
+    it("is a harmless no-op on an untouched plan", async () => {
+      const view = await h.service.undoAll(clientActor);
+
+      expect(view.containers).toHaveLength(2);
+    });
+
+    it("is client-only", async () => {
+      await expect(h.service.undoAll(opsActor)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe("confirm", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+    });
+
+    it("confirms every non-empty draft together, stamping who and when, and leaves empty slots unconfirmed", async () => {
+      await move("li-A", 0, 100);
+
+      const view = await h.service.confirm(clientActor);
+
+      const [first, second] = view.containers;
+      expect(first.isConfirmed).toBe(true);
+      expect(first.confirmedById).toBe(clientActor.id);
+      expect(first.confirmedAt).toEqual(new Date(Date.now()));
+      expect(second.isConfirmed).toBe(false);
+    });
+
+    it("refuses when any container is over 100%: 400 naming each one, nothing confirmed", async () => {
+      await move("li-A", 0, 100);
+      await move("li-B", 0, 100); // C1 = 150%
+      await move("li-A", 1, 50); // C2 = 50%, fine on its own
+
+      let error: BadRequestException | undefined;
+      await h.service.confirm(clientActor).catch((e) => (error = e));
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      const body = error!.getResponse() as any;
+      expect(body.overfilledContainers).toEqual([
+        expect.objectContaining({ label: "Контейнер 1", fillPercent: 150 }),
+      ]);
+      expect(body.message).toContain("Контейнер 1 (150%)");
+      expect(h.containers.rows.every((c) => !c.isConfirmed)).toBe(true);
+    });
+
+    it("counts exactly 100% as fine", async () => {
+      await move("li-A", 0, 100);
+
+      const view = await h.service.confirm(clientActor);
+
+      expect(view.containers[0]).toMatchObject({
+        isConfirmed: true,
+        fillPercent: 100,
+        isOverfilled: false,
+      });
+    });
+
+    it("saves the whole set in one write so it is all-or-nothing", async () => {
+      await move("li-A", 0, 100);
+      await move("li-B", 1, 100);
+      h.containers.save.mockClear();
+
+      await h.service.confirm(clientActor);
+
+      expect(h.containers.save).toHaveBeenCalledTimes(1);
+      expect(h.containers.save.mock.calls[0][0]).toHaveLength(2);
+    });
+
+    it("400s when there is nothing to confirm", async () => {
+      await expect(h.service.confirm(clientActor)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("is client-only", async () => {
+      await move("li-A", 0, 100);
+
+      await expect(h.service.confirm(opsActor)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe("unlock", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+      await move("li-A", 0, 100);
+      await move("li-B", 1, 100);
+      await h.service.confirm(clientActor);
+    });
+
+    it("unlocks only the named container and clears its confirmation stamp", async () => {
+      const result = await h.service.unlock(containerId(0), opsActor);
+
+      expect(result).toMatchObject({
+        id: containerId(0),
+        isConfirmed: false,
+        customerId: "cust-1",
+      });
+      expect(h.containers.rows[0]).toMatchObject({
+        isConfirmed: false,
+        confirmedAt: null,
+        confirmedBy: null,
+      });
+      expect(h.containers.rows[1].isConfirmed).toBe(true);
+    });
+
+    it("does not touch existing marking files by itself", async () => {
+      h.markings.seed({
+        id: "m-1",
+        allocation: { id: h.allocations.rows[0].id },
+      } as any);
+
+      await h.service.unlock(containerId(0), opsActor);
+
+      expect(h.markings.rows).toHaveLength(1);
+    });
+
+    it("is ops-only", async () => {
+      await expect(
+        h.service.unlock(containerId(0), clientActor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(h.containers.rows[0].isConfirmed).toBe(true);
+    });
+
+    it("404s an unknown container and 400s one that isn't confirmed", async () => {
+      await expect(h.service.unlock("nope", opsActor)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+
+      await h.service.unlock(containerId(0), opsActor);
+      await expect(
+        h.service.unlock(containerId(0), opsActor),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+});

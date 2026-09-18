@@ -36,7 +36,10 @@ async function buildBackorderFile(rows: unknown[][]): Promise<{
     sheet.addRow(row);
   }
   const arrayBuffer = await workbook.xlsx.writeBuffer();
-  return { originalname: "2907_MTK_ROSBERG_INR.xlsx", buffer: Buffer.from(arrayBuffer) };
+  return {
+    originalname: "2907_MTK_ROSBERG_INR.xlsx",
+    buffer: Buffer.from(arrayBuffer),
+  };
 }
 
 function row(piNumber: number, materialNum: string, overrides: unknown[] = []) {
@@ -68,6 +71,7 @@ describe("BackorderUploadsService", () => {
   let lineItemsRepo: ReturnType<typeof makeFakeRepo>;
   let customersService: { findFirst: jest.Mock };
   let filesService: { save: jest.Mock };
+  let allocationRelink: { relink: jest.Mock };
   let service: BackorderUploadsService;
 
   const opsActor: RequestUser = {
@@ -96,17 +100,22 @@ describe("BackorderUploadsService", () => {
     piRepo = makeFakeRepo();
     lineItemsRepo = makeFakeRepo();
     customersService = {
-      findFirst: jest.fn(async () => ({ id: "cust-1", name: "MTK ROSBERG LLC" })),
+      findFirst: jest.fn(async () => ({
+        id: "cust-1",
+        name: "MTK ROSBERG LLC",
+      })),
     };
     filesService = {
       save: jest.fn(async () => ({ id: "stored-file-1" })),
     };
+    allocationRelink = { relink: jest.fn(async () => undefined) };
     service = new BackorderUploadsService(
       backorderRepo as any,
       piRepo as any,
       lineItemsRepo as any,
       customersService as any,
       filesService as any,
+      allocationRelink as any,
     );
   });
 
@@ -150,7 +159,9 @@ describe("BackorderUploadsService", () => {
     expect(customersService.findFirst).not.toHaveBeenCalled();
     expect(upload.newCardsCreated).toBe(0);
     expect(upload.cardsUpdated).toBe(1);
-    expect(piRepo.rows.filter((r) => r.piNumber === "100037320")).toHaveLength(1);
+    expect(piRepo.rows.filter((r) => r.piNumber === "100037320")).toHaveLength(
+      1,
+    );
     // createdFrom of an already-existing card is never overwritten
     expect(piRepo.rows[0].createdFrom).toBe(PiCreatedFrom.PI_UPLOAD);
   });
@@ -162,13 +173,18 @@ describe("BackorderUploadsService", () => {
     ]);
     await service.upload(firstUploadFile as any, opsActor);
     const pi = piRepo.rows.find((r) => r.piNumber === "100037320")!;
-    expect(
-      lineItemsRepo.rows.filter((li) => li.pi.id === pi.id),
-    ).toHaveLength(2);
+    expect(lineItemsRepo.rows.filter((li) => li.pi.id === pi.id)).toHaveLength(
+      2,
+    );
 
     // Re-upload with only one of the two materials still open.
-    const secondUploadFile = await buildBackorderFile([row(100037320, "107071")]);
-    const secondUpload = await service.upload(secondUploadFile as any, opsActor);
+    const secondUploadFile = await buildBackorderFile([
+      row(100037320, "107071"),
+    ]);
+    const secondUpload = await service.upload(
+      secondUploadFile as any,
+      opsActor,
+    );
 
     expect(secondUpload.newCardsCreated).toBe(0);
     const finalLineItems = lineItemsRepo.rows.filter(
@@ -176,6 +192,56 @@ describe("BackorderUploadsService", () => {
     );
     expect(finalLineItems).toHaveLength(1);
     expect(finalLineItems[0].materialNum).toBe("107071");
+  });
+
+  it("re-points ready-to-ship allocations at the new rows before deleting the old ones, and leaves other cards' rows alone", async () => {
+    await service.upload(
+      (await buildBackorderFile([
+        row(100037320, "107071"),
+        row(100037321, "X-MAT"),
+      ])) as any,
+      opsActor,
+    );
+    const pi = piRepo.rows.find((r) => r.piNumber === "100037320")!;
+    const otherPi = piRepo.rows.find((r) => r.piNumber === "100037321")!;
+    const oldItem = lineItemsRepo.rows.find((li) => li.pi.id === pi.id)!;
+    const otherCardItem = lineItemsRepo.rows.find(
+      (li) => li.pi.id === otherPi.id,
+    )!;
+    allocationRelink.relink.mockClear();
+
+    // The relink must run while the old rows still exist — it's what lets
+    // the FK from allocations to line items survive the delete that follows.
+    allocationRelink.relink.mockImplementationOnce(
+      async (oldItems: any[], newItems: any[]) => {
+        expect(oldItems.map((i) => i.id)).toEqual([oldItem.id]);
+        expect(newItems).toHaveLength(1);
+        expect(newItems[0].id).not.toBe(oldItem.id);
+        expect(lineItemsRepo.rows.some((li) => li.id === oldItem.id)).toBe(
+          true,
+        );
+      },
+    );
+
+    await service.upload(
+      (await buildBackorderFile([
+        row(100037320, "107071"),
+        row(100037321, "X-MAT"),
+      ])) as any,
+      opsActor,
+    );
+
+    expect(allocationRelink.relink).toHaveBeenCalledTimes(2); // once per card in the file
+    expect(lineItemsRepo.rows.some((li) => li.id === oldItem.id)).toBe(false);
+    expect(lineItemsRepo.rows.some((li) => li.id === otherCardItem.id)).toBe(
+      false,
+    );
+    expect(lineItemsRepo.rows.filter((li) => li.pi.id === pi.id)).toHaveLength(
+      1,
+    );
+    expect(
+      lineItemsRepo.rows.filter((li) => li.pi.id === otherPi.id),
+    ).toHaveLength(1);
   });
 
   it("groups rows under the same PI into one card with multiple line items", async () => {
@@ -190,9 +256,9 @@ describe("BackorderUploadsService", () => {
     expect(upload.rowsProcessed).toBe(2);
     const pi = piRepo.rows.find((r) => r.piNumber === "100037320")!;
     expect(pi.totalQty).toBe("4"); // 2 rows x quantity 2
-    expect(
-      lineItemsRepo.rows.filter((li) => li.pi.id === pi.id),
-    ).toHaveLength(2);
+    expect(lineItemsRepo.rows.filter((li) => li.pi.id === pi.id)).toHaveLength(
+      2,
+    );
   });
 
   it("archives a card that drops out of a later upload, then un-archives it if it reappears", async () => {
@@ -219,9 +285,9 @@ describe("BackorderUploadsService", () => {
     expect(resultB.cardsArchived).toBe(1);
     expect(cardZ().isArchivedShipped).toBe(true);
     // X and Y are untouched by the archive sweep.
-    expect(piRepo.rows.find((r) => r.piNumber === "100037001")!.isArchivedShipped).toBe(
-      false,
-    );
+    expect(
+      piRepo.rows.find((r) => r.piNumber === "100037001")!.isArchivedShipped,
+    ).toBe(false);
 
     // Upload C: Z is back — un-archive it, don't re-count it as "new".
     const uploadC = await buildBackorderFile([
@@ -431,7 +497,8 @@ describe("BackorderUploadsService", () => {
         lineItems: [{ id: "li-2", materialNum: "CUST2-MAT" }],
       });
 
-      const { buffer: bufferForClient1 } = await service.exportXlsx(clientActor);
+      const { buffer: bufferForClient1 } =
+        await service.exportXlsx(clientActor);
       const workbookForClient1 = new ExcelJS.Workbook();
       await workbookForClient1.xlsx.load(bufferForClient1 as any);
       expect(extractColumn(workbookForClient1, "Material Num")).toEqual([
@@ -449,7 +516,10 @@ describe("BackorderUploadsService", () => {
   });
 });
 
-function extractColumn(workbook: ExcelJS.Workbook, headerLabel: string): unknown[] {
+function extractColumn(
+  workbook: ExcelJS.Workbook,
+  headerLabel: string,
+): unknown[] {
   const sheet = workbook.worksheets[0];
   const rows: unknown[][] = [];
   sheet.eachRow((row) => {

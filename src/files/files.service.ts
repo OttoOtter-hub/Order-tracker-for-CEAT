@@ -78,9 +78,26 @@ export class FilesService {
     if (actor.role !== Role.OPS) {
       await this.assertClientCanAccess(id, actor);
     }
+    return this.openFromDisk(file);
+  }
+
+  /**
+   * No access check at all — for callers that have already authorized the
+   * request against their own entity (e.g. a marking file, which
+   * assertClientCanAccess doesn't know about) and only need the bytes.
+   */
+  async openStoredFile(id: string): Promise<DownloadableFile> {
+    const file = await this.repo.findOne({ where: { id } });
+    if (!file) {
+      throw new NotFoundException(`File ${id} not found`);
+    }
+    return this.openFromDisk(file);
+  }
+
+  private openFromDisk(file: StoredFile): DownloadableFile {
     const fullPath = join(this.uploadDir, file.storageKey);
     if (!existsSync(fullPath)) {
-      throw new NotFoundException(`File ${id} not found on disk`);
+      throw new NotFoundException(`File ${file.id} not found on disk`);
     }
     return { file, stream: createReadStream(fullPath) };
   }

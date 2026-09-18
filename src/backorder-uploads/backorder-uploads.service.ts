@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { FindOptionsWhere, Repository } from "typeorm";
+import { FindOptionsWhere, In, Repository } from "typeorm";
 import { CustomersService } from "../customers/customers.service";
 import { FilesService } from "../files/files.service";
 import { RequestUser } from "../common/auth/request-user.interface";
@@ -9,6 +9,8 @@ import { User } from "../users/user.entity";
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { ProformaInvoice } from "../proforma-invoices/proforma-invoice.entity";
 import { PiCreatedFrom } from "../proforma-invoices/enums/pi-created-from.enum";
+import { lineItemKey } from "../pi-line-items/utils/line-item-key";
+import { AllocationRelinkService } from "../ready-to-ship/allocation-relink.service";
 import { BackorderUpload } from "./backorder-upload.entity";
 import { BackorderUploadResultDto } from "./dto/backorder-upload-result.dto";
 import {
@@ -25,22 +27,6 @@ function numToStr(value: number | null): string | null {
   return value === null ? null : String(value);
 }
 
-/**
- * Carries a client's priorityQty across a re-upload: old and new rows for
- * the same card are matched by (materialNum, soNumber) — the pair that
- * identifies "the same line" week to week, since line items have no other
- * stable id across uploads (they're deleted and recreated wholesale, see
- * upload() below). A single space joins the two fields into one map key;
- * good enough here since the two are compared as a pair either way and
- * this is only ever used to look itself back up, never parsed apart.
- */
-function lineItemKey(
-  materialNum: string | null,
-  soNumber: string | null,
-): string {
-  return `${materialNum ?? ""} ${soNumber ?? ""}`;
-}
-
 @Injectable()
 export class BackorderUploadsService {
   constructor(
@@ -52,6 +38,7 @@ export class BackorderUploadsService {
     private readonly lineItemsRepo: Repository<PiLineItem>,
     private readonly customersService: CustomersService,
     private readonly filesService: FilesService,
+    private readonly allocationRelink: AllocationRelinkService,
   ) {}
 
   findAll(): Promise<BackorderUpload[]> {
@@ -84,6 +71,12 @@ export class BackorderUploadsService {
    * may no longer be a valid quantity to prioritize — clamp down, never
    * leave it exceeding the row's own balance). A key with no match in the
    * old snapshot (new line, or the old one had priority 0) starts at 0.
+   *
+   * "Ready to ship" allocations reference line items by id, so the old rows
+   * can't just be deleted first: the new rows are saved, allocations are
+   * re-pointed at them by the same key (AllocationRelinkService), and only
+   * then are the old rows deleted — by id, not by card, since the new rows
+   * for the card already exist by that point.
    */
   async upload(
     file: Express.Multer.File,
@@ -99,7 +92,10 @@ export class BackorderUploadsService {
     // copy. Nothing currently reads this back (no download-original-file
     // endpoint was asked for) — it's a write-only audit trail for now.
     await this.filesService.save(
-      { ...file, originalname: stampDateOnFilename(file.originalname, uploadedAt) },
+      {
+        ...file,
+        originalname: stampDateOnFilename(file.originalname, uploadedAt),
+      },
       actor.id,
     );
 
@@ -144,12 +140,10 @@ export class BackorderUploadsService {
         );
       }
 
-      await this.lineItemsRepo.delete({ pi: { id: pi.id } });
       const lineItems = piRows.map((row) => {
         const newBalance = row.balanceToBeDelivered ?? 0;
         const carriedPriority =
-          oldPriorityByKey.get(lineItemKey(row.materialNum, row.soNumber)) ??
-          0;
+          oldPriorityByKey.get(lineItemKey(row.materialNum, row.soNumber)) ?? 0;
         const priorityQty = Math.min(carriedPriority, newBalance);
         return this.lineItemsRepo.create({
           pi,
@@ -168,7 +162,13 @@ export class BackorderUploadsService {
           priorityQty: String(priorityQty),
         });
       });
-      await this.lineItemsRepo.save(lineItems);
+      const savedLineItems = await this.lineItemsRepo.save(lineItems);
+      await this.allocationRelink.relink(oldLineItems, savedLineItems);
+      if (oldLineItems.length > 0) {
+        await this.lineItemsRepo.delete({
+          id: In(oldLineItems.map((old) => old.id)),
+        });
+      }
 
       const agg = computePiAggregates(piRows);
       pi.totalQty = String(agg.totalQty);

@@ -1,18 +1,53 @@
+import { FindOperator } from "typeorm";
+
 /**
  * Lightweight in-memory stand-in for a TypeORM Repository, used across
  * this project's service specs instead of a real DB or a heavy mocking
  * framework. Understands the `where` shapes those services actually use:
- * flat ({ id }, { piNumber }) and one level of relation nesting
- * ({ pi: { id } }).
+ * flat ({ id }, { piNumber }), nested relations ({ pi: { customer: { id } } })
+ * and the `In([...])` operator at any depth.
+ *
+ * Rows hold relations exactly as they were written (a service typically
+ * writes a bare `{ id }` reference). `relationRepos` lets a spec say which
+ * other fake repo backs a relation property; when a find/findOne asks for
+ * that property in `relations`, the returned copy has the bare reference
+ * replaced by the referenced row — what a real join would give. Only the
+ * first segment of a dotted path ("piLineItem.pi") is resolved; deeper
+ * levels are whatever the referenced row already embeds.
  */
-export function makeFakeRepo<
-  T extends { id?: string } & Record<string, any>,
->() {
+export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
+  relationRepos: Record<string, () => { rows: any[] }> = {},
+) {
   const rows: T[] = [];
   let nextId = 1;
 
+  function hydrate(row: T, relations?: string[]): T {
+    if (!relations?.length) {
+      return row;
+    }
+    const hydrated: Record<string, any> = { ...row };
+    for (const path of relations) {
+      const property = path.split(".")[0];
+      const target = relationRepos[property];
+      const reference = row[property];
+      if (target && reference?.id !== undefined) {
+        const resolved = target().rows.find((r) => r.id === reference.id);
+        if (resolved) {
+          hydrated[property] = resolved;
+        }
+      }
+    }
+    return hydrated as T;
+  }
+
   function matches(row: any, where: Record<string, any>): boolean {
     return Object.entries(where).every(([key, value]) => {
+      if (value instanceof FindOperator) {
+        if (value.type === "in") {
+          return (value.value as unknown[]).includes(row?.[key]);
+        }
+        throw new Error(`fake-repo: unsupported FindOperator "${value.type}"`);
+      }
       if (value && typeof value === "object" && !(value instanceof Date)) {
         return matches(row?.[key] ?? {}, value);
       }
@@ -41,12 +76,22 @@ export function makeFakeRepo<
       }
       return upsert(entityOrEntities);
     }),
-    findOne: jest.fn(async ({ where }: { where: Record<string, any> }) => {
-      return rows.find((r) => matches(r, where)) ?? null;
-    }),
+    findOne: jest.fn(
+      async ({
+        where,
+        relations,
+      }: {
+        where: Record<string, any>;
+        relations?: string[];
+      }) => {
+        const found = rows.find((r) => matches(r, where));
+        return found ? hydrate(found, relations) : null;
+      },
+    ),
     find: jest.fn(
       async (opts?: {
         where?: Record<string, any>;
+        relations?: string[];
         order?: Record<string, "ASC" | "DESC">;
         take?: number;
       }) => {
@@ -66,7 +111,7 @@ export function makeFakeRepo<
         if (opts?.take !== undefined) {
           result = result.slice(0, opts.take);
         }
-        return result;
+        return result.map((row) => hydrate(row, opts?.relations));
       },
     ),
     delete: jest.fn(async (where: Record<string, any>) => {
