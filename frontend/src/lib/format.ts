@@ -1,0 +1,72 @@
+export function formatCurrency(
+  value: string | null | undefined,
+  currency = "USD"
+): string {
+  if (value === null || value === undefined) {
+    return "—"
+  }
+  const numeric = Number(value)
+  if (Number.isNaN(numeric)) {
+    return "—"
+  }
+  return new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(numeric)
+}
+
+export function formatDate(value: string | Date | null | undefined): string {
+  if (!value) {
+    return "—"
+  }
+  const date = typeof value === "string" ? new Date(value) : value
+  if (Number.isNaN(date.getTime())) {
+    return "—"
+  }
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date)
+}
+
+export function formatDateTime(value: string | Date | null | undefined): string {
+  if (!value) {
+    return "—"
+  }
+  const date = typeof value === "string" ? new Date(value) : value
+  if (Number.isNaN(date.getTime())) {
+    return "—"
+  }
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+export function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+// Numeric columns (Quantity, MT, Load Factor, ...) serialize as strings —
+// pg returns `numeric` as text, not a JS number, to avoid float precision
+// surprises on the backend.
+export function formatNumber(
+  value: string | null | undefined,
+  maximumFractionDigits = 2
+): string {
+  if (value === null || value === undefined) {
+    return "—"
+  }
+  const numeric = Number(value)
+  if (Number.isNaN(numeric)) {
+    return "—"
+  }
+  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits }).format(
+    numeric
+  )
+}

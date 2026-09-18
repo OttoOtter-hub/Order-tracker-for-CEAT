@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ceat_order_track_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-ceat}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ceat}
+      POSTGRES_DB: ${DB_DATABASE:-ceat_order_track}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - ceat_order_track_pgdata:/var/lib/postgresql/data
+
+volumes:
+  ceat_order_track_pgdata:

@@ -1,0 +1,1475 @@
+# CEAT Order Tracking — Backend (v2 deployed to production)
+
+Бэкенд для трекинга заказов CEAT ↔ MTK Rosberg. Фронтенд (React) — в
+[`frontend/`](frontend/README.md), отдельный `npm`-проект.
+
+## v2: полный пересбор бизнес-логики
+
+Версия 1 (Фазы 1–11, PI → SO → Container → отгрузка) снесена целиком —
+осталась только авторизация (`User`/`AuthModule`/`JwtAuthGuard`/`RolesGuard`)
+и `Customer`. Новая концепция — **карточка проформы (PI card)**: одна
+сущность `ProformaInvoice` со статусом, вычисляемым из того, какие файлы к
+ней прикреплены, вместо графа PI → SO → Container из v1. Это **не миграция
+данных** — старая схема и её данные не переносятся, БД пересобирается с
+нуля (см. "Пересборка схемы" ниже). История v1 (для справки, если понадобится
+логика/паттерны из старой версии) — в git-less памяти проекта, не в этом
+README.
+
+- **v2 Фаза 1**: снос v1, новая схема (`ProformaInvoice`, `PiAdditionalFile`,
+  `PiLineItem`, `BackorderUpload`), одна миграция `InitSchema`, read-only
+  `GET /proforma-invoices` / `GET /proforma-invoices/:id`.
+- **v2 Фаза 2**: загрузка исходного PDF проформы с распознаванием номера PI
+  из имени файла (ops), загрузка подписанного файла (client), доп. файлы
+  (обе роли), approval-флоу предложения замены исходного файла (ops
+  предлагает → client утверждает/отклоняет).
+- **v2 Фаза 3**: `POST /backorder-uploads` — парсинг реального
+  еженедельного xlsx-экспорта завода (листы "Radial BO"/"Bias BO"), апсерт
+  карточек PI (`created_from=backorder_row` для новых номеров), полная
+  замена их `PiLineItem` на снимок из файла, пересчёт всех 6 агрегатов на
+  `ProformaInvoice`.
+- **v2 Фаза 4**: реальные экраны фронтенда поверх Фаз 1–3 (список
+  карточек, детальная страница с файлами/approval-флоу, загрузка
+  бэкордера) — см. [frontend/README.md](frontend/README.md). Перед этим —
+  правка формулы агрегатов (см. "Парсинг бэкордера" ниже, раздел про сумму
+  сырых значений вместо построчных отношений) и два бэкенд-бага, найденных
+  живым тестом фронтенда под обеими ролями (см. ниже, "Два бага, найденных
+  живой интеграцией с фронтендом").
+- **v2 Фаза 3, доделано**: при подключении `cardsArchived`/
+  `cardsSkippedInvalidRows` к фронтенду обнаружилось, что архивация
+  карточек (п. 4 исходного ТЗ Фазы 3) и подсчёт пропущенных строк не были
+  реализованы вообще — `BackorderUploadsService.upload` никогда не менял
+  `is_archived_shipped`. Закрыто до Фазы 5 — см. "Парсинг бэкордера" ниже.
+- **Продакшн-деплой v2**: смена паролей `ops`/`buyer`,
+  `nginx` reverse-proxy на `/api/*` + закрытие порта 3000 в `ufw`, HTTPS
+  осознанно отложен (нет домена, решение пользователя) — v2-бэкенд и
+  v2-фронтенд теперь на проде вместо всё ещё сломанного (после сноса
+  v1-схемы в Фазе 1) v1. См. "Продакшн-деплой v2" ниже.
+- **v2 Фаза 5**: выгрузка в Excel — по отдельной карточке PI
+  (`GET /proforma-invoices/:id/export-xlsx`, обе роли, с owner-check для
+  `client`) и по всему активному бэкордеру целиком
+  (`GET /backorder/export-xlsx`); плюс штамп даты загрузки на имя
+  физически сохранённого файла бэкордера. См. "Экспорт в Excel" ниже.
+- **v2 Фаза 6**: `GET /backorder/export-xlsx` открыт и для
+  `client` — раньше был `ops`-only, теперь `client` тоже может выгрузить
+  бэкордер, но видит в нём только строки своего `customer_id` (скоуп в
+  сервисе, не в декораторе — тот же паттерн, что и остальные
+  client-эндпоинты). Кнопка "Выгрузить весь бэкордер" перенесена с
+  `/ops/backorder-upload` на общий список карточек (`PiListPage.tsx`,
+  `/ops/pi` и `/client/pi`), доступна обеим ролям. См. "Экспорт в Excel"
+  ниже.
+- **v2 Фаза 7**: приоритизация позиций клиентом — первый шаг
+  режима планирования отгрузок. Новая колонка `priority_qty` на
+  `PiLineItem` (миграция), `PATCH /pi-line-items/:id/priority` (client-only,
+  явная проверка роли в сервисе — не просто `@Roles()`, см. "Приоритизация
+  позиций" ниже), owner-check по `customer_id`, валидация
+  `0 ≤ priorityQty ≤ balanceToBeDelivered`. Приоритет **переносится** через
+  еженедельную перезагрузку бэкордера (по ключу material_num+so_number,
+  clamp'ится вниз, если остаток уменьшился) — без этого правки клиента
+  стирались бы каждой загрузкой. Новые агрегаты `priorityTotalQty`/
+  `priorityTotalContainers` в ответе `GET /proforma-invoices/:id` (вычисляемые
+  геттеры, не колонки). См. "Приоритизация позиций" ниже.
+- **v2 Фаза 7.1**: кнопка "Сбросить" в режиме приоритизации —
+  массово обнуляет `priorityQty` всех строк карточки одним запросом,
+  `PATCH /proforma-invoices/:id/reset-priority` (client-only, owner-check,
+  один `UPDATE` на все строки, не N `PATCH .../priority` с фронта), с
+  подтверждением (`window.confirm`) перед необратимым массовым действием.
+  См. "Приоритизация позиций" ниже.
+- **v2 Фаза 7.2**: приоритет — только целые штуки, не дробные.
+  `UpdatePriorityDto` теперь `@IsInt()` вместо `@IsNumber()` (`400` с
+  сообщением "приоритет указывается в целых штуках"), тот же
+  `Number.isInteger`-чек продублирован в `PiLineItemsService.updatePriority`
+  (DTO/ValidationPipe не покрыты юнит-тестами этого проекта, см.
+  "Приоритизация позиций" ниже). На фронте `PriorityInput.tsx` — оба пути
+  (ручной ввод и кнопка "Весь остаток") теперь идут через один `commit()`
+  с округлением, `step={1}`; раньше `step="0.01"` не мешал вручную
+  напечатать дробное число с клавиатуры.
+- **v2 Фаза 7.3** (эта правка, только фронт): кнопка "Сбросить" раньше
+  была видна при том же условии, что и переключатель "Режим
+  приоритизации" (`isClient && !pi.isArchivedShipped`) — то есть и вне
+  режима редактирования тоже. Сужено до `isPriorityMode` — видна строго
+  пока режим включён. Логика самого действия не менялась, только условие
+  рендера в `PiDetailPage.tsx`. См. [frontend/README.md](frontend/README.md).
+
+## Стек
+
+- Node.js + NestJS + TypeScript
+- PostgreSQL, миграции через **TypeORM** (raw SQL миграции, `synchronize: false`)
+- Swagger/OpenAPI (`@nestjs/swagger`), с bearer-auth
+- Auth: Passport + `@nestjs/jwt` (JWT в заголовке `Authorization: Bearer <token>`)
+
+**Почему TypeORM, а не Prisma**: NestJS даёт нативную интеграцию через
+декораторы прямо на entity-классах (`@Entity`, `@Column`, `@ManyToOne`...),
+которые и так требуются по ТЗ, — с Prisma пришлось бы дублировать эту схему
+ещё и в отдельном `schema.prisma` DSL.
+
+## Структура проекта
+
+```
+src/
+  common/
+    entities/base.entity.ts         # id (uuid), createdAt, updatedAt — общие для всех сущностей
+    enums/payment-terms.enum.ts     # общий enum условий оплаты (Customer)
+    enums/role.enum.ts              # Role.OPS / Role.CLIENT
+    utils/get-by-path.ts            # 'a.b.c' -> obj.a.b.c, для CustomerScopeInterceptor
+    testing/fake-repo.ts            # Фаза 3: hand-rolled in-memory Repository-фейк, вынесен из
+                                     # proforma-invoices.service.spec.ts, переиспользуется
+                                     # backorder-uploads.service.spec.ts. Фаза 7.1: + update()
+    auth/
+      public.decorator.ts           # @Public() — пропустить JwtAuthGuard (login)
+      roles.decorator.ts            # @Roles(Role.OPS) — контроллер только для ops
+      client-write-allowed.decorator.ts  # @ClientWriteAllowed() — точечное исключение из read-only
+      scope-by-customer.decorator.ts     # @ScopeByCustomer('pi.customer.id') — путь до customer_id
+      current-user.decorator.ts     # @CurrentUser() req.user
+      request-user.interface.ts
+      jwt-auth.guard.ts             # аутентификация (глобальный APP_GUARD #1)
+      roles.guard.ts                # авторизация: ops/client, read-only, ops-only (APP_GUARD #2)
+      customer-scope.interceptor.ts # фильтрация по customer_id для client (APP_INTERCEPTOR)
+  data-source.ts                    # TypeORM DataSource для CLI миграций
+  main.ts, app.module.ts
+
+  auth/                             # POST /auth/login, JwtStrategy — без изменений с v1
+  users/                            # User entity + UsersService — без изменений с v1
+  customers/                        # Customer entity — без изменений с v1
+  files/                            # StoredFile + POST /files/upload, GET /files/:id/download.
+                                     # Фаза 2: download теперь проверяет владение для client
+                                     # (FilesService.assertClientCanAccess) — первая фаза, где
+                                     # client-загруженные файлы реально попадают в эту таблицу
+  seed/create-user.ts               # CLI для создания пользователей
+
+  proforma-invoices/
+    proforma-invoice.entity.ts      # ProformaInvoice — см. "Схема" ниже
+    proforma-invoice.entity.spec.ts # unit-тест вычисляемого .status
+    proforma-invoices.service.ts    # findAll/findOne + Фаза 2: uploadPi/uploadSigned/
+                                     # addAdditionalFile/proposeReplacement/replacementDecision +
+                                     # Фаза 7.1: resetPriority (bulk UPDATE, client-only)
+    proforma-invoices.service.spec.ts # Фаза 2: extraction/dedup/fill-in/replacement-cycle
+    proforma-invoices.controller.ts # GET /, GET /:id + 5 Фаза-2 write-эндпоинтов (см. ниже)
+    enums/pi-status.enum.ts         # PiStatus — вычисляемый, не колонка
+    enums/pi-created-from.enum.ts   # PiCreatedFrom — реальная колонка (enum в БД)
+    utils/extract-pi-number.ts      # regex на 6+ цифр — Фаза 2
+    dto/add-additional-file.dto.ts, dto/replacement-decision.dto.ts
+  pi-additional-files/              # PiAdditionalFile — только entity + модуль (записи создаются
+                                     # из ProformaInvoicesService, отдельного контроллера всё ещё нет)
+  pi-line-items/
+    pi-line-item.entity.ts          # + priorityQty (Фаза 7, миграция ниже) — строки пишет
+                                     # BackorderUploadsService, priorityQty пишет только
+                                     # PATCH /pi-line-items/:id/priority (client-only)
+    pi-line-items.service.ts        # Фаза 7: updatePriority — owner-check + range-валидация
+    pi-line-items.service.spec.ts
+    pi-line-items.controller.ts     # PATCH /:id/priority
+    dto/update-priority.dto.ts
+  backorder-uploads/
+    backorder-upload.entity.ts      # BackorderUpload — аудит-строка одной загрузки
+    backorder-uploads.service.ts    # парсинг + группировка по PI + upsert карточек/line items +
+                                     # пересчёт агрегатов (см. "Парсинг бэкордера" ниже)
+    backorder-uploads.service.spec.ts
+    backorder-uploads.controller.ts # GET / (список загрузок), POST / (сама загрузка), ops-only
+    utils/parse-backorder-file.ts   # чистый парсер xlsx -> ParsedBackorderRow[] (exceljs)
+    utils/parse-backorder-file.spec.ts
+    utils/compute-pi-aggregates.ts  # чистая функция агрегации — см. её же doc-комментарий
+    utils/compute-pi-aggregates.spec.ts
+    utils/stamp-date-on-filename.ts # Фаза 5: "name.xlsx" + дата -> "name_2026-09-03.xlsx"
+    utils/stamp-date-on-filename.spec.ts
+    utils/build-backorder-export-workbook.ts  # Фаза 5: exceljs-воркбук всего бэкордера
+    utils/build-backorder-export-workbook.spec.ts
+    backorder.controller.ts         # Фаза 5: GET /backorder/export-xlsx — отдельный
+                                     # контроллер, т.к. /backorder-uploads уже занят аудитом
+                                     # загрузок, а этот эндпоинт про текущий срез PI. Фаза 6:
+                                     # открыт и для client (скоуп по customer_id в сервисе)
+
+  common/utils/format-date.ts       # Фаза 5: Date -> "YYYY-MM-DD" (UTC), общее для обоих экспортов
+  common/utils/numeric.ts           # Фаза 5: numeric-колонка (строка из Postgres) -> number | null
+  common/utils/sum-by-loadability.ts  # Фаза 7: сгруппировать по loadability и поделить один раз
+                                       # на группу — вынесено из compute-pi-aggregates.ts, общее
+                                       # с compute-priority-aggregates.ts (см. ниже)
+
+  proforma-invoices/
+    utils/compute-line-items-totals.ts  # Фаза 5: строка "Всего" — 1-в-1 логика с фронтом
+    utils/compute-line-items-totals.spec.ts
+    utils/build-pi-export-workbook.ts   # Фаза 5: exceljs-воркбук одной карточки PI
+    utils/build-pi-export-workbook.spec.ts
+    utils/compute-priority-aggregates.ts  # Фаза 7: priorityTotalQty/priorityTotalContainers —
+                                           # переиспользует sumByLoadabilityGroups
+    utils/compute-priority-aggregates.spec.ts
+
+  migrations/
+    1788010000000-InitSchema.ts     # вся схема v2 с нуля
+    1788273456000-AddBackorderUploadArchiveAndSkippedCounts.ts  # Фаза 3, доделано
+    1788946343615-AddPriorityQtyToPiLineItems.ts                # Фаза 7
+```
+
+## Схема (v2 Фаза 1)
+
+### ProformaInvoice — карточка PI
+
+Заменяет весь граф v1 (`ProformaInvoice → SalesOrder → Container →
+ShipmentDocument/Payment/TelexReleaseEvent`) одной сущностью. Её жизненный
+цикл — не переход по FSM-колонке, а **вычисляемое** поле `status`
+(геттер `ProformaInvoice.status`, помечен `@Expose()` для сериализации, как
+уже был `PiLineItem.qtyRemaining` в v1):
+
+```
+isArchivedShipped                    → archived_shipped
+pendingReplacementFileUrl задан      → replacement_pending
+signedFileUrl задан                  → signed
+piFileUrl задан                      → missing_signed_document
+иначе                                → missing_pi_document
+```
+
+**Почему вычисляемое поле, а не колонка** — статус карточки полностью
+определяется тем, какие файлы к ней прикреплены и флагом архивации; если
+хранить его отдельной колонкой, любой путь записи (ручной `PATCH`,
+сид-скрипт, будущий парсер бэкордера), забывший её обновить, тихо
+рассинхронизирует статус с реальным состоянием документов. Вычисление
+исключает этот класс багов по построению — колонки-источники истины и
+представление никогда не могут разойтись.
+
+Остальные поля: `piNumber` (unique), `customer` (FK), три файловых слота
+(`piFile*`, `signedFile*`, `pendingReplacementFile*` — каждый со своими
+`*UploadedAt`/`*UploadedBy` (или `*ProposedBy`/`*ProposedAt`) полями, FK на
+`User`), `isArchivedShipped`, `createdFrom` (`pi_upload` | `backorder_row` —
+реальная enum-колонка, не вычисляется), и агрегаты `totalQty`,
+`totalContainers`, `qtyPending`, `containersPending`,
+`currentWeekPlanContainers`, `currentWeekPlanQty` — все `numeric`,
+`nullable`, не пересчитываются в этой фазе (заполнит парсинг бэкордера,
+Фаза 3).
+
+### PiAdditionalFile
+
+Произвольные доп. файлы к карточке (не PI/подписанный/замена — например,
+сопроводительное письмо). `pi` (FK), `fileUrl`, `uploadedBy` (FK User),
+`uploadedAt`, `description` (nullable).
+
+### PiLineItem
+
+Строка PI: `pi` (FK), `soNumber`, `materialNum`, `materialDesc`,
+`balanceToBeDelivered`, `quantity`, `mt`, `loadFactor`, `loadability`,
+`currentWeekDispatchLoadFactor`, `currentWeekDispatchQty` — все `numeric`/
+`varchar` nullable в этой фазе, заполняются парсингом файла/бэкордера
+(Фазы 2–3), поэтому нет ни одного write-эндпоинта для них ещё.
+
+### BackorderUpload
+
+Аудит-строка одной загрузки файла бэкордера: `uploadedAt`, `uploadedBy` (FK
+User), `fileName`, `rowsProcessed`, `newCardsCreated`. Сам парсинг — Фаза 3.
+
+### `pi_created_from_enum`: `pi_upload` | `backorder_row`
+
+Откуда возникла карточка — вручную загруженный файл PI, или строка из
+загруженного бэкордера.
+
+## Загрузка файлов и approval-флоу замены (Фаза 2)
+
+Все 5 write-эндпоинтов ниже — `multipart/form-data`, поле `file` (кроме
+`replacement-decision` — обычный JSON `{ approved: boolean }`). Каждый
+внутри вызывает `FilesService.save()` напрямую (не HTTP `POST
+/files/upload`) — сохранение байтов и создание карточки/обновление PI
+происходит в одном запросе, без отдельного шага "сначала залей файл,
+получи URL, потом пришли URL сюда".
+
+### `POST /proforma-invoices/upload-pi` (ops)
+
+Номер PI читается из **имени файла**, не из поля формы — регэксп на первую
+последовательность из 6+ цифр (`extractPiNumber`,
+[extract-pi-number.ts](src/proforma-invoices/utils/extract-pi-number.ts)):
+`"100037320.pdf"` и `"signed_100037320.pdf"` дают одно и то же
+`"100037320"` (короткие пробеги вроде 4-значного года тоже не мешают —
+регэксп требует минимум 6 цифр подряд). Логика:
+
+1. Номер не найден → `400 "не удалось распознать номер PI из имени файла"`,
+   файл не сохраняется.
+2. Карточка с этим номером уже есть, и `pi_file_url` уже заполнен → `409
+   "проформа с этим номером уже загружена, используйте предложение замены"`
+   — эту проверку делаем **до** сохранения файла, чтобы конфликтующий
+   апload не оставлял приплода в `stored_files`.
+3. Карточка есть, но `pi_file_url` пуст (`created_from = backorder_row`,
+   т.е. карточка родилась из бэкордера раньше, чем пришёл сам файл) →
+   дозаполняем `pi_file_url`/`pi_file_uploaded_at`/`pi_file_uploaded_by` на
+   существующей карточке.
+4. Карточки нет вообще → создаём новую, `created_from = pi_upload`,
+   `customer` — **`customersService.findFirst()`**, т.к. в пилоте всего
+   один клиент (`CustomersService.findFirst`,
+   [customers.service.ts](src/customers/customers.service.ts) —
+   `TODO(multi-client)` прямо в коде: с появлением второго клиента это
+   обязано стать явным выбором вызывающего, а не "первый попавшийся").
+   Уникальный индекс на `pi_number` — подстраховка от гонки двух
+   одновременных `create` с одним номером (ловится через
+   `isUniqueViolation` → тот же `409`, не `500`).
+
+### `POST /proforma-invoices/:id/upload-signed` (client)
+
+Просто перезаписывает `signed_file_url`/`*_uploaded_at`/`*_uploaded_by` —
+без approval, это собственное действие клиента, ему не нужно ничьё
+подтверждение. `@ClientWriteAllowed()`, доступен и ops (RolesGuard "ops
+always allowed" — не блокируем).
+
+### `POST /proforma-invoices/:id/additional-files` (обе роли)
+
+Добавляет запись в `PiAdditionalFile`, без ограничения на количество.
+`description` — опциональное текстовое поле формы (`AddAdditionalFileDto`).
+
+### `POST /proforma-invoices/:id/propose-replacement` (ops)
+
+Заполняет `pending_replacement_file_url`/`*_proposed_by`/`*_proposed_at`.
+Если уже есть незакрытое предложение (`pending_replacement_file_url` не
+пуст) → `409` до сохранения нового файла — нельзя предложить второе поверх
+первого, пока клиент не решил по первому.
+
+### `POST /proforma-invoices/:id/replacement-decision` (client)
+
+`{ "approved": true | false }`.
+
+- Нет активного предложения (`pending_replacement_file_url` пуст) → `400
+  "нет активного предложения замены для этого PI"`.
+- `approved: true` → `pi_file_url` = `pending_replacement_file_url`, и
+  **`pi_file_uploaded_at`/`pi_file_uploaded_by` тоже переносятся** с
+  предложения (не только `pi_file_url`) — иначе эти два поля продолжали бы
+  описывать старый файл, хотя `pi_file_url` уже указывает на новый.
+  `pending_replacement_*` очищаются.
+- `approved: false` → `pi_file_url` не трогается, `pending_replacement_*`
+  просто очищаются.
+
+### Владение проверяется в сервисе, не только интерцептором
+
+`uploadSigned`/`addAdditionalFile`/`replacementDecision` (все client-facing
+записи) грузят карточку через `findOwnedByActor` — тот же паттерн, что был
+в v1 у `client-sign`/`report-advance-payment`
+(`ProformaInvoicesService`): `CustomerScopeInterceptor` фильтрует только
+*ответ* (`map()` после хендлера), так что мутация над чужим PI успела бы
+выполниться, если полагаться только на него. `findOwnedByActor` — no-op
+для `ops` (роль всегда проходит), 404 для `client` с чужим `customer_id`.
+`uploadPi`/`proposeReplacement` — чисто ops-эндпоинты (нет
+`@ClientWriteAllowed()`, `RolesGuard` блокирует `client` ещё до контроллера),
+им эта проверка не нужна.
+
+### Скачивание: `GET /files/:id/download` теперь проверяет владение для `client`
+
+До этой фазы файл, попавший в `stored_files`, был доступен на скачивание
+любому аутентифицированному пользователю без проверки — это было безопасно
+случайно, пока единственный, кто грузил файлы, был `ops`. Фаза 2 впервые
+даёт `client` возможность класть в эту же таблицу файлы (подписанный PI,
+доп. файлы, решение по замене), так что дыра стала реальной. Не стали
+изобретать новый эндпоинт — расширили существующий:
+`FilesService.getDownloadable(id, actor)` теперь для `client` вызывает
+`assertClientCanAccess()`, которая проверяет точным совпадением URL
+(`/files/:id/download`), что этот файл фигурирует хотя бы в одном из
+`pi_file_url`/`signed_file_url`/`pending_replacement_file_url` PI **или**
+`file_url` в `PiAdditionalFile` PI, принадлежащей `customer_id` актора; иначе
+— `404` (не `403`, чтобы не подтверждать сам факт существования файла).
+`ops` по-прежнему не ограничен. `FilesModule` ради этого регистрирует
+`ProformaInvoice`/`PiAdditionalFile` через свой собственный
+`TypeOrmModule.forFeature(...)` (а не импортирует
+`ProformaInvoicesModule`/`PiAdditionalFilesModule` целиком) — это read-only
+проверка владения, а не бизнес-логика, и так короче цепочка модульных
+импортов (`ProformaInvoicesModule` уже импортирует `FilesModule` для
+`FilesService`; обратный импорт создал бы цикл).
+
+### Два бага, найденных живой интеграцией с фронтендом (Фаза 4)
+
+Оба — в этом же контроллере, оба всплыли только когда `client` реально
+попробовал вызвать соответствующий эндпоинт из браузера (не curl из-под
+`ops`, где `RolesGuard`'s "ops always allowed" маскировал первый баг,
+и не unit-тестами, которые мокают репозитории и не гоняют настоящий
+`ClassSerializerInterceptor`/TypeORM relations):
+
+1. **`@ScopeByCustomer("customer.id")` был на уровне класса контроллера**,
+   применяясь ко всем методам одинаково — включая `addAdditionalFile`,
+   который возвращает `PiAdditionalFile`, а не `ProformaInvoice`.
+   `CustomerScopeInterceptor` пытался прочитать `customer.id` у объекта, где
+   этот путь ведёт в никуда (на `PiAdditionalFile` правильный путь —
+   `pi.customer.id`), получал `undefined`, сравнивал с реальным
+   `customerId` из токена и кидал `NotFoundException()` **на каждый
+   успешный запрос client**, хотя `INSERT` уже прошёл (файл реально
+   сохранён и в БД, и на диске) — клиент получал `404` на операцию,
+   которая на самом деле удалась. Фикс: декоратор снят с класса, поставлен
+   только на `GET /` и `GET /:id` (единственные хендлеры, чей ответ
+   реально имеет форму `ProformaInvoice`); остальные методы и так проверяют
+   владение сами (`findOwnedByActor`), декоратор был для них лишней и
+   в одном случае битой подстраховкой.
+2. **`findAll`/`findOne` не запрашивали `additionalFiles.uploadedBy`** —
+   только `additionalFiles` без вложенного relation, так что
+   `PiAdditionalFile.uploadedBy` был `undefined` на любом `GET`-ответе
+   (сама запись при создании временно держит `{id}` в памяти, но после
+   перезагрузки из БД relation не подтягивается без явного запроса). Уронило
+   фронтенд намертво (`Cannot read properties of undefined (reading
+   'email')`) при рендере списка доп. файлов на второй и последующий рендер
+   страницы. Фикс — `"additionalFiles.uploadedBy"` добавлен в оба списка
+   `relations`.
+
+Ни один из двух багов не ловился юнит-тестами (`makeFakeRepo` не
+воспроизводит ни `ClassSerializerInterceptor`, ни фактическую загрузку
+TypeORM-relations) — оба нашлись только прогоном настоящего браузера против
+настоящего бэкенда с обеими ролями, что и стало поводом добавить их сюда
+как напоминание не полагаться только на unit-тесты для этого класса ошибок.
+
+### Живая проверка (Фаза 4)
+
+Полный цикл в Claude Browser поверх живой Neon-БД, обеими ролями: `ops`
+загружает исходную проформу на реальную карточку → предлагает замену →
+`client` (после перелогина в том же сеансе — заодно всплыла и оказалась
+ложной тревогой гонка react-query кэша между ролями, см. ниже) видит
+`replacement_pending`, скачивает оба файла, загружает подписанный файл,
+добавляет доп. файл, одобряет замену → статус и метаданные (`uploaded_at`/
+`uploaded_by`) корректно переносятся на исходный слот. Отдельно — список
+`GET /backorder-uploads` (4 реальные записи с прошлых фаз), чекбокс
+"показать архивные" (флаг временно проставлен и снят через прямой SQL — в
+бэкенде до сих пор нет эндпоинта для архивации, см. frontend README).
+
+**Ложная тревога, зафиксированная здесь чтобы не перепроверять заново**:
+после переключения роли (logout → login другим пользователем) список на
+секунду показал устаревший статус карточки — оказалось, `QueryClient`
+(`frontend/src/main.tsx`) один на весь SPA-сеанс и не сбрасывается при
+логине/логауте; `staleTime: 30_000` может на короткое время отдать
+кэш предыдущей роли до того, как реальный ответ от сервера перерисует
+экран. В финальном скриншоте (после того как сеть отработала) данные были
+верны — это не бага авторизации/скоупинга, а обычная гонка рендера при
+ручном тестировании. Не чинили: сценарий "два разных человека в одной
+вкладке браузера" не встречается в реальном использовании (`ops` и
+`client` — разные физические пользователи на разных устройствах).
+
+Тестовые файлы/записи (`stored_files`, `pi_additional_files`, fake PDF на
+диске), созданные в процессе — удалены после проверки; временный
+архивный флаг — возвращён в `false`. Реальные 23 карточки пилота, их
+`PiLineItem` и агрегаты — не тронуты (кроме самой формулы агрегатов,
+пересчитанной переуплоадом того же файла, см. выше).
+
+### Тесты (Фаза 2)
+
+`extract-pi-number.spec.ts` — распознавание номера: с расширением, с
+`signed_` префиксом, с коротким пробегом цифр (год) перед настоящим
+номером, без цифр (`null`), только короткий пробег (`null`).
+
+`proforma-invoices.service.spec.ts` (лёгкий hand-rolled fake-репозиторий —
+in-memory массив строк с матчингом по `where`, тот же принцип, что
+`FakeManager` в v1, не настоящая БД): 400 на нераспознанный номер, создание
+новой карточки, 409 на повторную загрузку исходного файла, дозаполнение
+карточки из `backorder_row`, полный цикл `propose-replacement` →
+`replacement-decision` (approve и reject), 409 на второе предложение
+поверх первого, 400 на решение без активного предложения.
+
+Backend test count: 19 (было 5 после Фазы 1: 5 на `.status` +
+5 на `extractPiNumber` + 9 на `ProformaInvoicesService`).
+
+Проверено и вживую (live Neon-БД, не только юнит-тесты): полный цикл через
+`curl` — `upload-pi` (400 → создание → 409 на дубль) →
+`upload-signed` (client) → `additional-files` (ops, с `description`) →
+скачивание клиентом своего файла (`200`) → скачивание клиентом чужого
+(несвязанного) файла (`404`, `ops` тот же файл видит) →
+`propose-replacement` → 409 на второе предложение → `replacement-decision`
+(`approved: true`, статус карточки и `piFileUploadedBy` обновились
+правильно) → на втором PI то же самое с `approved: false` (файл не
+поменялся). Тестовые данные (PI-карточки, `stored_files`, файлы на диске)
+удалены после проверки.
+
+## Парсинг бэкордера (Фаза 3)
+
+### `POST /backorder-uploads` (ops, multipart, поле `file`)
+
+Принимает еженедельный xlsx-экспорт завода как есть (реальный пример:
+`2907_MTK_ROSBERG_INR.xlsx`, 7 листов). Разбираются **только** листы
+`Radial BO` и `Bias BO` — `parseBackorderFile`
+([parse-backorder-file.ts](src/backorder-uploads/utils/parse-backorder-file.ts))
+матчит имя листа регистронезависимо и **молча игнорирует любой другой
+лист**, сейчас или в будущем (`Summary`, `Radial/Bias Dispatch`, `ETD-ETA`,
+`ETA-15 days` — это уже отгруженное/оплаченное состояние, вне схемы
+`ProformaInvoice` этой фазы) — намеренное решение: разобрать то, что
+понятно, а не гадать по структуре незнакомых листов и не падать на них.
+
+Реальный файл оказался не полностью единообразным — на листе `Radial BO`
+перед строкой заголовков есть отдельная строка с одним кодом клиента
+(`66000402`), на `Bias BO` её нет, заголовки сразу в строке 1. Парсер не
+предполагает фиксированный номер строки заголовка — сканирует первые 5
+строк листа и берёт ту, где есть ячейка `MaterialNum` (без учёта регистра).
+Колонка **`Quotation`** — это номер PI (тот же формат, что распознаётся из
+имени файла в `upload-pi`, Фаза 2); `Loadability` матчится по подстроке,
+т.к. на одном листе она называется `Radial Load.Loadability`, на другом —
+`Bias Load.Loadability`. Строки без номера PI (пустые/итоговые в хвосте
+листа) пропускаются, не считаются ошибкой.
+
+### Апсерт карточек и line items (`BackorderUploadsService.upload`)
+
+1. Все строки обоих листов группируются по `piNumber` (`Quotation`).
+2. На каждую группу: если карточки с этим `pi_number` нет — создаётся новая
+   (`createdFrom = backorder_row`, `customer` — тот же
+   `customersService.findFirst()` с TODO про мультиклиента, что и в
+   `upload-pi`). Если карточка уже есть (неважно, создана раньше через
+   `upload-pi` или предыдущей загрузкой бэкордера) — `createdFrom` **не**
+   переписывается, она просто получает свежие line items.
+3. Line items этой карточки полностью заменяются: `DELETE` всех
+   существующих `PiLineItem` по `pi_id`, затем `INSERT` строк из этой
+   загрузки. Загрузка — это снимок текущего открытого бэкордера, не
+   дельта: без замены повторная загрузка того же файла удваивала бы каждую
+   строку. Подтверждено вживую — 3 последовательные загрузки одного и того
+   же реального файла дали `newCardsCreated: 23, 0, 0` и стабильные
+   182 строки в `pi_line_items` (не 182, 364, 546).
+4. 6 агрегатов PI пересчитываются с нуля по строкам этой загрузки
+   (`computePiAggregates`,
+   [compute-pi-aggregates.ts](src/backorder-uploads/utils/compute-pi-aggregates.ts)):
+   - `totalQty` / `qtyPending` / `currentWeekPlanQty` — прямые суммы
+     `Quantity` / `Balance To be Delivered` / `Current Week Dispatch Plan
+     (Qty)`.
+   - `totalContainers` / `containersPending` / `currentWeekPlanContainers` —
+     `Quantity`/`Balance`/`Current Week Dispatch Qty`, каждое делённое на
+     `Loadability`, **пересчитанное самостоятельно из сырых колонок**, а не
+     взятое из собственных колонок файла `Load Factor`/`Current Week
+     Dispatch Plan (Load Factor)`. Строки группируются по значению
+     `Loadability`, их количества суммируются **внутри группы**, и только
+     потом — одно деление на группу, а не деление на каждой строке с
+     последующим суммированием уже поделённых значений.
+
+   **Важная находка при первой попытке сверки с листом `Summary`
+   реального файла**: изначальное предположение (Фаза 3, по одной
+   проверенной строке) — что `Load Factor` файла это `Quantity /
+   Loadability` — оказалось неверным. Прямое сравнение по всем строкам, где
+   `Quantity ≠ Balance To be Delivered` (иначе обе гипотезы неотличимы),
+   показало: `Load Factor` файла — это `Balance To be Delivered /
+   Loadability` (17 из 17 однозначных случаев), не `Quantity /
+   Loadability` (0 из 17). То есть колонка файла — это уже "контейнеры
+   в ожидании", а не "контейнеры всего"; выдавать её за `totalContainers`
+   значило бы путать эти два понятия местами. Плюс у 18 реальных строк
+   `Loadability = 0`, но `Load Factor` файла всё равно ненулевой (устаревшие
+   мастер-данные) — доверять этой колонке напрямую means наследовать эту
+   нестыковку. Пересчёт из сырых `Quantity`/`Balance`/`Loadability`
+   устраняет оба источника рассинхронизации и держит `totalContainers`/
+   `containersPending` семантически честными по отношению друг к другу
+   (как и `totalQty`/`qtyPending`).
+5. **Архивация**: после апсерта всех PI из загрузки — любая карточка
+   (независимо от `created_from`), у которой `is_archived_shipped = false`
+   и её `pi_number` **не входит** в множество номеров этой загрузки,
+   получает `is_archived_shipped = true` — файл считается источником
+   истины "что сейчас открыто", выпадение карточки из снимка значит "уже
+   отгружено". `PiLineItem` таких карточек не трогаются — остаются
+   последним известным фактом. Если ранее архивная карточка снова
+   встретилась в новой загрузке — флаг снимается (`is_archived_shipped =
+   false`) в этом же проходе, до сравнения со снимком. Реализовано через
+   `find({ where: { isArchivedShipped: false } })` + фильтр в JS + bulk
+   `save()`, а не raw SQL `UPDATE` — на пилотных объёмах (десятки карточек)
+   не имеет значения, а `makeFakeRepo` не эмулирует query builder.
+6. Пишется `BackorderUpload` (`uploadedAt`, `uploadedBy`, `fileName`,
+   `rowsProcessed` — все валидные строки обоих листов, `newCardsCreated` —
+   сколько из групп были новыми картами, `cardsArchived` — сколько
+   заархивировано этим проходом (шаг 5), `rowsSkipped` — см. ниже).
+   Миграция `1788273456000-AddBackorderUploadArchiveAndSkippedCounts.ts`
+   добавляет колонки `cards_archived`/`rows_skipped` (обе `int default 0`)
+   — прогнана на живой Neon-БД.
+
+`GET /backorder-uploads` — список загрузок (аудит), ops-only, новые сверху.
+
+### "Пропущенные" строки (`rowsSkipped` / ответ: `cardsSkippedInvalidRows`)
+
+`parseBackorderFile` считает строку "пропущенной" только если у неё есть
+`MaterialNum`, но нет читаемого номера PI (`Quotation`) — то есть похожа на
+настоящую строку данных, которую просто не удалось привязать ни к одной
+карточке. Полностью пустая строка (Excel-паддинг в конце листа) **не**
+считается — у неё нет ни `MaterialNum`, ни номера PI, это не бизнес-событие,
+а формальность файла. Явной проверки "нечитаемого Customer Code" нет —
+парсер вообще не читает эту колонку ни для чего другого (весь апсерт
+работает по `Quotation`), так что реалистичный прокси для "не удалось
+прочитать строку" — это именно "материал есть, номер PI не читается", а не
+изобретение отдельной валидации по Customer Code, которая нигде больше не
+используется.
+
+### Тесты (Фаза 3, дополнено при находке пробела в архивации)
+
+`parse-backorder-file.spec.ts` — сборка настоящего xlsx-буфера через
+`exceljs` (не мок): чтение обоих листов и игнор прочих, устойчивость к
+разному положению строки заголовка, пустая хвостовая строка не считается
+пропущенной, строка с `MaterialNum` без номера PI считается пропущенной,
+пустой результат (`{ rows: [], skippedRowCount: 0 }`), если ни одного
+целевого листа нет.
+
+`compute-pi-aggregates.spec.ts` — прямые суммы (qty/pending/CWP), `Quantity/
+Loadability` для `totalContainers` **из сырых колонок, игнорируя
+`row.loadFactor`, даже если он задан и не совпадает** (регрессионный тест
+на саму находку выше), группировка нескольких строк с одинаковым
+`Loadability` в одно деление, защита от `NaN`/`Infinity` при отсутствующей
+или нулевой `loadability` (в т.ч. что `totalQty` всё равно учитывает
+количество такой строки), все нули на пустом наборе строк.
+
+`backorder-uploads.service.spec.ts` (тот же `makeFakeRepo`, что и
+`proforma-invoices.service.spec.ts` — вынесен в общий
+[fake-repo.ts](src/common/testing/fake-repo.ts)): создание новой карточки,
+дозаполнение существующей без повторного вызова `customersService`, замена
+line items без накопления дублей при повторной загрузке, группировка
+нескольких строк одного PI в одну карточку с несколькими line items, **и
+сценарий из задания на архивацию буквально**: загрузка A создаёт X/Y/Z →
+загрузка B без Z → `Z.isArchivedShipped=true`, `cardsArchived=1`, X/Y не
+тронуты → загрузка C снова с Z → `Z.isArchivedShipped=false`,
+`newCardsCreated=0`; плюс отдельные тесты на "уже архивная карточка не
+архивируется повторно и не считается в `cardsArchived`" и на подсчёт
+`cardsSkippedInvalidRows`.
+
+Backend test count: 39 (было 35: +4 на архивацию/пропуски — 2 в парсере, 2
+в сервисе; часть старых тестов расширена, не просто добавлена).
+
+Живая проверка (Фаза 3, актуально): реальным файлом
+`2907_MTK_ROSBERG_INR.xlsx` против Neon-БД — 182 строки, 23 новые карточки
+с первого прогона, 3 последовательные загрузки без дублирования. **Эти 23
+карточки — реальные данные пилота, не тестовые, оставлены в БД
+намеренно, не удалены.**
+
+Живая проверка архивации/анархивации (эта правка): т.к. прогонять реальный
+файл БЕЗ части из 23 реальных карточек означало бы по-настоящему
+заархивировать их (риск для данных пилота), тест сделан безопасно —
+взята копия реального файла, в неё добавлена одна синтетическая строка
+(`pi_number=999999901`) через `exceljs`, без изменения ни одной реальной
+строки. Загрузка с синтетической строкой → создаёт её, 23 реальные
+карточки просто обновляются своими же настоящими данными (безопасно,
+идемпотентно). Загрузка без нее → `cardsArchived: 1`, у синтетической
+карточки `is_archived_shipped=true`, все 23 реальные — нет. Повторная
+загрузка с ней → `cardsArchived: 0`, `is_archived_shipped=false` снова.
+Синтетическая карточка и тестовые записи `backorder_uploads` удалены после
+проверки.
+
+## Приоритизация позиций (Фаза 7)
+
+Первый шаг режима планирования отгрузок: клиент проставляет, сколько из
+остатка каждой позиции (`balance_to_be_delivered`) он хочет приоритизировать
+к отгрузке. Пока это только сам ввод + агрегаты — ничего в остальной
+системе ещё не читает `priority_qty` (не влияет на бэкордер, экспорт и т.д.,
+кроме двух новых read-only агрегатов на `ProformaInvoice`, см. ниже);
+следующие шаги планирования будут наращиваться поверх этого поля.
+
+### `pi_line_items.priority_qty`
+
+Новая колонка (`numeric(14,2) NOT NULL DEFAULT 0`, миграция
+`1788946343615-AddPriorityQtyToPiLineItems.ts`) — единственное поле на
+`PiLineItem`, которое не приходит из файла бэкордера/парсинга: значение
+целиком под управлением приложения, поэтому не `nullable` (в отличие от
+остальных `numeric`-колонок этой сущности) и всегда стартует с "не
+приоритизировано" (`0`).
+
+### `PATCH /pi-line-items/:id/priority` (client-only)
+
+Body: `{ "priorityQty": number }`. Два уровня защиты, ни один не сводится к
+одному лишь декоратору:
+
+- **Роль** — `RolesGuard`'s правило "ops всегда разрешено" (см. "Авторизация"
+  ниже) здесь намеренно нарушено: `ops` видит `priorityQty` (обычная колонка
+  в ответе `GET /proforma-invoices/:id`), но не должен иметь возможность
+  менять её напрямую — это ввод клиента, а не то, что ops вводит от его
+  имени. `@Roles(Role.CLIENT)` не решает эту задачу (`RolesGuard` пропускает
+  `ops` мимо любой ролевой проверки безусловно), поэтому
+  `PiLineItemsService.updatePriority` сам кидает `403`, если
+  `actor.role !== Role.CLIENT`, до какого-либо чтения/записи.
+- **Владение** — карточка PI этой позиции должна принадлежать
+  `actor.customerId`, проверяется в сервисе (`item.pi.customer.id !==
+  actor.customerId` → `404`, не `403` — тот же принцип "не подтверждать
+  существование чужого ресурса", что и везде в проекте), не полагается на
+  `CustomerScopeInterceptor`/response-scoping.
+
+Валидация диапазона: `0 ≤ priorityQty ≤ balanceToBeDelivered` этой строки —
+нижняя граница декоратором (`@Min(0)` в `UpdatePriorityDto`, статическая),
+верхняя — в сервисе (`400`, т.к. зависит от конкретной строки, не может
+быть decorator-уровня).
+
+**Только целые штуки (Фаза 7.2)** — шины не бывают дробными.
+`@IsInt({ message: "приоритет указывается в целых штуках" })` на
+`priorityQty` в `UpdatePriorityDto` (заменил `@IsNumber()`) — `400` с этим
+сообщением на любое нецелое значение (`0.02` и т.п.) прямо на границе
+HTTP, до сервиса. Тот же `Number.isInteger(priorityQty)`-чек **продублирован**
+в `PiLineItemsService.updatePriority` — не избыточность ради неё самой:
+юнит-тесты этого проекта инстанцируют сервисы напрямую (см. "Запуск" —
+`makeFakeRepo`), минуя контроллер/DTO/`ValidationPipe` целиком, так что
+декоратор сам по себе не покрывается автотестом; сервисный чек — то же
+самое правило там, где его реально можно проверить `expect(...).rejects`.
+`PATCH /proforma-invoices/:id/reset-priority` этой проверки не требует —
+у него вообще нет тела запроса, каждая строка получает литеральный `"0"`.
+
+### Перенос приоритета при перезагрузке бэкордера
+
+**Критично**: `BackorderUploadsService.upload()` полностью заменяет
+`PiLineItem` каждой карточки при каждой загрузке (см. "Апсерт карточек и
+line items" выше) — без явного переноса `priority_qty` любая правка клиента
+стиралась бы каждую еженедельную загрузку. Перед `DELETE` старых строк
+карточки их `priority_qty` снимается в `Map`, ключ — `(materialNum,
+soNumber)` (та же пара, что однозначно идентифицирует "ту же самую позицию"
+неделя к неделе — у строк нет другого стабильного id через перезагрузки,
+раз они целиком удаляются и создаются заново). После вставки новых строк —
+для каждой ищется совпадение по этому ключу в старой `Map`; если есть,
+значение переносится, **но `clamp`'ится вниз до нового
+`balanceToBeDelivered`** (`Math.min(carried, newBalance)`) — если остаток
+уменьшился ниже прежнего приоритета, приоритет уменьшается вместе с ним, а
+не остаётся невалидным (`priorityQty > balance` в любой момент — это ровно
+то, что `PATCH .../priority` запрещает на запись, так что и перенос обязан
+это соблюдать). Ключа не было в старой `Map` (новая позиция, или старая
+имела приоритет `0`) — новая строка стартует с `priority_qty = 0`.
+
+### Агрегаты `priorityTotalQty` / `priorityTotalContainers`
+
+Два новых **вычисляемых** (не персистентных) геттера на `ProformaInvoice`,
+как и `status` — пересчитываются на каждом чтении из загруженных
+`lineItems`, а не хранятся отдельной колонкой: в отличие от
+`totalQty`/`totalContainers` и т.п. (снимок на момент загрузки бэкордера,
+см. `computePiAggregates`), приоритет меняется клиентом в произвольный
+момент, независимо от загрузок — держать его как отдельную персистентную
+сумму означало бы либо пересчитывать её при каждом
+`PATCH .../priority` (лишняя запись, лишний источник рассинхронизации),
+либо рисковать её устареванием. `priorityTotalContainers` переиспользует ту
+же формулу группировки по `loadability`, что и `computePiAggregates`
+(вынесена в общий `sumByLoadabilityGroups`,
+[sum-by-loadability.ts](src/common/utils/sum-by-loadability.ts)) — не
+две разные копии одной и той же математики, см.
+`computePriorityAggregates`,
+[compute-priority-aggregates.ts](src/proforma-invoices/utils/compute-priority-aggregates.ts).
+Геттеры возвращают `0`, а не бросают, если `lineItems` не загружены —
+на практике оба текущих читателя (`findAll`/`findOne`) всегда грузят эту
+relation.
+
+### Массовый сброс приоритета — `PATCH /proforma-invoices/:id/reset-priority` (Фаза 7.1)
+
+"Сбросить" на фронте вызывает этот эндпоинт вместо N отдельных
+`PATCH /pi-line-items/:id/priority` (один на строку) — намеренно: N
+запросов с фронта означало бы лишнюю нагрузку пропорционально числу
+позиций и реальный риск частичного сбоя (сеть оборвалась после половины
+строк — карточка осталась в наполовину сброшенном состоянии, непонятном
+ни клиенту, ни ops). Вместо этого — один `lineItemsRepo.update({ pi: { id
+} }, { priorityQty: "0" })`, который компилируется в один SQL `UPDATE ...
+WHERE pi_id = $1` — уже атомарен на уровне БД сам по себе (единственный
+statement), так что отдельная обёртка `DataSource.transaction()` не нужна
+ради атомарности как таковой (в проекте пока и нет ни одного места, где
+она была бы нужна — см. структуру выше).
+
+Тот же паттерн доступа, что и `PiLineItemsService.updatePriority`: явная
+проверка `actor.role !== Role.CLIENT` → `403` в сервисе (не просто
+`@Roles()`/декоратор — `RolesGuard`'s "ops всегда разрешено" не
+останавливается сама по себе, см. "PATCH /pi-line-items/:id/priority"
+выше), затем `findOwnedByActor` — чужой `client` получает `404`, не
+`403`, ничего не меняется. Метод возвращает `this.findOne(pi.id)` —
+свежую карточку с уже обнулёнными `lineItems`, тот же ответ, что и любой
+другой write-эндпоинт этого контроллера.
+
+### Тесты (Фаза 7)
+
+`pi-line-items.service.spec.ts`: `priorityQty` в допустимом диапазоне
+сохраняется; `priorityQty > balanceToBeDelivered` → `400`, ничего не
+записано; `priorityQty === balanceToBeDelivered` (граница) разрешена;
+чужой `client` (другой `customerId`) → `404`, ничего не записано; неизвестный
+id → `404`; `ops`-актор → `403`, ничего не записано.
+
+`compute-priority-aggregates.spec.ts`: прямая сумма `priorityQty`;
+группировка по `loadability` перед делением (в т.ч. несколько строк с
+одинаковым `loadability`); строка без/с нулевым `loadability` даёт `0`
+контейнеров, не `NaN`; пустой набор строк → нули.
+`proforma-invoice.entity.spec.ts` дополнен: геттеры считают по загруженным
+`lineItems`; не бросают и возвращают `0`, если `lineItems` не загружены.
+
+`backorder-uploads.service.spec.ts`, новый блок "priorityQty carry-over on
+re-upload" — сценарий из задания буквально: приоритет `8` проставлен на
+строке с остатком `10` → повторная загрузка с тем же
+`(materialNum, soNumber)`, но остатком `3` → перенесённый приоритет
+`clamp`'ится до `3`, не остаётся невалидным `8`; отдельно — перенос без
+изменений, когда новый остаток всё ещё покрывает старый приоритет; и что
+позиция без совпадения по ключу (новый `materialNum`) стартует с `0`, даже
+если другие строки той же карточки перенесли ненулевой приоритет.
+
+Backend test count (после Фазы 7): 74 (было 59 после Фазы 6: +15 — 6 в
+`pi-line-items.service.spec.ts`, 4 в `compute-priority-aggregates.spec.ts`,
+2 в `proforma-invoice.entity.spec.ts`, 3 в
+`backorder-uploads.service.spec.ts`). После Фазы 7.1 (`resetPriority`): 77
+(+3 в `proforma-invoices.service.spec.ts` — обнуление всех строк одним
+вызовом `update()` (проверено `toHaveBeenCalledTimes(1)`, не по числу
+строк), чужой `client` → `404`/ничего не изменено, `ops` → `403`/ничего не
+изменено). Потребовал расширения общего тестового фейка —
+`common/testing/fake-repo.ts`'s `update(where, partial)` не существовал до
+этой правки, добавлен тем же `matches()`-based подходом, что и `delete()`.
+
+Живая проверка (Claude Browser + curl, dev-сервер, реальная Neon-БД):
+временная карточка с двумя позициями (остаток 10/loadability 20, остаток
+5/loadability 10) под временным customer'ом; `client` включил "Режим
+приоритизации", ввёл `6` в первую строку — живой пересчёт "= 0.30 конт."
+и сводная строка "6 / 0,3 конт." обновились мгновенно, до сохранения;
+нажал "Весь остаток" на второй строке (остаток `5`) — сводная строка
+мгновенно стала "11 / 0,8 конт."; оба `PATCH` ушли по debounce (500мс) и
+вернули `200` с сохранённым `priorityQty`; переключение в read-only режим
+показало те же `6`/`5`. `ops` тем же адресом видит те же значения
+read-only, без кнопки "Режим приоритизации" и без интерактивных полей.
+
+Живая проверка "Сбросить" (Фаза 7.1, тот же приём — временная карточка,
+удалена после): клик на кнопку **без** подтверждения диалога — не ушло
+ни одного запроса (подтверждено по сети), значит guard реально
+блокирует случайный клик; клик с подтверждённым `window.confirm` — один
+`PATCH .../reset-priority`, `200`, обе позиции вернулись с
+`priorityQty: "0.00"` и одинаковым `updatedAt` (подтверждает один
+`UPDATE`, не два последовательных); таблица и сводная строка "Приоритет"
+показали нули сразу, без ручного обновления страницы. Отдельно через
+`curl`: `client` с другим `customerId`, пытающийся сбросить чужую
+карточку — `404`. Также при живой проверке всплыл и был устранён
+неполадочный момент самой сессии, не бага в коде: фоновый dev-сервер,
+запущенный в предыдущей задаче, к моменту этой проверки был "осиротевшим"
+процессом без своего `nest --watch`-наблюдателя (его родительский процесс
+был остановлен отдельно, а сам скомпилированный `node`-процесс остался
+висеть) — новый код на диск попадал, но не подхватывался запущенным
+процессом, отсюда первый прогон отдавал `404 Cannot PATCH
+.../reset-priority` на совершенно корректный маршрут. Разобрано через
+`Get-NetTCPConnection -LocalPort 3000` → `Stop-Process` по фактическому
+PID, слушающему порт (а не по фильтру командной строки на "nest", который
+осиротевший процесс не проходил), и чистый перезапуск `npm run
+start:dev` — маршрут появился в логе запуска сразу.
+
+Дополнительно через `curl`: `ops`, вызвавший `PATCH .../priority` напрямую
+(не через UI, которого у него и нет) — `403`; `client`, отправивший
+`priorityQty=999` на строку с остатком `10` — `400` с точным сообщением о
+границе. Временные customer/карточка/пользователи удалены после проверки.
+
+После Фазы 7.2 (целые штуки): 79 (+2 в `pi-line-items.service.spec.ts` —
+`priorityQty=0.02` → `400`, ничего не записано; `priorityQty=10` в
+допустимом диапазоне → `200`).
+
+Живая проверка Фазы 7.2 (dev-сервер + curl): `curl` напрямую на
+`PATCH .../priority` с `priorityQty: 0.02` — `400`,
+`{"message":["приоритет указывается в целых штуках"],...}`; с
+`priorityQty: 10` — `200`. В браузере, ручной ввод с клавиатуры (не через
+"Весь остаток"): первая попытка через UI-автоматизацию дала обманчивый
+результат — поле показывало значение `10` до правки, клик в поле не
+очистил его, и напечатанное `"0.02"` подряд с уже стоявшим `"10"` дало
+буквально `"100.02"` в DOM, что `Math.round()` корректно округлил до
+`100` (`Math.round(100.02) === 100`, проверено отдельно) — не баг
+компонента, артефакт способа ввода в автоматизации. Передиагностировано
+через прямую установку значения поля нативным сеттером
+(`HTMLInputElement.prototype.value` setter + `dispatchEvent(new
+Event('input'))`) — тот же путь, через который React получает реальные
+нажатия клавиш: `"0.02"` → поле показало `0`; `"17.6"` → поле показало
+`18`; "Весь остаток" на остатке `150` — поле показало `150` (целое).
+Дебounced `PATCH` за первым вводом (`0.02`) вернул `priorityQty: "0"` —
+дробное значение действительно никогда не покидало браузер. Временные
+customer/карточка/пользователь удалены после проверки.
+
+## Экспорт в Excel (Фаза 5)
+
+### `GET /proforma-invoices/:id/export-xlsx` (обе роли)
+
+Отдаёт `.xlsx` (`StreamableFile`, тот же паттерн, что `FilesController.download()`)
+с одной карточкой PI: шапка (номер PI, статус, SO-номера, все 6 агрегатов) →
+пустая строка → таблица `PiLineItem` этой карточки (10 колонок: material_num,
+material_desc, so_number, balance_to_be_delivered, quantity, mt, load_factor,
+loadability, current_week_dispatch_load_factor, current_week_dispatch_qty) →
+жирная строка "Всего" с теми же суммами, что на детальной странице фронтенда
+(`buildPiExportWorkbook` вызывает `computeLineItemsTotals` —
+[compute-line-items-totals.ts](src/proforma-invoices/utils/compute-line-items-totals.ts),
+портированную логику `PiDetailPage.tsx`'s "Всего": Остаток/Кол-во/план недели
+(Qty-часть) — из готовых агрегатов PI, MT/Load Factor/план недели (Load
+Factor-часть) — суммой по строкам, Loadability — прочерк). Никаких данных не
+скрывается от `client` — так же, как на самой странице, `so_number` и
+остальные поля видны обеим ролям без урезания.
+
+Владение проверяется в сервисе (`findOwnedByActor`, тот же паттерн, что и
+Фаза 2), не декоратором — `@ScopeByCustomer` тут не подходит по той же
+причине, что и на `addAdditionalFile` (см. выше): ответ бинарный, не
+`ProformaInvoice`-объект, `CustomerScopeInterceptor` нечего фильтровать.
+`client` с чужим PI получает `404`.
+
+Имя файла: `PI_{pi_number}_export_{дата выгрузки}.xlsx`
+(`formatDateForFilename`, UTC `YYYY-MM-DD` — то же самое форматирование, что
+`todayIsoDate()` на фронтенде).
+
+### `GET /backorder/export-xlsx` (обе роли, с Фазы 6 — раньше ops-only)
+
+Отдельный контроллер `BackorderController` (не
+`BackorderUploadsController`, который занят `/backorder-uploads` — аудитом
+загрузок и остаётся ops-only) — этот эндпоинт про текущий *срез* активных
+PI, а не про историю загрузок файла. Отдаёт одну строку на каждый
+`PiLineItem` каждой карточки с `is_archived_shipped = false` (архивные — не
+источник истины "что сейчас открыто", см. "Парсинг бэкордера" выше — не
+включаются), `pi_number`/`pi_status` в начале строки, дальше все 10 колонок
+позиции — как на детальной странице PI, без урезания.
+
+**Скоуп по `customer_id` для `client` (Фаза 6)**: `ops` получает весь
+активный бэкордер, без ограничений; `client` — только строки карточек
+своего `customer_id`. Реализовано в сервисе
+(`BackorderUploadsService.exportXlsx(actor)` добавляет `where.customer =
+{ id: actor.customerId }` при `actor.role === Role.CLIENT` до `piRepo.find`),
+не декоратором — тот же принцип, что и на PI-экспорте выше и на всех
+остальных client-эндпоинтах проекта: `@ScopeByCustomer`/
+`CustomerScopeInterceptor` фильтрует только *ответ* и не может ничего
+сделать со `StreamableFile`. Контроллер больше не помечен
+`@Roles(Role.OPS)` (это единственное, что раньше блокировало `client` —
+`RolesGuard` и так разрешает `client` любой `GET`), `@CurrentUser()`
+прокидывается в сервис. Юнит-тесты заводят двух разных клиентов
+(`clientActor`/`otherClientActor`, разные `customerId`) на общий набор из
+двух карточек разных customer'ов и проверяют, что каждый экспорт содержит
+только "свою" строку — `ops` получает обе. Живая проверка (Claude Browser +
+curl, dev-сервер): два временных customer'а + PI-карточки + пользователи
+(`TEST-` префикс, тот же принцип, что и во всех прежних живых проверках),
+каждый `client` получил в файле ровно одну "свою" строку, `ops` — обе плюс
+весь реальный бэкордер пилота; тестовые данные удалены сразу после.
+
+Шапка файла — две даты, явно разделённые по смыслу (не дата генерации
+выдаётся за дату данных): **"Бэкордер от {дата последней загрузки
+BackorderUpload}"** — берётся из `uploadedAt` самой свежей записи
+`BackorderUpload` (`find({ order: { uploadedAt: "DESC" }, take: 1 })`), не из
+текущей даты — сам факт запроса экспорта не означает, что бэкордер только
+что обновлялся. **"Выгружено: {дата генерации файла}"** — `new Date()` на
+момент запроса. Если ни одной загрузки ещё не было — первая строка
+показывает "—" вместо даты источника (а не текущую дату, что было бы
+неверным утверждением).
+
+Имя файла: `Backorder_source_{дата последней загрузки}_export_{дата
+выгрузки}.xlsx` (`"none"` вместо даты источника, если загрузок ещё не было).
+
+### Штамп даты на сохранённый файл бэкордера
+
+`POST /backorder-uploads` теперь сохраняет исходный файл (через
+`FilesService.save()`, как и раньше) под именем со штампом даты **загрузки**:
+`stampDateOnFilename("MTK ROSBERG INR.xlsx", uploadedAt)` →
+`"MTK ROSBERG INR_2026-09-03.xlsx"` — вставляется перед расширением (файл
+без расширения или начинающийся с точки — дата просто дописывается в конец).
+Только про физическое хранение на диске/в `stored_files` — колонка "Файл" в
+истории загрузок (`GET /backorder-uploads`) по-прежнему показывает
+оригинальное имя как есть, это не переименование ради отображения, а способ
+не потерять "от какой даты какой файл" на диске, когда оригинальное имя от
+CEAT из недели в неделю повторяется (`MTK ROSBERG INR.xlsx`,
+`2907_MTK_ROSBERG_INR.xlsx` — оба реально встречались). `uploadedAt`
+захватывается один раз в начале `BackorderUploadsService.upload()` и
+переиспользуется и для штампа имени, и для самой записи `BackorderUpload` —
+не два отдельных `new Date()`, которые могли бы разойтись на миллисекунды.
+
+### CORS: `Content-Disposition` в `exposedHeaders`
+
+Кросс-origin `fetch()` (дев-режим: фронтенд на `:5173`, бэкенд на `:3000`)
+по умолчанию скрывает от JS все заголовки ответа, кроме "simple"-списка —
+`Content-Disposition` (откуда фронтенд берёт реальное имя файла для
+скачивания) в него не входит. `app.enableCors({ exposedHeaders:
+["Content-Disposition"] })` в [main.ts](src/main.ts) открывает его явно. На
+проде (один origin через nginx-проксирование `/api/*`) это не обязательно,
+но и не мешает.
+
+### Тесты (Фаза 5)
+
+`compute-line-items-totals.spec.ts`, `build-pi-export-workbook.spec.ts`,
+`stamp-date-on-filename.spec.ts`, `build-backorder-export-workbook.spec.ts` —
+новые файлы, чистые функции проверены на реальных exceljs-буферах (не моки),
+тем же приёмом, что `parse-backorder-file.spec.ts` в Фазе 3. Плюс новые
+тесты в `proforma-invoices.service.spec.ts` (форма буфера/имени файла, `404`
+для `client` с чужим PI, успех для своего) и `backorder-uploads.service.spec.ts`
+(штамп даты на сохраняемом файле, фильтрация только активных карточек в
+экспорте, дата последней загрузки в имени файла).
+
+`common/testing/fake-repo.ts` расширен: `find()` теперь понимает `order`
+(сортировка по одному полю ASC/DESC) и `take` (лимit) — нужно
+`exportXlsx()`-у бэкордера, который ищет самую свежую запись
+`BackorderUpload` через `find({ order: { uploadedAt: "DESC" }, take: 1 })`.
+
+Backend test count (после Фазы 5): 57 (было 39 после Фазы 3.1: +18 на
+экспорт). После Фазы 6 (client-скоуп на `/backorder/export-xlsx`): 59 (+2 —
+`exportXlsx` тесты на "ops видит оба customer'а" / "каждый client видит
+только свой").
+
+Живая проверка Фазы 5 (Claude Browser, dev-сервер, `ops`): скачан экспорт
+карточки PI 100039270 (`PI_100039270_export_2026-09-03.xlsx`, 200 OK,
+`Content-Type` верный) — шапка, все 117 строк позиций, строка "Всего"
+совпадает с тем, что показывает `PiDetailPage.tsx` (4895 / 4931 / 272.489 /
+32.4289 / — / 16.1202 / 1255). Скачан экспорт всего бэкордера
+(`Backorder_source_2026-09-03_export_2026-09-03.xlsx`, 200 OK) — 534 строки
+across 25 активных PI, обе даты в шапке — "Бэкордер от 2026-09-03" (дата
+последней реальной загрузки, `03.09.2026, 17:42` в истории загрузок) и
+"Выгружено: 2026-09-03" — верно проставлены, различаются семантически даже
+когда совпадают по значению (загрузка и выгрузка в один день).
+
+Живая проверка Фазы 6 (Claude Browser + curl, dev-сервер, реальная
+Neon-БД): заведены два временных customer'а (`TEST-CustomerA`/`-B`), по
+одной PI-карточке с одной позицией на каждого, три временных пользователя
+(`test-ops-verify@ceat.com`, `test-client-a-verify@ceat.com`,
+`test-client-b-verify@ceat.com`, префикс `-verify@ceat.com` в email — для
+адресного удаления после). `client` A получил ровно одну строку
+(`TEST-900001`), `client` B — ровно одну (`TEST-900002`), `ops` — обе плюс
+весь реальный активный бэкордер пилота (28 PI, 538 строк) в одном файле —
+подтверждает и скоуп, и то, что он не ломает `ops`-путь. Все временные
+customer'ы/карточки/пользователи удалены сразу после проверкой скриптом,
+запущенным и стёртым в той же сессии — в БД не осталось следов.
+
+## Авторизация
+
+Не изменилось с v1 — три глобальных механизма, подключённых один раз в
+`AppModule`:
+
+1. **`JwtAuthGuard`** (`APP_GUARD`) — проверяет JWT, кладёт `{ id, email,
+   role, customerId }` в `request.user`. Пропускает `@Public()`
+   (`POST /auth/login`).
+2. **`RolesGuard`** (`APP_GUARD`) — `ops` всегда разрешено; `client` — 403
+   на контроллерах с `@Roles(Role.OPS)`, 403 на любом методе кроме `GET`,
+   если не `@ClientWriteAllowed()` (в Фазе 1 таких методов ещё нет —
+   `ProformaInvoicesController` целиком read-only).
+3. **`CustomerScopeInterceptor`** (`APP_INTERCEPTOR`) — на контроллерах с
+   `@ScopeByCustomer('путь.до.customer.id')` фильтрует ответ для `client`
+   по `customer_id` из токена. `ProformaInvoicesController` помечен
+   `@ScopeByCustomer('customer.id')` — прямой путь, никакого
+   `EXISTS`-подзапроса больше не нужно (в v1 он требовался только из-за
+   `Container`, у которого не было прямого `customer_id`; `Container`
+   снесён, `common/utils/customer-scope-sql.ts` снесён вместе с ним).
+
+### Матрица доступа (Фаза 3)
+
+| Сущность / действие | ops | client |
+|---|---|---|
+| Customer | всё | read-only, только свой (`id === customerId`) |
+| `GET /proforma-invoices`, `GET /:id` | всё | read-only, только свои (`customer.id`) |
+| `POST /proforma-invoices/upload-pi` | да | 403 |
+| `POST /:id/upload-signed` | да | да, только свой PI (проверка владения в сервисе) |
+| `POST /:id/additional-files` | да, любой PI | да, только свой PI |
+| `POST /:id/propose-replacement` | да | 403 |
+| `POST /:id/replacement-decision` | да | да, только свой PI (проверка владения в сервисе) |
+| `GET /files/:id/download` | всё | только файлы, на которые ссылается PI своего `customer_id` |
+| `GET /backorder-uploads`, `POST /backorder-uploads` | да | 403 (`@Roles(Role.OPS)` на весь контроллер — внутренние данные планирования завода) |
+| `GET /proforma-invoices/:id/export-xlsx` | да, любой PI | да, только свой PI (owner-check в сервисе, `404` иначе) |
+| `GET /backorder/export-xlsx` | да, весь бэкордер | да, только строки своего `customer_id` (скоуп в сервисе) |
+| `PATCH /pi-line-items/:id/priority` | 403 (явная проверка роли в сервисе — см. "Приоритизация позиций") | да, только своя позиция (owner-check в сервисе, `404` иначе) |
+| `PATCH /proforma-invoices/:id/reset-priority` | 403 (та же явная проверка роли) | да, только свой PI (owner-check в сервисе, `404` иначе) |
+
+### Важное изменение: `User` теперь исключает `passwordHash` из сериализации
+
+`ProformaInvoice` — первая сущность в проекте, которая вкладывает `User` в
+свой собственный API-ответ (`piFileUploadedBy`, `signedFileUploadedBy`,
+`pendingReplacementProposedBy`). Раньше `User` никогда не попадал в
+сериализуемый через `ClassSerializerInterceptor` ответ, поэтому отсутствие
+`@Exclude()` на `passwordHash` было безопасно случайно. Добавлен
+`@Exclude({ toPlainOnly: true })` на `User.passwordHash` — без него bcrypt-хэш
+пароля утекал бы в JSON `GET /proforma-invoices/:id`.
+
+### Login / создание пользователей
+
+Не изменилось:
+
+```
+POST /auth/login
+{ "email": "<ops-email>", "password": "..." }
+→ { "accessToken": "eyJhbGciOi..." }
+```
+
+```bash
+npm run seed:user -- --email=<ops-email> --password=change-me --role=ops
+npm run seed:user -- --email=<client-email> --password=change-me --role=client --customerId=<customer-uuid>
+```
+
+## Пересборка схемы (v2, чистый rebuild — не миграция данных)
+
+Единственная стартовая миграция в репозитории — `1788010000000-InitSchema.ts`
+— это **полный `up`**, не diff поверх v1. Она **не может** быть просто
+прогнана поверх БД, где уже стоят таблицы v1 (конфликт имён/типов). Перед
+первым запуском на существующей v1-базе:
+
+```sql
+-- Осторожно: необратимо удаляет все данные v1. Только для пилотной БД,
+-- где явно решено не переносить старые данные.
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+```
+
+затем `npm run migration:run` создаст схему v2 с нуля. На **новой** (пустой)
+БД тот же `migration:run` — единственный нужный шаг. Прод и dev делят одну
+и ту же Neon-БД (см. "Продакшн-деплой v2" ниже) — этот шаг уже выполнен там
+же, в Фазе 1.
+
+## Продакшн-деплой v2
+
+Прод (`<server-ip>`, тот же Contabo VPS, что и в v1) переведён на v2.
+Три вещи, закрытые непосредственно перед этим деплоем:
+
+> **Важно: фронтенд на проде не обновляется автоматически.** После этого
+> первого деплоя фронтенд-фичи (например, строка "Всего" — см. frontend
+> README) продолжали разрабатываться локально, но на прод не
+> перевыкладывались, пока их отдельно не попросили проверить там же — то
+> есть между "готово и проверено на localhost" и "видно на
+> `<server-ip>`" **не было автоматической связи**. Если фича должна
+> быть видна на проде — её нужно явно передеплоить (см. "Сам деплой" ниже),
+> просто `npm run build` локально недостаточно.
+>
+> Отдельная накладка при первом таком повторном деплое фронтенда: билд,
+> который до этого гонялся для локальной проверки в браузере, использует
+> `frontend/.env` (`VITE_API_URL=http://localhost:3000`) — если задеплоить
+> именно этот `dist/` на прод как есть, фронтенд на `<server-ip>`
+> продолжит слать запросы на `localhost:3000` **из браузера пользователя**,
+> что там ничего не резолвит, и залогиниться станет невозможно. Перед
+> **любым** деплоем фронтенда на прод обязательно пересобрать с
+> `VITE_API_URL=/api` (временный `.env.production.local`, см. "Сам деплой"),
+> даже если локально уже есть свежий `dist/` — доверять существующему
+> `dist/` без проверки, каким `VITE_API_URL` он собран, нельзя.
+
+### 1. Смена паролей `<ops-email>` / `<client-email>`
+
+Оба пароля заменены на случайные 20-символьные строки (bcrypt-хэш через
+существующий `bcryptjs`, тем же способом, что и `seed:user`, только `UPDATE`
+вместо `INSERT` — прямого "update password" скрипта в репозитории нет,
+использован одноразовый временный скрипт, удалённый сразу после). Новые
+пароли сообщены пользователю отдельно в чате, не сохранены ни в этом файле,
+ни в логах, ни в каком-либо файле репозитория.
+
+### 2. HTTPS — осознанно отложен
+
+Спросил про домен (свой у CEAT или временный `nip.io`-поддомен) — решено
+пока оставить как есть, плоский HTTP, домена нет. `certbot`/Let's Encrypt не
+настроен. Значит: логин и все запросы всё ещё идут открытым текстом по
+публичному IP — тот же компромисс, что был явно принят при первом v1-деплое
+(см. decision log в памяти проекта), теперь по факту продлён на v2.
+Возвращаться к этому вопросу нужно, если/когда появится домен.
+
+### 3. `nginx` как reverse proxy, порт 3000 закрыт наружу
+
+Раньше: nginx отдавал только статику фронтенда, порт 3000 (сырой Node/Nest)
+был открыт наружу в `ufw` напрямую — фронтенд ходил в API по
+`http://<server-ip>:3000`. Теперь:
+
+```nginx
+server {
+    listen 80 default_server;
+    server_name _;
+    root /var/www/ceat-frontend;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://localhost:3000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+`proxy_pass http://localhost:3000/` с завершающим слэшем (при location
+`/api/`, тоже с слэшем) — стандартный приём nginx для **вырезания**
+префикса: запрос `/api/proforma-invoices` на бэкенд уходит как
+`/proforma-invoices` — ровно то, что ожидают реальные Nest-маршруты (в
+приложении нет `app.setGlobalPrefix()`, все контроллеры объявлены без
+`/api`). `ufw delete allow 3000/tcp` (и v6-версия) — порт 3000 закрыт для
+внешних подключений; nginx достаёт бэкенд по `localhost`, что `ufw` не
+трогает.
+
+Фронтенд собран заново с `VITE_API_URL=/api` (относительный путь — фронтенд
+и API теперь на одном origin, `http://<server-ip>/`, так что запросы
+`fetch('/api/...')` идут без CORS-preflight вообще; `CORS_ORIGIN` в
+бэкендовском `.env` всё равно обновлён на `http://<server-ip>` для
+консистентности, а не по необходимости).
+
+### Сам деплой
+
+1. Локально: `npm run build` (бэкенд) → `dist/`; фронтенд —
+   `VITE_API_URL=/api` во временном `frontend/.env.production.local`,
+   `npm run build`, файл сразу удалён (тот же приём, что и в v1 — иначе
+   каждый последующий локальный `npm run build` фронтенда молча целился бы
+   в прод).
+2. На сервере: бэкап текущих `dist/`, `package.json`, `package-lock.json`,
+   `/var/www/ceat-frontend`, `/etc/nginx/sites-available/ceat-frontend` (с
+   суффиксом `.v1.bak`, не удалены — на случай отката).
+3. `systemctl stop ceat-backend` → распаковка нового `dist`/`package*.json`
+   → `npm ci --omit=dev` от имени `ceatapp` → правка `.env` (снесены
+   `EMAIL_*`/`DEMURRAGE_CHECK_CRON`/`PAYMENT_REMINDER_*` — в v2 их никто не
+   читает, `NotificationsModule` снесён ещё в Фазе 1; `CORS_ORIGIN`
+   обновлён; `DB_*`/`JWT_SECRET`/`UPLOAD_DIR` не тронуты) →
+   `systemctl start ceat-backend`.
+4. Миграции — уже применены к этой же Neon-БД в Фазе 1 (`migration:show` на
+   сервере подтвердил: обе миграции отмечены выполненными, `migration:run`
+   не требовался).
+5. Новый статический билд фронтенда — на место `/var/www/ceat-frontend`.
+6. Новый `nginx`-конфиг (см. выше) → `nginx -t` → `systemctl reload nginx`.
+7. `ufw delete allow 3000/tcp` (+ v6).
+
+### Проверено публично (curl с локальной машины на `<server-ip>`, не по SSH)
+
+- `curl http://<server-ip>:3000/...` — соединение отклонено (порт закрыт).
+- `GET http://<server-ip>/` — `200`, отдаёт новый v2-фронтенд.
+- `GET http://<server-ip>/api/proforma-invoices` без токена — `401`.
+- `POST http://<server-ip>/api/auth/login` новым паролем — `200`,
+  реальный `accessToken`; тем же токеном `GET .../api/proforma-invoices` —
+  все 23 реальные карточки пилота, корректно вычисленный `status`.
+- Логин `<client-email>` новым паролем — `200`.
+- HTTPS-редирект не проверялся — HTTPS не настроен (см. "2." выше).
+
+### Редеплой Фазы 5 (экспорт в Excel)
+
+И бэкенд, и фронтенд обновлены на проде тем же процессом (см. "Сам деплой"
+выше): бэкенд — `npm run build` → tar → SFTP → `systemctl stop` → замена
+`dist`/`package.json`/`package-lock.json` (старые сохранены с суффиксом
+`.bak-20260903-phase5`, не `.v1.bak` — тот зарезервирован под самую первую
+миграцию v1→v2) → `npm ci --omit=dev` от имени `ceatapp` (**нюанс**: `su -
+ceatapp -c '...'` не работает — у `ceatapp` шелл `/usr/sbin/nologin`
+специально, чтобы через него нельзя было залогиниться; сработал `sudo -u
+ceatapp bash -c '...'`, который не консультирует `/etc/passwd`-шелл для
+неинтерактивного запуска команды) → `systemctl start`. Фронтенд — пересборка
+с `VITE_API_URL=/api` (временный `.env.production.local`, удалён сразу после
+билда, как и раньше) → старый `/var/www/ceat-frontend` переименован в
+`.prev` (тот же приём, что уже использовался при редеплое "Всего"-строки) →
+новый билд на его место → `nginx -t` → `reload`.
+
+Проверено публично, не по SSH: `GET http://<server-ip>/` — `200`, новый
+билд; `grep` по задеплоенному JS-бандлу на сервере подтвердил обе новые
+строки кнопок ("Скачать Excel", "Выгрузить весь бэкордер") присутствуют и
+`localhost:3000` нигде не осталось; `GET .../api/api/docs-json` (Swagger
+JSON через nginx-прокси) содержит оба новых пути
+(`/proforma-invoices/{id}/export-xlsx`, `/backorder/export-xlsx`);
+`journalctl` на сервере подтвердил, что Nest замапил оба новых роута при
+старте. Полный поведенческий прогон (реальный логин + реальное скачивание
+файла) на самом проде **не делался** в рамках этой правки — текущий
+`ops`-пароль на проде (заменён отдельно на этапе безопасности, см. выше) не
+хранится ни в памяти агента между сессиями, ни в этом репозитории; структурная
+проверка (роуты замаплены, бандл содержит новый код, порт 3000 по-прежнему
+закрыт наружу) сочтена достаточной, полное поведенческое покрытие уже
+сделано на dev-сервере (см. "Экспорт в Excel" выше).
+
+### Редеплой Фаз 6-7 (client-скоуп бэкордер-экспорта + приоритизация позиций)
+
+Тот же процесс, что и в Фазе 5 (см. выше) — `dist`/`package.json`/
+`package-lock.json` сохранены с суффиксом `.bak-20260911-phase7`, `sudo -u
+ceatapp` для `npm ci --omit=dev`, фронтенд пересобран с `VITE_API_URL=/api`.
+Единственный новый шаг — **миграция `priority_qty`**: прод и dev делят одну
+и ту же Neon-БД (см. "Архитектура" выше), поэтому `npm run migration:run`,
+уже выполненный локально при разработке Фазы 7, **фактически уже применил
+эту миграцию и к проду** до самого деплоя кода. На сервере всё равно
+явно прогнан `migration:show` (подтвердил все 3 миграции как выполненные)
+и `migration:run` (вернул "No migrations are pending") — не чтобы что-то
+реально изменить, а чтобы явно закрыть пункт чеклиста и не полагаться на
+память о том, что БД общая. **Нюанс**: на сервере не установлен
+`ts-node`/`typescript` (`devDependencies`, не ставятся `npm ci
+--omit=dev`) — локальный `npm run migration:run` использует `ts-node -r
+tsconfig-paths/register src/data-source.ts`, что на сервере не сработает;
+вместо этого — обычный `typeorm`-CLI (он в `dependencies`, не
+`devDependencies`) напрямую против скомпилированного `dist/data-source.js`
+(`npx typeorm migration:run -d dist/data-source.js`).
+
+Проверено публично, не по SSH — на этот раз с полным поведенческим
+покрытием, не только структурным (см. оговорку в конце записи о Фазе 5
+выше): временные `ops`/`client`-пользователи и временная
+карточка/customer созданы напрямую в БД (тот же приём, что для живых
+проверок Фаз 6-7 на dev — `-verify@ceat.com`-суффикс для адресного
+удаления после). Через публичный `http://<server-ip>/api/...`
+(не `localhost`, не по SSH): `POST /auth/login` под обеими временными
+ролями — `200`, реальные токены; `GET /proforma-invoices` под `ops` —
+карточка содержит `priorityQty` на позиции и `priorityTotalQty`/
+`priorityTotalContainers` на самой PI; `PATCH
+/pi-line-items/:id/priority` под `client` с допустимым значением — `200`,
+сохранено; тот же запрос с `priorityQty` больше остатка — `400` с точным
+сообщением о границе; тот же запрос под `ops` — `403` ("Приоритизация
+доступна только клиенту"); повторный `GET /proforma-invoices` подтвердил
+`priorityTotalQty`/`priorityTotalContainers` пересчитались после сохранения
+(`0` → `7` / `0.35`). Временные пользователи/карточка/customer удалены
+сразу после — отдельно подтверждено `401` на повторный логин тем же
+временным аккаунтом. `grep` по задеплоенному JS-бандлу подтвердил обе
+новые строки UI ("Режим приоритизации", "Весь остаток") и отсутствие
+`localhost:3000`.
+
+### Редеплой Фазы 7.1 (массовый сброс приоритета)
+
+Тот же процесс. Никакой новой миграции в этой правке — `reset-priority`
+переиспользует уже существующую колонку `priority_qty`, схема не менялась;
+`migration:show`/`migration:run` всё равно прогнаны на сервере явно, как и
+раньше — подтвердили "No migrations are pending", ни одна не пропущена по
+недосмотру.
+
+Проверено публично — на этот раз не только структурно и не только через
+`curl`, а прямо через **живой продовый фронтенд** в браузере
+(`http://<server-ip>`, реальный `client`-логин, реальные клики):
+включён режим приоритизации, "Весь остаток" на второй позиции (баланс
+`5`, loadability `10`) — сеть подтвердила `PATCH
+.../pi-line-items/.../priority` с телом `priorityQty: 5` (не `50` и не
+`0.5` — units-баг, о котором был предыдущий тик задачи, действительно
+отсутствует и на самом проде, не только в dev); сводная строка "Приоритет"
+мгновенно показала `55 / 3 конт.`. Клик "Сбросить" (с застабленным
+`window.confirm`, т.к. автоматизированный браузер тихо отклоняет нативные
+диалоги, если их не обработать явно) — ровно один `PATCH
+.../reset-priority`, ответ содержал обе позиции с `priorityQty: "0.00"` и
+**одинаковым `updatedAt`** (доказательство одного `UPDATE`, не двух
+последовательных записей), таблица и сводная строка обнулились без
+перезагрузки страницы. Временный `customer`/карточка/пользователь удалены
+сразу после, отдельно подтверждён `401` на повторный логин тем же
+временным аккаунтом.
+
+**Уточняющая проверка после этого деплоя**: изначальная живая проверка
+Фазы 7.1 выше кликала только "Весь остаток" — ручной ввод числа с
+клавиатуры отдельно не проверялся, хотя именно ручной ввод был предметом
+исходной жалобы про ввод "в контейнерах". Разобран код заново: `PriorityInput.tsx`'s
+`<Input onChange>` и `<Button onClick="Весь остаток">` вызывают один и тот
+же проп `onChange(value)` — единственный путь дальше, `loadability`
+участвует только в отдельном `containers = value / loadability`,
+локальном для строки "= X конт." и никак не влияющем на то, что уходит в
+`onChange`/`PATCH`. Второго, отдельного обработчика для ручного ввода не
+существует и не существовало — гипотеза "фикс применили только к одной
+из двух веток" не подтвердилась в этом коде.
+
+Живая проверка именно ручного набора (клик по инпуту, `Ctrl+A`, ввод "17"
+с клавиатуры — не через "Весь остаток") на живом проде: карточка с
+остатком `200`, loadability `20` (т.е. умножение/деление дало бы `340`
+или `0.85` — невозможно спутать с верным `17`). Живой пересчёт под
+инпутом сразу показал `= 0.85 конт.`, сводная строка — `17 / 0,85 конт.`;
+debounced `PATCH .../priority` (без клика "Весь остаток") ушёл сам и
+вернул `priorityQty: "17"` — ровно то, что было набрано. Переключение в
+read-only после сохранения подтвердило то же `17`. Временные
+customer/карточка/пользователь удалены после проверки.
+
+### Редеплой Фазы 7.2 (целые штуки в приоритете)
+
+Тот же процесс. Никакой новой миграции — `priority_qty` остаётся
+`numeric(14,2)` в схеме, целочисленность — только на уровне
+DTO/сервиса, не БД (см. "Только целые штуки" выше). `migration:show`/
+`migration:run` на сервере всё равно прогнаны явно — "No migrations are
+pending", как и ожидалось.
+
+Проверено публично — и напрямую `curl`, и через реальный клик/набор с
+клавиатуры на живом продовом фронтенде (`http://<server-ip>`):
+
+- `curl` напрямую на публичный `PATCH .../priority` с `priorityQty: 0.02`
+  — `400`, `{"message":["приоритет указывается в целых штуках"],...}`.
+- В браузере, реальные нажатия клавиш (не программная подмена значения):
+  поле очищено (клик → `Ctrl+A` → `Delete`, явно подтверждено `value ===
+  "0"` перед вводом — after проблема с "0.02" дописавшимся к старому "10"
+  в предыдущей живой проверке (см. запись про Фазу 7.2 выше), в этот раз
+  чистота поля перед вводом проверялась на каждом шаге), затем набрано
+  `.02` посимвольно — поле осталось на `0`, не приняло дробь. Отдельно
+  набрано `5.7` — поле показало `6` (округление, не обрезание). Сводная
+  строка "Приоритет" мгновенно отразила оба случая (`0 / 0 конт.`, затем
+  `6 / 0,3 конт.`); debounced `PATCH` для второго случая вернул
+  `priorityQty: "6"` — то, что видно на экране, то и ушло на сервер.
+  Файл бандла на сервере (`index-CWhCdj6s.js`) совпал по имени/хэшу с
+  тем, что был собран локально непосредственно перед деплоем — не старая
+  закэшированная версия.
+
+Временные customer/карточка/пользователь удалены сразу после проверки,
+отдельно подтверждён `401` на повторный логин тем же временным аккаунтом.
+
+### Редеплой Фазы 7.3 (видимость кнопки "Сбросить")
+
+Фронтенд-only деплой — бэкенд не пересобирался и не перезапускался вообще
+(правка была чисто в JSX-условии рендера, `dist`/`package.json` бэкенда не
+менялись), никаких миграций. Только: `npm run build` фронтенда с
+`VITE_API_URL=/api`, `/var/www/ceat-frontend` → `.prev`, новый билд на его
+место, `nginx -t` → `reload`. `systemctl is-active ceat-backend` после
+деплоя подтвердил, что бэкенд-сервис даже не перезапускался (не
+`stop`/`start`, просто не тронут).
+
+Проверено публично на живом фронтенде (`http://<server-ip>`, реальные
+клики, не `curl` — тут нечего проверять через API, изменение чисто
+визуальное): свежий вход `client` на карточку — виден "Режим
+приоритизации" и "Скачать Excel", "Сбросить" отсутствует; клик "Режим
+приоритизации" — "Сбросить" появляется рядом с "Готово"; клик "Готово" —
+"Сбросить" пропадает снова. Тем же URL под `ops` — ни переключателя, ни
+"Сбросить" не видно вообще ни при каком состоянии. Временные
+customer/карточка/пользователи удалены сразу после, отдельно подтверждён
+`401` на повторный логин тем же временным аккаунтом.
+
+### Что не тронуто / известные пробелы
+
+- HTTPS/домен — см. "2." выше, отложено по решению пользователя.
+- `JWT_SECRET` не менялся (не просили — его смена разлогинила бы всех
+  активных пользователей без необходимости).
+- Neon DB и её пароль — не менялись, тот же инстанс, что и в dev.
+- Собственного скрипта/команды "поменять пароль пользователя" в
+  `package.json` по-прежнему нет — если менять пароли ещё раз, придётся
+  повторить одноразовый скрипт (или дописать нормальную команду, если это
+  станет частой операцией).
+
+## Запуск
+
+### 1. Поднять Postgres
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+Задайте `JWT_SECRET` в `.env` для чего-то отличного от дефолтного. `CORS_ORIGIN` —
+через запятую origin'ы, которым разрешён доступ (по умолчанию
+`http://localhost:5173`, дев-сервер фронтенда).
+
+### 2. Установить зависимости
+
+```bash
+npm install
+```
+
+### 3. Прогнать миграции
+
+См. "Пересборка схемы" выше, если БД уже содержит таблицы v1.
+
+```bash
+npm run migration:run
+```
+
+### 4. Создать первого ops-пользователя (если ещё нет)
+
+```bash
+npm run seed:user -- --email=<ops-email> --password=change-me --role=ops
+```
+
+### 5. Запустить в dev-режиме
+
+```bash
+npm run start:dev
+```
+
+API поднимется на `http://localhost:3000`, Swagger — на
+`http://localhost:3000/api/docs`.
+
+### 6. Запустить фронтенд (отдельно, опционально)
+
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Поднимется на `http://localhost:5173` — см. [frontend/README.md](frontend/README.md).
+
+## Полезные команды
+
+| Команда | Что делает |
+|---|---|
+| `npm run start:dev` | Запуск с watch-режимом |
+| `npm run build` | Сборка в `dist/` |
+| `npm run migration:generate -- src/migrations/Name` | Сгенерировать миграцию из diff entities/БД |
+| `npm run migration:create -- src/migrations/Name` | Создать пустой файл миграции |
+| `npm run migration:run` | Прогнать все непримененные миграции |
+| `npm run migration:revert` | Откатить последнюю миграцию |
+| `npm run seed:user -- --email=... --password=... --role=ops\|client [--customerId=...]` | Создать пользователя |
+| `npm test` | Прогнать unit-тесты (Jest) |
+| `npm run test:watch` | Тесты в watch-режиме |
+
+## Эндпоинты (Фаза 3)
+
+Все эндпоинты (кроме `POST /auth/login`) требуют `Authorization: Bearer
+<token>`.
+
+| Сущность | Base path |
+|---|---|
+| Auth | `POST /auth/login` |
+| Customer | `/customers` (`GET`/`POST`/`PATCH`, без изменений с v1) |
+| ProformaInvoice (PI) | `GET /proforma-invoices`, `GET /proforma-invoices/:id`, `POST /upload-pi` (ops), `POST /:id/upload-signed` (client), `POST /:id/additional-files` (обе роли), `POST /:id/propose-replacement` (ops), `POST /:id/replacement-decision` (client), `GET /:id/export-xlsx` (обе роли, owner-check для client), `PATCH /:id/reset-priority` (client-only, owner-check) — см. "Загрузка файлов и approval-флоу замены", "Экспорт в Excel" и "Приоритизация позиций" выше |
+| Files | `POST /files/upload` (ops-only, multipart, generic — не используется PI-эндпоинтами выше, они грузят файл напрямую через `FilesService`) + `GET /files/:id/download` (любая роль, для `client` — с проверкой владения через PI) |
+| BackorderUpload | `GET /backorder-uploads` (аудит загрузок), `POST /backorder-uploads` (ops-only, multipart) — см. "Парсинг бэкордера" выше |
+| Backorder export | `GET /backorder/export-xlsx` (обе роли, client скоуплен по `customer_id`) — см. "Экспорт в Excel" выше |
+| PiLineItem | `PATCH /pi-line-items/:id/priority` (client-only, owner-check) — см. "Приоритизация позиций" выше |
+
+`PiLineItem` теперь имеет свой первый write-эндпоинт (`priority`, выше) —
+строки по-прежнему создаются/заменяются только через
+`BackorderUploadsService`, читаются как вложенный relation в ответе
+`GET /proforma-invoices/:id`. `PiAdditionalFile` — своей схемы/контроллера
+по-прежнему нет, но записи в неё уже создаются (`POST
+/:id/additional-files`), просто через `ProformaInvoicesController`, не
+отдельный.
+
+Полная схема запросов/ответов — в Swagger (`/api/docs`).
+
+## Явно не реализовано в этой фазе
+
+- Архивация теперь **реализована** автоматически (см. "Парсинг бэкордера" —
+  шаг 5) как побочный эффект каждой загрузки бэкордера; отдельного ручного
+  эндпоинта архивации/разархивации (например, `PATCH .../archive` для
+  ops) по-прежнему нет — единственный способ изменить `is_archived_shipped`
+  — через `POST /backorder-uploads`.
+- Собственного контроллера/CRUD для `PiAdditionalFile` (список/удаление по
+  id) — записи создаются через PI-эндпоинт, отдельно не читаются/не удаляются.
+- MIME-type-валидация загружаемых файлов (принимается что угодно, как и в
+  v1 `POST /files/upload`) — то же и для `POST /backorder-uploads`
+  (принимает что угодно, не только реальный `.xlsx`; `exceljs` сам бросит
+  при действительно нечитаемом файле).
+- Листы `Radial/Bias Dispatch`, `ETD-ETA`, `ETA-15 days` реального
+  бэкордер-файла (уже отгруженное, контейнеры/ETD-ETA, оплата/телекс-релиз)
+  осознанно не разбираются — они описывают состояние за пределами модели
+  `ProformaInvoice` (контейнеры/платежи ещё не спроектированы в v2). Если/
+  когда появится модель для этого — потребуется отдельный парсер, не
+  расширение `parseBackorderFile`.
+- Деплой v2 на прод — сделан, см. "Продакшн-деплой v2" ниже.
