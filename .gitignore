@@ -1,5 +1,35 @@
+# dependencies and build output
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
+
+# environment files (secrets) — only the *.example templates are tracked
 .env
-*.log
+.env.*
+!.env.example
+
+# deploy artifacts and backups
+*.bak
+*.bak-*
+*.tgz
+*.tgz.done
+*.tar.gz
+*.zip
+
+# key material
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.ppk
+
+# runtime data
 uploads/
+*.log
+
+# local tool state (per-machine permissions and locks may hold credentials)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
