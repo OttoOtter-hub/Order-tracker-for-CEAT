@@ -43,6 +43,12 @@ export interface ReadyToShipView {
   totalPossibleContainers: number;
   /** True when there is something to confirm and no unconfirmed container is over 100%. */
   canConfirm: boolean;
+  /**
+   * How many logged actions "undo" can still roll back (those on containers
+   * that are not confirmed). Lets the client show the undo controls even when
+   * every allocation was taken back out and the containers look empty.
+   */
+  undoableActions: number;
   unallocatedLines: UnallocatedLineView[];
   containers: ContainerView[];
 }

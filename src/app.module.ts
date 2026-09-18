@@ -34,6 +34,11 @@ import { ReadyToShipModule } from "./ready-to-ship/ready-to-ship.module";
           config.get<string>("DB_SSL", "false") === "true"
             ? { rejectUnauthorized: false }
             : false,
+        // pg closes idle pooled connections after 10 s by default, and a new
+        // one to a remote Neon costs 1-1.5 s (TLS + auth over the ocean) —
+        // so every pause longer than 10 s between clicks made the next
+        // action that much slower. Keep them for 5 minutes instead.
+        extra: { idleTimeoutMillis: 300_000 },
         autoLoadEntities: true,
         synchronize: false,
       }),

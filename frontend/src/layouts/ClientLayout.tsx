@@ -1,10 +1,13 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
-import { FileText, LogOut } from "lucide-react"
+import { FileText, LogOut, Truck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/auth/AuthContext"
 
-const NAV_ITEMS = [{ to: "/client/pi", label: "Мои PI", icon: FileText }]
+const NAV_ITEMS = [
+  { to: "/client/pi", label: "Мои PI", icon: FileText },
+  { to: "/client/ready-to-ship", label: "Готово к отгрузке", icon: Truck },
+]
 
 export function ClientLayout() {
   const { user, logout } = useAuth()

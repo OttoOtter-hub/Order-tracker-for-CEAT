@@ -7,6 +7,7 @@ import { ClientLayout } from "@/layouts/ClientLayout"
 import { PiListPage } from "@/pages/shared/PiListPage"
 import { PiDetailPage } from "@/pages/shared/PiDetailPage"
 import { BackorderUploadPage } from "@/pages/ops/BackorderUploadPage"
+import { ReadyToShipPage } from "@/pages/shared/ready-to-ship/ReadyToShipPage"
 
 function HomeRedirect() {
   const { user, isLoading } = useAuth()
@@ -36,6 +37,7 @@ function App() {
         <Route index element={<Navigate to="pi" replace />} />
         <Route path="pi" element={<PiListPage />} />
         <Route path="pi/:id" element={<PiDetailPage />} />
+        <Route path="ready-to-ship" element={<ReadyToShipPage />} />
         <Route path="backorder-upload" element={<BackorderUploadPage />} />
       </Route>
 
@@ -50,6 +52,7 @@ function App() {
         <Route index element={<Navigate to="pi" replace />} />
         <Route path="pi" element={<PiListPage />} />
         <Route path="pi/:id" element={<PiDetailPage />} />
+        <Route path="ready-to-ship" element={<ReadyToShipPage />} />
       </Route>
 
       <Route path="/" element={<HomeRedirect />} />

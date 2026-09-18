@@ -133,9 +133,16 @@ export class ReadyToShipService {
         lock: { mode: "pessimistic_write" },
       });
 
-      const allocatedElsewhere = (
-        await allocationRepo.find({ where: { piLineItem: { id: line.id } } })
-      ).reduce((sum, a) => sum + (toNumberOrNull(a.allocatedQty) ?? 0), 0);
+      // One read serves both the remaining-qty check and the upsert below
+      // (every round trip inside the transaction is ~100 ms to Neon).
+      const lineAllocations = await allocationRepo.find({
+        where: { piLineItem: { id: line.id } },
+        relations: ["container"],
+      });
+      const allocatedElsewhere = lineAllocations.reduce(
+        (sum, a) => sum + (toNumberOrNull(a.allocatedQty) ?? 0),
+        0,
+      );
       const remaining =
         (toNumberOrNull(line.currentWeekDispatchQty) ?? 0) - allocatedElsewhere;
       if (dto.qty > remaining) {
@@ -144,9 +151,9 @@ export class ReadyToShipService {
         );
       }
 
-      const existing = await allocationRepo.findOne({
-        where: { container: { id: container.id }, piLineItem: { id: line.id } },
-      });
+      const existing = lineAllocations.find(
+        (a) => a.container.id === container.id,
+      );
       if (existing) {
         await this.setAllocatedQty(
           em,
@@ -178,6 +185,71 @@ export class ReadyToShipService {
     return this.loadView(customerId);
   }
 
+  /**
+   * Takes `qty` units of one allocation back out of a draft container (all of
+   * them deletes the row) and returns them to the unallocated list. Logged as
+   * a negative action, so "undo last" can put it back and the actions of a
+   * container keep summing to its allocations' quantities. Changing the
+   * quantity drops that row's marking file, like any other change.
+   */
+  async remove(
+    dto: { allocationId: string; qty: number },
+    actor: RequestUser,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.requireClient(actor);
+    if (!Number.isInteger(dto.qty) || dto.qty <= 0) {
+      throw new BadRequestException(
+        "количество указывается в целых штуках и должно быть больше нуля",
+      );
+    }
+
+    await this.dataSource.transaction(async (em) => {
+      const allocationRepo = em.getRepository(ContainerLineAllocation);
+      const found = await allocationRepo.findOne({
+        where: { id: dto.allocationId },
+        relations: ["container", "container.customer", "piLineItem"],
+      });
+      if (!found || found.container.customer.id !== customerId) {
+        throw new NotFoundException(
+          `ContainerLineAllocation ${dto.allocationId} not found`,
+        );
+      }
+      if (found.container.isConfirmed) {
+        throw new BadRequestException(
+          "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+        );
+      }
+
+      // Re-read under a row lock so two quick "remove" clicks can't take out
+      // more than is there.
+      const allocation = await allocationRepo.findOne({
+        where: { id: found.id },
+        lock: { mode: "pessimistic_write" },
+      });
+      const current = toNumberOrNull(allocation?.allocatedQty) ?? 0;
+      if (!allocation || dto.qty > current) {
+        throw new BadRequestException(
+          `нельзя убрать ${dto.qty}: в контейнере ${current}`,
+        );
+      }
+
+      await this.reduceAllocation(em, allocation, dto.qty);
+
+      const actionRepo = em.getRepository(AllocationAction);
+      await actionRepo.save(
+        actionRepo.create({
+          customer: { id: customerId } as Customer,
+          container: { id: found.container.id } as ShippingContainer,
+          piLineItem: { id: found.piLineItem.id } as PiLineItem,
+          deltaQty: String(-dto.qty),
+          createdAt: new Date(),
+        }),
+      );
+    });
+
+    return this.loadView(customerId);
+  }
+
   /** Rolls back the newest move among this client's not-confirmed containers. */
   async undoLast(actor: RequestUser): Promise<ReadyToShipView> {
     const customerId = this.requireClient(actor);
@@ -196,20 +268,21 @@ export class ReadyToShipService {
         throw new NotFoundException("нет действий для отмены");
       }
 
-      const allocation = await em
-        .getRepository(ContainerLineAllocation)
-        .findOne({
-          where: {
-            container: { id: last.container.id },
-            piLineItem: { id: last.piLineItem.id },
-          },
-        });
-      if (allocation) {
-        await this.reduceAllocation(
-          em,
-          allocation,
-          toNumberOrNull(last.deltaQty) ?? 0,
-        );
+      const delta = toNumberOrNull(last.deltaQty) ?? 0;
+      if (delta < 0) {
+        await this.restoreRemoved(em, last, -delta);
+      } else {
+        const allocation = await em
+          .getRepository(ContainerLineAllocation)
+          .findOne({
+            where: {
+              container: { id: last.container.id },
+              piLineItem: { id: last.piLineItem.id },
+            },
+          });
+        if (allocation) {
+          await this.reduceAllocation(em, allocation, delta);
+        }
       }
       await em.getRepository(AllocationAction).delete({ id: last.id });
     });
@@ -262,7 +335,10 @@ export class ReadyToShipService {
           const rollback = rollbackByAllocation.get(
             allocationKey(allocation.container.id, allocation.piLineItem.id),
           );
-          if (rollback) {
+          // The log nets out to the allocation's quantity (moves add, removes
+          // subtract); a non-positive net means nothing of it came from this
+          // log, so there is nothing to roll back.
+          if (rollback && rollback > 0) {
             await this.reduceAllocation(em, allocation, rollback);
           }
         }
@@ -467,7 +543,63 @@ export class ReadyToShipService {
       .getRepository(MarkingFile)
       .delete({ allocation: { id: allocation.id } });
     allocation.allocatedQty = String(newQty);
-    await em.getRepository(ContainerLineAllocation).save(allocation);
+    // update(), not save(): save() on an existing entity re-reads it first,
+    // which is one more network round trip for nothing here.
+    await em
+      .getRepository(ContainerLineAllocation)
+      .update({ id: allocation.id }, { allocatedQty: allocation.allocatedQty });
+  }
+
+  /**
+   * Undoing a "remove" puts its quantity back. Strictly last-in-first-out
+   * that always fits, but a confirm can freeze a later move of the same line
+   * (into another container) while this removal is still the newest undoable
+   * action — so the line's remainder is checked instead of assumed.
+   */
+  private async restoreRemoved(
+    em: EntityManager,
+    action: AllocationAction,
+    qty: number,
+  ): Promise<void> {
+    const line = await em.getRepository(PiLineItem).findOne({
+      where: { id: action.piLineItem.id },
+      lock: { mode: "pessimistic_write" },
+    });
+    const allocationRepo = em.getRepository(ContainerLineAllocation);
+    const placed = (
+      await allocationRepo.find({
+        where: { piLineItem: { id: action.piLineItem.id } },
+      })
+    ).reduce((sum, a) => sum + (toNumberOrNull(a.allocatedQty) ?? 0), 0);
+    const remaining =
+      (toNumberOrNull(line?.currentWeekDispatchQty) ?? 0) - placed;
+    if (qty > remaining) {
+      throw new BadRequestException(
+        `нельзя отменить удаление: ${qty} шт. этой строки уже размещены в другом контейнере (свободно ${Math.max(0, remaining)})`,
+      );
+    }
+
+    const existing = await allocationRepo.findOne({
+      where: {
+        container: { id: action.container.id },
+        piLineItem: { id: action.piLineItem.id },
+      },
+    });
+    if (existing) {
+      await this.setAllocatedQty(
+        em,
+        existing,
+        (toNumberOrNull(existing.allocatedQty) ?? 0) + qty,
+      );
+      return;
+    }
+    await allocationRepo.save(
+      allocationRepo.create({
+        container: { id: action.container.id } as ShippingContainer,
+        piLineItem: { id: action.piLineItem.id } as PiLineItem,
+        allocatedQty: String(qty),
+      }),
+    );
   }
 
   private async reduceAllocation(
@@ -586,25 +718,45 @@ export class ReadyToShipService {
   }
 
   private async loadView(customerId: string): Promise<ReadyToShipView> {
+    // Every view is several independent reads, and each one is a network
+    // round trip to Postgres (~100 ms from the VPS to Neon) — so they run
+    // side by side on the pool instead of one after another, and the slot
+    // top-up (its own transaction) only happens when a slot is actually
+    // missing, not on every read.
     const em = this.dataSource.manager;
-    const lines = await this.loadActiveLines(em, customerId);
-    const totalPossibleContainers = computeTotalPossibleContainers(lines);
-    await this.ensureContainerSlots(customerId, totalPossibleContainers);
-
-    const containers = (
-      await em.getRepository(ShippingContainer).find({
+    const containerRepo = em.getRepository(ShippingContainer);
+    const findContainers = () =>
+      containerRepo.find({
         where: { customer: { id: customerId } },
         relations: ["confirmedBy"],
-      })
+      });
+    const [lines, existingContainers] = await Promise.all([
+      this.loadActiveLines(em, customerId),
+      findContainers(),
+    ]);
+    const totalPossibleContainers = computeTotalPossibleContainers(lines);
+    const containers = (
+      existingContainers.length < totalPossibleContainers
+        ? (await this.ensureContainerSlots(customerId, totalPossibleContainers),
+          await findContainers())
+        : existingContainers
     ).sort(byLabel);
     const containerIds = containers.map((c) => c.id);
+    const draftIds = containers.filter((c) => !c.isConfirmed).map((c) => c.id);
 
-    const allocations = containerIds.length
-      ? await em.getRepository(ContainerLineAllocation).find({
-          where: { container: { id: In(containerIds) } },
-          relations: ["container", "piLineItem", "piLineItem.pi"],
-        })
-      : [];
+    const [allocations, undoableActions] = await Promise.all([
+      containerIds.length
+        ? em.getRepository(ContainerLineAllocation).find({
+            where: { container: { id: In(containerIds) } },
+            relations: ["container", "piLineItem", "piLineItem.pi"],
+          })
+        : Promise.resolve([] as ContainerLineAllocation[]),
+      draftIds.length
+        ? em
+            .getRepository(AllocationAction)
+            .count({ where: { container: { id: In(draftIds) } } })
+        : Promise.resolve(0),
+    ]);
     const markings = allocations.length
       ? await em.getRepository(MarkingFile).find({
           where: { allocation: { id: In(allocations.map((a) => a.id)) } },
@@ -697,6 +849,7 @@ export class ReadyToShipService {
       customerId,
       totalPossibleContainers,
       canConfirm: drafts.length > 0 && drafts.every((c) => !c.isOverfilled),
+      undoableActions,
       unallocatedLines,
       containers: containerViews,
     };

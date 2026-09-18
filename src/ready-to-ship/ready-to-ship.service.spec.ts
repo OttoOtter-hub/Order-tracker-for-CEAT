@@ -497,6 +497,200 @@ describe("ReadyToShipService", () => {
     });
   });
 
+  describe("undoableActions", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+    });
+
+    it("counts the actions undo can still roll back, including removals, so undo stays reachable when the containers look empty", async () => {
+      expect((await h.service.getView(clientActor)).undoableActions).toBe(0);
+
+      const afterMove = await move("li-A", 0, 60);
+      expect(afterMove.undoableActions).toBe(1);
+
+      clock.tick();
+      const afterRemove = await h.service.remove(
+        { allocationId: h.allocations.rows[0].id as string, qty: 60 },
+        clientActor,
+      );
+      expect(afterRemove.containers[0].allocations).toHaveLength(0);
+      expect(afterRemove.undoableActions).toBe(2);
+
+      const afterUndo = await h.service.undoLast(clientActor);
+      expect(afterUndo.undoableActions).toBe(1);
+    });
+
+    it("leaves out actions on confirmed containers and is back to 0 after undo-all", async () => {
+      await move("li-A", 0, 100);
+      await h.service.confirm(clientActor);
+      await move("li-B", 1, 100);
+
+      const view = await h.service.getView(clientActor);
+      expect(view.undoableActions).toBe(1); // only C2's move, C1 is frozen
+
+      expect((await h.service.undoAll(clientActor)).undoableActions).toBe(0);
+    });
+  });
+
+  describe("remove", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+    });
+
+    const allocationId = () => h.allocations.rows[0].id as string;
+    const removeQty = (qty: number, actor = clientActor, id?: string) => {
+      clock.tick();
+      return h.service.remove(
+        { allocationId: id ?? allocationId(), qty },
+        actor,
+      );
+    };
+
+    it("takes part of an allocation back out, returns it to the list, and logs a negative action", async () => {
+      await move("li-A", 0, 60);
+
+      const view = await removeQty(20);
+
+      expect(h.allocations.rows[0].allocatedQty).toBe("40");
+      expect(h.actions.rows.map((a) => a.deltaQty)).toEqual(["60", "-20"]);
+      expect(
+        view.unallocatedLines.find((l) => l.piLineItemId === "li-A")
+          ?.remainingQty,
+      ).toBe(110);
+    });
+
+    it("deletes the allocation row when everything is removed", async () => {
+      await move("li-A", 0, 60);
+
+      const view = await removeQty(60);
+
+      expect(h.allocations.rows).toHaveLength(0);
+      expect(view.containers[0].allocations).toHaveLength(0);
+      expect(
+        view.unallocatedLines.find((l) => l.piLineItemId === "li-A")
+          ?.remainingQty,
+      ).toBe(150);
+    });
+
+    it("drops the marking file of the row whose quantity changed", async () => {
+      await move("li-A", 0, 60);
+      h.markings.seed({ id: "m-1", allocation: { id: allocationId() } } as any);
+
+      await removeQty(10);
+
+      expect(h.markings.rows).toHaveLength(0);
+    });
+
+    it("locks the allocation row so two quick removals can't take out more than is there", async () => {
+      await move("li-A", 0, 60);
+
+      await removeQty(10);
+
+      expect(h.allocations.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: "pessimistic_write" } }),
+      );
+    });
+
+    it.each([
+      ["a fractional qty", 1.5],
+      ["zero", 0],
+      ["a negative qty", -3],
+      ["NaN", Number.NaN],
+    ])("rejects %s with 400 and changes nothing", async (_label, qty) => {
+      await move("li-A", 0, 60);
+
+      await expect(removeQty(qty)).rejects.toBeInstanceOf(BadRequestException);
+      expect(h.allocations.rows[0].allocatedQty).toBe("60");
+      expect(h.actions.rows).toHaveLength(1);
+    });
+
+    it("rejects more than the allocation holds", async () => {
+      await move("li-A", 0, 60);
+
+      await expect(removeQty(61)).rejects.toBeInstanceOf(BadRequestException);
+      expect(h.allocations.rows[0].allocatedQty).toBe("60");
+    });
+
+    it("refuses a confirmed container", async () => {
+      await move("li-A", 0, 100);
+      await h.service.confirm(clientActor);
+
+      await expect(removeQty(10)).rejects.toBeInstanceOf(BadRequestException);
+      expect(h.allocations.rows[0].allocatedQty).toBe("100");
+    });
+
+    it("404s another customer's allocation and an unknown one; ops gets 403", async () => {
+      await move("li-A", 0, 60);
+
+      await expect(removeQty(5, otherClientActor)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(removeQty(5, clientActor, "nope")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(removeQty(5, opsActor)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(h.allocations.rows[0].allocatedQty).toBe("60");
+    });
+
+    it("can be undone: undo-last puts a partial removal back and drops its log entry", async () => {
+      await move("li-A", 0, 60);
+      await removeQty(20);
+
+      await h.service.undoLast(clientActor);
+
+      expect(h.allocations.rows[0].allocatedQty).toBe("60");
+      expect(h.actions.rows.map((a) => a.deltaQty)).toEqual(["60"]);
+    });
+
+    it("can be undone: undo-last recreates an allocation that was removed completely", async () => {
+      await move("li-A", 0, 60);
+      await removeQty(60);
+      expect(h.allocations.rows).toHaveLength(0);
+
+      const view = await h.service.undoLast(clientActor);
+
+      expect(h.allocations.rows).toHaveLength(1);
+      expect(h.allocations.rows[0]).toMatchObject({
+        container: { id: containerId(0) },
+        piLineItem: { id: "li-A" },
+        allocatedQty: "60",
+      });
+      expect(view.containers[0].allocations[0].allocatedQty).toBe(60);
+    });
+
+    it("refuses to undo a removal whose quantity has since been placed elsewhere and frozen by a confirm", async () => {
+      await move("li-B", 0, 100); // C1 = B x100 (0.5)
+      await removeQty(100); // C1 empty again
+      await move("li-B", 1, 100); // the same units go to C2
+      await h.service.confirm(clientActor); // C2 confirmed, no longer undoable
+
+      let error: BadRequestException | undefined;
+      await h.service.undoLast(clientActor).catch((e) => (error = e));
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error!.message).toContain("уже размещены в другом контейнере");
+      expect(h.allocations.rows).toHaveLength(1); // only C2's allocation
+      expect(h.actions.rows.some((a) => a.deltaQty === "-100")).toBe(true); // log untouched
+    });
+
+    it("keeps undo-all consistent: moves and removals net out and everything rolls back", async () => {
+      await move("li-A", 0, 60);
+      await removeQty(20); // net 40 in the log, 40 in the allocation
+      await move("li-B", 1, 100);
+      await removeQty(100, clientActor, h.allocations.rows[1].id as string); // B fully out again
+
+      const view = await h.service.undoAll(clientActor);
+
+      expect(h.allocations.rows).toHaveLength(0);
+      expect(h.actions.rows).toHaveLength(0);
+      expect(view.unallocatedLines.map((l) => l.remainingQty).sort()).toEqual([
+        100, 150,
+      ]);
+    });
+  });
+
   describe("undoAll", () => {
     beforeEach(async () => {
       await h.service.getView(clientActor);

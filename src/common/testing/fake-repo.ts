@@ -114,6 +114,11 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
         return result.map((row) => hydrate(row, opts?.relations));
       },
     ),
+    count: jest.fn(async (opts?: { where?: Record<string, any> }) =>
+      opts?.where
+        ? rows.filter((r) => matches(r, opts.where!)).length
+        : rows.length,
+    ),
     delete: jest.fn(async (where: Record<string, any>) => {
       const toRemove = rows.filter((r) => matches(r, where));
       for (const r of toRemove) {

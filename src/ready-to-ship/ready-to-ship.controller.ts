@@ -11,6 +11,7 @@ import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorato
 import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { MoveAllocationDto } from "./dto/move-allocation.dto";
+import { RemoveAllocationDto } from "./dto/remove-allocation.dto";
 import { ReadyToShipService } from "./ready-to-ship.service";
 
 /**
@@ -47,6 +48,12 @@ export class ReadyToShipController {
   @Post("move")
   move(@Body() dto: MoveAllocationDto, @CurrentUser() user: RequestUser) {
     return this.service.move(dto, user);
+  }
+
+  @ClientWriteAllowed()
+  @Post("remove")
+  remove(@Body() dto: RemoveAllocationDto, @CurrentUser() user: RequestUser) {
+    return this.service.remove(dto, user);
   }
 
   @ClientWriteAllowed()
