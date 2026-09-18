@@ -118,13 +118,114 @@ describe("ReadyToShipService", () => {
       ]);
     });
 
-    it("does not top up slots when the client already has containers", async () => {
-      await h.service.getView(clientActor);
-      h.containers.rows.pop();
+    describe("slot top-up (the need grows between backorder uploads)", () => {
+      // A new line of 1.0 container on top of the 2.0 from li-A / li-B.
+      const growByOne = () =>
+        seedLine(h, {
+          id: "li-C",
+          piNumber: "100000003",
+          loadability: "100",
+          dispatchQty: "100",
+        });
 
-      const view = await h.service.getView(clientActor);
+      it("adds only the missing slots, keeping the existing containers and what is in them", async () => {
+        const first = await h.service.getView(clientActor);
+        await move("li-A", 0, 60);
+        const idsBefore = first.containers.map((c) => c.id);
+        growByOne();
 
-      expect(view.containers).toHaveLength(1);
+        const view = await h.service.getView(clientActor);
+
+        expect(view.totalPossibleContainers).toBe(3);
+        expect(view.containers.map((c) => c.label)).toEqual([
+          "Контейнер 1",
+          "Контейнер 2",
+          "Контейнер 3",
+        ]);
+        expect(view.containers.slice(0, 2).map((c) => c.id)).toEqual(idsBefore);
+        expect(view.containers[0].allocations).toHaveLength(1);
+        expect(view.containers[2].allocations).toHaveLength(0);
+      });
+
+      it("is idempotent: a second read after the top-up adds nothing", async () => {
+        await h.service.getView(clientActor);
+        growByOne();
+        await h.service.getView(clientActor);
+
+        await h.service.getView(clientActor);
+
+        expect(h.containers.rows).toHaveLength(3);
+      });
+
+      it("counts confirmed containers toward the total, and tops up beyond them", async () => {
+        await h.service.getView(clientActor);
+        await move("li-A", 0, 100);
+        await h.service.confirm(clientActor);
+
+        const same = await h.service.getView(clientActor);
+        expect(same.containers).toHaveLength(2);
+
+        growByOne();
+        const grown = await h.service.getView(clientActor);
+        expect(grown.containers.map((c) => [c.label, c.isConfirmed])).toEqual([
+          ["Контейнер 1", true],
+          ["Контейнер 2", false],
+          ["Контейнер 3", false],
+        ]);
+      });
+
+      it("never removes slots when the need shrinks", async () => {
+        await h.service.getView(clientActor);
+        h.lines.rows.find((r) => r.id === "li-B")!.pi.isArchivedShipped = true;
+
+        const view = await h.service.getView(clientActor);
+
+        expect(view.totalPossibleContainers).toBe(2); // 150 / 100 = 1.5 -> 2
+        h.lines.rows.find((r) => r.id === "li-A")!.pi.isArchivedShipped = true;
+        const shrunkFurther = await h.service.getView(clientActor);
+        expect(shrunkFurther.totalPossibleContainers).toBe(0);
+        expect(shrunkFurther.containers).toHaveLength(2);
+      });
+
+      it("recreates a slot that went missing, numbering after the highest label in use", async () => {
+        await h.service.getView(clientActor);
+        h.containers.rows.pop();
+
+        const view = await h.service.getView(clientActor);
+
+        expect(view.containers.map((c) => c.label)).toEqual([
+          "Контейнер 1",
+          "Контейнер 2",
+        ]);
+      });
+
+      it("tops up on the read that follows a write too, so every view returned by the API is complete", async () => {
+        await h.service.getView(clientActor);
+        growByOne();
+
+        const view = await move("li-A", 0, 10);
+
+        expect(view.containers).toHaveLength(3);
+      });
+
+      it("tolerates two reads racing to add the same new slot: the loser's unique violation is swallowed", async () => {
+        await h.service.getView(clientActor);
+        growByOne();
+        h.containers.save.mockImplementationOnce(async () => {
+          h.containers.seed({
+            id: "won-3",
+            customer: { id: "cust-1" },
+            label: "Контейнер 3",
+            isConfirmed: false,
+          } as any);
+          throw Object.assign(new Error("duplicate key"), { code: "23505" });
+        });
+
+        const view = await h.service.getView(clientActor);
+
+        expect(view.containers).toHaveLength(3);
+        expect(view.containers[2].id).toBe("won-3");
+      });
     });
 
     it("reports fill percent, overfill and the marking-file counter per container", async () => {

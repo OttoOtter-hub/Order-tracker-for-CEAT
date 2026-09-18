@@ -6,7 +6,7 @@ import { ContainerLineAllocation } from "./container-line-allocation.entity";
 
 /**
  * A container slot in the client's "ready to ship" plan. Slots are created
- * empty (ReadyToShipService.ensureInitialContainers) and filled with
+ * empty (ReadyToShipService.ensureContainerSlots) and filled with
  * ContainerLineAllocation rows; is_confirmed freezes the allocations until
  * ops unlock this specific container.
  */

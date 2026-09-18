@@ -547,12 +547,19 @@ export class ReadyToShipService {
   }
 
   /**
-   * Lazy first-visit initialisation: only when the client has no container
-   * at all. Two concurrent first visits both try to create "Контейнер 1..N";
-   * the (customer_id, label) unique constraint makes the loser fail, which
-   * is swallowed here — the winner's containers are what both then read.
+   * Keeps at least `total` container slots in existence, on every read:
+   * the first visit creates all of them, and when a later backorder upload
+   * raises the need (totalPossibleContainers) only the missing ones are
+   * added. Purely additive — containers are never removed here, so a plan
+   * that shrinks leaves its spare empty slots alone, and confirmed and
+   * half-filled containers count toward the total like any other.
+   *
+   * Two concurrent reads that both find slots missing both try to create the
+   * same new labels; the (customer_id, label) unique constraint makes the
+   * loser fail, which is swallowed here — the winner's containers are what
+   * both then read.
    */
-  private async ensureInitialContainers(
+  private async ensureContainerSlots(
     customerId: string,
     total: number,
   ): Promise<void> {
@@ -564,9 +571,12 @@ export class ReadyToShipService {
         const existing = await em
           .getRepository(ShippingContainer)
           .find({ where: { customer: { id: customerId } } });
-        if (existing.length === 0) {
-          await this.createEmptyContainers(em, customerId, total, existing);
-        }
+        await this.createEmptyContainers(
+          em,
+          customerId,
+          total - existing.length,
+          existing,
+        );
       });
     } catch (err) {
       if (!isUniqueViolation(err)) {
@@ -579,7 +589,7 @@ export class ReadyToShipService {
     const em = this.dataSource.manager;
     const lines = await this.loadActiveLines(em, customerId);
     const totalPossibleContainers = computeTotalPossibleContainers(lines);
-    await this.ensureInitialContainers(customerId, totalPossibleContainers);
+    await this.ensureContainerSlots(customerId, totalPossibleContainers);
 
     const containers = (
       await em.getRepository(ShippingContainer).find({
