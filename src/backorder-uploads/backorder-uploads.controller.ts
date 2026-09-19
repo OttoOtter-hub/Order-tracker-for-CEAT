@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Param,
+  ParseUUIDPipe,
   Post,
+  StreamableFile,
   UploadedFile,
   UseInterceptors,
 } from "@nestjs/common";
@@ -38,6 +41,17 @@ export class BackorderUploadsController {
   @Get()
   findAll() {
     return this.service.findAll();
+  }
+
+  @Get(":id/snapshot-export")
+  async exportSnapshot(
+    @Param("id", ParseUUIDPipe) id: string,
+  ): Promise<StreamableFile> {
+    const { buffer, fileName } = await this.service.exportSnapshot(id);
+    return new StreamableFile(buffer, {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      disposition: `attachment; filename="${encodeURIComponent(fileName)}"`,
+    });
   }
 
   @ApiConsumes("multipart/form-data")

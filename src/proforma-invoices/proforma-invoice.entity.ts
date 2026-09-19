@@ -129,6 +129,20 @@ export class ProformaInvoice extends BaseEntity {
   })
   currentWeekPlanQty: string | null;
 
+  /**
+   * Σ Quantity over every ActualContainerLineItem carrying this PI number,
+   * across all containers ever seen — recomputed from scratch on each
+   * backorder upload (the Dispatch sheets are cumulative), never incremented.
+   */
+  @Column({
+    name: "shipped_qty",
+    type: "numeric",
+    precision: 14,
+    scale: 2,
+    default: 0,
+  })
+  shippedQty: string;
+
   @OneToMany(() => PiAdditionalFile, (file) => file.pi)
   additionalFiles: PiAdditionalFile[];
 

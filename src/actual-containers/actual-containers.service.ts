@@ -1,0 +1,173 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { FindOptionsWhere, Repository } from "typeorm";
+import { RequestUser } from "../common/auth/request-user.interface";
+import { Role } from "../common/enums/role.enum";
+import { DownloadableFile, FilesService } from "../files/files.service";
+import { User } from "../users/user.entity";
+import { ActualContainer } from "./actual-container.entity";
+import { ActualContainerFile } from "./actual-container-file.entity";
+import { UpdateContainerDatesDto } from "./dto/update-container-dates.dto";
+
+const STORED_FILE_URL = /^\/files\/([^/]+)\/download$/;
+
+/** Newest first; a container without any date sinks to the bottom. */
+function byEffectiveEtdDesc(a: ActualContainer, b: ActualContainer): number {
+  const ae = a.overrideEtd ?? a.sourceEtd ?? null;
+  const be = b.overrideEtd ?? b.sourceEtd ?? null;
+  if (ae !== be) {
+    if (ae === null) return 1;
+    if (be === null) return -1;
+    return ae < be ? 1 : -1;
+  }
+  return a.containerNumber < b.containerNumber ? -1 : 1;
+}
+
+/**
+ * Read for both roles, write for ops only (the controllers say which is
+ * which). client is scoped to their own customer here, in the service — a
+ * foreign or unknown id is a 404 either way, so ids can't be probed.
+ */
+@Injectable()
+export class ActualContainersService {
+  constructor(
+    @InjectRepository(ActualContainer)
+    private readonly containerRepo: Repository<ActualContainer>,
+    @InjectRepository(ActualContainerFile)
+    private readonly fileRepo: Repository<ActualContainerFile>,
+    private readonly filesService: FilesService,
+  ) {}
+
+  async findAll(actor: RequestUser): Promise<ActualContainer[]> {
+    const where = this.scope(actor);
+    if (!where) {
+      return [];
+    }
+    const containers = await this.containerRepo.find({ where });
+    return containers.sort(byEffectiveEtdDesc);
+  }
+
+  async findOne(id: string, actor: RequestUser): Promise<ActualContainer> {
+    const where = this.scope(actor);
+    const container = where
+      ? await this.containerRepo.findOne({
+          where: { ...where, id },
+          relations: ["lineItems", "files", "files.uploadedBy"],
+        })
+      : null;
+    if (!container) {
+      throw new NotFoundException(`ActualContainer ${id} not found`);
+    }
+    container.lineItems.sort(
+      (a, b) =>
+        (a.piNumber ?? "").localeCompare(b.piNumber ?? "") ||
+        (a.invoiceNumber ?? "").localeCompare(b.invoiceNumber ?? "") ||
+        (a.materialNum ?? "").localeCompare(b.materialNum ?? ""),
+    );
+    container.files.sort(
+      (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt),
+    );
+    return container;
+  }
+
+  /** Sets and/or clears the manual dates; the file-sourced ones are never touched. */
+  async updateDates(
+    id: string,
+    dto: UpdateContainerDatesDto,
+    actor: RequestUser,
+  ): Promise<ActualContainer> {
+    if (dto.overrideEtd === undefined && dto.overrideEta === undefined) {
+      throw new BadRequestException(
+        "provide overrideEtd and/or overrideEta (a date, or null to clear it)",
+      );
+    }
+    const container = await this.findOne(id, actor);
+    if (dto.overrideEtd !== undefined) {
+      container.overrideEtd = dto.overrideEtd;
+    }
+    if (dto.overrideEta !== undefined) {
+      container.overrideEta = dto.overrideEta;
+    }
+    await this.containerRepo.update(
+      { id: container.id },
+      {
+        overrideEtd: container.overrideEtd,
+        overrideEta: container.overrideEta,
+      },
+    );
+    return this.findOne(id, actor);
+  }
+
+  /** Back to the file's own dates: both overrides cleared. */
+  async resetDates(id: string, actor: RequestUser): Promise<ActualContainer> {
+    const container = await this.findOne(id, actor);
+    await this.containerRepo.update(
+      { id: container.id },
+      { overrideEtd: null, overrideEta: null },
+    );
+    return this.findOne(id, actor);
+  }
+
+  async addFile(
+    id: string,
+    file: Express.Multer.File,
+    description: string | undefined,
+    actor: RequestUser,
+  ): Promise<ActualContainerFile> {
+    const container = await this.findOne(id, actor);
+    const stored = await this.filesService.save(file, actor.id);
+    const saved = await this.fileRepo.save(
+      this.fileRepo.create({
+        actualContainer: { id: container.id } as ActualContainer,
+        fileUrl: `/files/${stored.id}/download`,
+        fileName: stored.originalName ?? file.originalname,
+        uploadedBy: { id: actor.id } as User,
+        uploadedAt: new Date(),
+        description: description?.trim() ? description.trim() : null,
+      }),
+    );
+    return saved;
+  }
+
+  async removeFile(fileId: string): Promise<void> {
+    const existing = await this.fileRepo.findOne({ where: { id: fileId } });
+    if (!existing) {
+      throw new NotFoundException(`ActualContainerFile ${fileId} not found`);
+    }
+    await this.fileRepo.delete({ id: fileId });
+  }
+
+  async downloadFile(
+    fileId: string,
+    actor: RequestUser,
+  ): Promise<DownloadableFile> {
+    const file = await this.fileRepo.findOne({
+      where: { id: fileId },
+      relations: ["actualContainer", "actualContainer.customer"],
+    });
+    if (
+      !file ||
+      (actor.role === Role.CLIENT &&
+        file.actualContainer.customer.id !== actor.customerId)
+    ) {
+      throw new NotFoundException(`ActualContainerFile ${fileId} not found`);
+    }
+    const storedFileId = STORED_FILE_URL.exec(file.fileUrl)?.[1];
+    if (!storedFileId) {
+      throw new NotFoundException(`ActualContainerFile ${fileId} not found`);
+    }
+    return this.filesService.openStoredFile(storedFileId);
+  }
+
+  /** null = this actor can see nothing (a client that belongs to no customer). */
+  private scope(actor: RequestUser): FindOptionsWhere<ActualContainer> | null {
+    if (actor.role !== Role.CLIENT) {
+      return {};
+    }
+    return actor.customerId ? { customer: { id: actor.customerId } } : null;
+  }
+}

@@ -1,6 +1,14 @@
 import * as ExcelJS from "exceljs";
 import { makeFakeRepo } from "../common/testing/fake-repo";
+import { makeFakeDataSource } from "../common/testing/fake-data-source";
 import { BackorderUploadsService } from "./backorder-uploads.service";
+import { BackorderUpload } from "./backorder-upload.entity";
+import { BackorderUploadSnapshot } from "./backorder-upload-snapshot.entity";
+import { ActualContainersImportService } from "../actual-containers/actual-containers-import.service";
+import { ActualContainer } from "../actual-containers/actual-container.entity";
+import { ActualContainerLineItem } from "../actual-containers/actual-container-line-item.entity";
+import { ProformaInvoice } from "../proforma-invoices/proforma-invoice.entity";
+import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { PiCreatedFrom } from "../proforma-invoices/enums/pi-created-from.enum";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
@@ -69,7 +77,7 @@ describe("BackorderUploadsService", () => {
   let backorderRepo: ReturnType<typeof makeFakeRepo>;
   let piRepo: ReturnType<typeof makeFakeRepo>;
   let lineItemsRepo: ReturnType<typeof makeFakeRepo>;
-  let customersService: { findFirst: jest.Mock };
+  let customersService: { findFirst: jest.Mock; findAll: jest.Mock };
   let filesService: { save: jest.Mock };
   let allocationRelink: { relink: jest.Mock };
   let service: BackorderUploadsService;
@@ -99,23 +107,37 @@ describe("BackorderUploadsService", () => {
     backorderRepo = makeFakeRepo();
     piRepo = makeFakeRepo();
     lineItemsRepo = makeFakeRepo();
+    const customer = {
+      id: "cust-1",
+      name: "MTK ROSBERG LLC",
+      customerCode: "66000402",
+    };
     customersService = {
-      findFirst: jest.fn(async () => ({
-        id: "cust-1",
-        name: "MTK ROSBERG LLC",
-      })),
+      findFirst: jest.fn(async () => customer),
+      findAll: jest.fn(async () => [customer]),
     };
     filesService = {
       save: jest.fn(async () => ({ id: "stored-file-1" })),
     };
     allocationRelink = { relink: jest.fn(async () => undefined) };
+    const dataSource = makeFakeDataSource(
+      new Map<unknown, unknown>([
+        [BackorderUpload, backorderRepo],
+        [ProformaInvoice, piRepo],
+        [PiLineItem, lineItemsRepo],
+        [BackorderUploadSnapshot, makeFakeRepo()],
+        [ActualContainer, makeFakeRepo()],
+        [ActualContainerLineItem, makeFakeRepo()],
+      ]),
+    );
     service = new BackorderUploadsService(
       backorderRepo as any,
       piRepo as any,
-      lineItemsRepo as any,
       customersService as any,
       filesService as any,
       allocationRelink as any,
+      dataSource as any,
+      new ActualContainersImportService(customersService as any),
     );
   });
 

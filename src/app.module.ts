@@ -16,6 +16,7 @@ import { PiLineItemsModule } from "./pi-line-items/pi-line-items.module";
 import { BackorderUploadsModule } from "./backorder-uploads/backorder-uploads.module";
 import { FilesModule } from "./files/files.module";
 import { ReadyToShipModule } from "./ready-to-ship/ready-to-ship.module";
+import { ActualContainersModule } from "./actual-containers/actual-containers.module";
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ReadyToShipModule } from "./ready-to-ship/ready-to-ship.module";
     BackorderUploadsModule,
     FilesModule,
     ReadyToShipModule,
+    ActualContainersModule,
   ],
   providers: [
     // Order matters: JwtAuthGuard authenticates (populates request.user),

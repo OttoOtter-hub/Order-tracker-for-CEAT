@@ -1,6 +1,13 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { FindOptionsWhere, In, Repository } from "typeorm";
+import {
+  DataSource,
+  EntityManager,
+  FindOptionsWhere,
+  In,
+  Repository,
+} from "typeorm";
+import { ActualContainersImportService } from "../actual-containers/actual-containers-import.service";
 import { CustomersService } from "../customers/customers.service";
 import { FilesService } from "../files/files.service";
 import { RequestUser } from "../common/auth/request-user.interface";
@@ -12,6 +19,7 @@ import { PiCreatedFrom } from "../proforma-invoices/enums/pi-created-from.enum";
 import { lineItemKey } from "../pi-line-items/utils/line-item-key";
 import { AllocationRelinkService } from "../ready-to-ship/allocation-relink.service";
 import { BackorderUpload } from "./backorder-upload.entity";
+import { BackorderUploadSnapshot } from "./backorder-upload-snapshot.entity";
 import { BackorderUploadResultDto } from "./dto/backorder-upload-result.dto";
 import {
   ParsedBackorderRow,
@@ -20,8 +28,11 @@ import {
 import { computePiAggregates } from "./utils/compute-pi-aggregates";
 import { stampDateOnFilename } from "./utils/stamp-date-on-filename";
 import { buildBackorderExportWorkbook } from "./utils/build-backorder-export-workbook";
+import { buildSnapshotWorkbook, SnapshotSheet } from "./utils/snapshot-sheets";
 import { formatDateForFilename } from "../common/utils/format-date";
 import { toNumberOrNull } from "../common/utils/numeric";
+
+const SNAPSHOT_INSERT_CHUNK = 500;
 
 function numToStr(value: number | null): string | null {
   return value === null ? null : String(value);
@@ -34,11 +45,11 @@ export class BackorderUploadsService {
     private readonly repo: Repository<BackorderUpload>,
     @InjectRepository(ProformaInvoice)
     private readonly piRepo: Repository<ProformaInvoice>,
-    @InjectRepository(PiLineItem)
-    private readonly lineItemsRepo: Repository<PiLineItem>,
     private readonly customersService: CustomersService,
     private readonly filesService: FilesService,
     private readonly allocationRelink: AllocationRelinkService,
+    private readonly dataSource: DataSource,
+    private readonly actualContainersImport: ActualContainersImportService,
   ) {}
 
   findAll(): Promise<BackorderUpload[]> {
@@ -49,18 +60,25 @@ export class BackorderUploadsService {
   }
 
   /**
-   * Parses "Radial BO"/"Bias BO" (see parseBackorderFile — every other
-   * sheet in the source workbook is ignored), groups rows by PI number
-   * (the "Quotation" column), then per PI: creates the card if it doesn't
-   * exist yet (createdFrom = BACKORDER_ROW), un-archives it if it was
-   * previously archived (it's back in the open backorder, so it isn't
-   * "gone" anymore), replaces its line items wholesale with this upload's
-   * rows (a re-upload is a fresh snapshot, not an append — otherwise every
-   * re-upload would double every line), and recomputes its aggregates
-   * (computePiAggregates). Once every card in the upload has been
-   * upserted, any card that's *not* in this snapshot and isn't already
-   * archived gets archived — the file is the source of truth for "what's
-   * still open," so silently dropping out of it means it shipped.
+   * One weekly workbook, one transaction — either everything below lands or
+   * nothing does:
+   *
+   * 1. The upload row, then a raw snapshot of every row of every sheet
+   *    (BackorderUploadSnapshot — the never-overwritten archive).
+   * 2. "Radial BO"/"Bias BO" (see parseBackorderFile), grouped by PI number
+   *    (the "Quotation" column), then per PI: creates the card if it doesn't
+   *    exist yet (createdFrom = BACKORDER_ROW), un-archives it if it was
+   *    previously archived (it's back in the open backorder, so it isn't
+   *    "gone" anymore), replaces its line items wholesale with this upload's
+   *    rows (a re-upload is a fresh snapshot, not an append — otherwise every
+   *    re-upload would double every line), and recomputes its aggregates
+   *    (computePiAggregates). Once every card in the upload has been
+   *    upserted, any card that's *not* in this snapshot and isn't already
+   *    archived gets archived — the file is the source of truth for "what's
+   *    still open," so silently dropping out of it means it shipped.
+   * 3. The shipped-container sheets (ActualContainersImportService): ETD-ETA
+   *    upsert, ETA-15 top-up, Radial/Bias Dispatch line replacement, and the
+   *    shipped_qty recompute of every card.
    *
    * Replacing line items wholesale would silently wipe out a client's
    * priorityQty every week if nothing carried it forward — so before the
@@ -77,6 +95,10 @@ export class BackorderUploadsService {
    * re-pointed at them by the same key (AllocationRelinkService), and only
    * then are the old rows deleted — by id, not by card, since the new rows
    * for the card already exist by that point.
+   *
+   * The raw copy of the file (StoredFile) is written before the transaction
+   * and stays even if the import then fails — it is the audit trail of what
+   * was sent, not part of the imported state.
    */
   async upload(
     file: Express.Multer.File,
@@ -99,7 +121,8 @@ export class BackorderUploadsService {
       actor.id,
     );
 
-    const { rows, skippedRowCount } = await parseBackorderFile(file.buffer);
+    const { rows, skippedRowCount, actualContainers, snapshotSheets } =
+      await parseBackorderFile(file.buffer);
 
     const rowsByPiNumber = new Map<string, ParsedBackorderRow[]>();
     for (const row of rows) {
@@ -111,116 +134,207 @@ export class BackorderUploadsService {
       }
     }
 
-    let newCardsCreated = 0;
-    for (const [piNumber, piRows] of rowsByPiNumber) {
-      let pi = await this.piRepo.findOne({ where: { piNumber } });
-      if (!pi) {
-        const customer = await this.customersService.findFirst();
-        pi = await this.piRepo.save(
-          this.piRepo.create({
-            piNumber,
-            customer,
-            createdFrom: PiCreatedFrom.BACKORDER_ROW,
-            isArchivedShipped: false,
+    return this.dataSource.transaction(async (em) => {
+      const uploadRepo = em.getRepository(BackorderUpload);
+      const piRepo = em.getRepository(ProformaInvoice);
+      const lineItemsRepo = em.getRepository(PiLineItem);
+
+      const upload = await uploadRepo.save(
+        uploadRepo.create({
+          uploadedAt,
+          uploadedBy: { id: actor.id } as User,
+          fileName: file.originalname,
+          rowsProcessed: rows.length,
+          newCardsCreated: 0,
+          cardsArchived: 0,
+          rowsSkipped: skippedRowCount,
+        }),
+      );
+
+      const snapshotRows = await this.saveSnapshot(em, upload, snapshotSheets);
+
+      let newCardsCreated = 0;
+      for (const [piNumber, piRows] of rowsByPiNumber) {
+        let pi = await piRepo.findOne({ where: { piNumber } });
+        if (!pi) {
+          const customer = await this.customersService.findFirst();
+          pi = await piRepo.save(
+            piRepo.create({
+              piNumber,
+              customer,
+              createdFrom: PiCreatedFrom.BACKORDER_ROW,
+              isArchivedShipped: false,
+            }),
+          );
+          newCardsCreated++;
+        } else if (pi.isArchivedShipped) {
+          pi.isArchivedShipped = false;
+        }
+
+        const oldLineItems = await lineItemsRepo.find({
+          where: { pi: { id: pi.id } },
+        });
+        const oldPriorityByKey = new Map<string, number>();
+        for (const old of oldLineItems) {
+          oldPriorityByKey.set(
+            lineItemKey(old.materialNum, old.soNumber),
+            toNumberOrNull(old.priorityQty) ?? 0,
+          );
+        }
+
+        const lineItems = piRows.map((row) => {
+          const newBalance = row.balanceToBeDelivered ?? 0;
+          const carriedPriority =
+            oldPriorityByKey.get(lineItemKey(row.materialNum, row.soNumber)) ??
+            0;
+          const priorityQty = Math.min(carriedPriority, newBalance);
+          return lineItemsRepo.create({
+            pi,
+            soNumber: row.soNumber,
+            materialNum: row.materialNum,
+            materialDesc: row.materialDesc,
+            balanceToBeDelivered: numToStr(row.balanceToBeDelivered),
+            quantity: numToStr(row.quantity),
+            mt: numToStr(row.mt),
+            loadFactor: numToStr(row.loadFactor),
+            loadability: numToStr(row.loadability),
+            currentWeekDispatchLoadFactor: numToStr(
+              row.currentWeekDispatchLoadFactor,
+            ),
+            currentWeekDispatchQty: numToStr(row.currentWeekDispatchQty),
+            priorityQty: String(priorityQty),
+          });
+        });
+        const savedLineItems = await lineItemsRepo.save(lineItems);
+        await this.allocationRelink.relink(oldLineItems, savedLineItems, em);
+        if (oldLineItems.length > 0) {
+          await lineItemsRepo.delete({
+            id: In(oldLineItems.map((old) => old.id)),
+          });
+        }
+
+        const agg = computePiAggregates(piRows);
+        pi.totalQty = String(agg.totalQty);
+        pi.totalContainers = String(agg.totalContainers);
+        pi.qtyPending = String(agg.qtyPending);
+        pi.containersPending = String(agg.containersPending);
+        pi.currentWeekPlanContainers = String(agg.currentWeekPlanContainers);
+        pi.currentWeekPlanQty = String(agg.currentWeekPlanQty);
+        await piRepo.save(pi);
+      }
+
+      // Cards missing from this upload's snapshot (and not already
+      // archived) are presumed fully shipped. Line items are left alone —
+      // they stay as the last known state, per the pilot's own call not to
+      // touch them on archival. Pilot-scale row counts (tens of cards), so a
+      // plain find + filter + bulk save is plenty — no need for a raw SQL
+      // UPDATE.
+      const piNumbersInUpload = new Set(rowsByPiNumber.keys());
+      const notYetArchived = await piRepo.find({
+        where: { isArchivedShipped: false },
+      });
+      const toArchive = notYetArchived.filter(
+        (candidate) => !piNumbersInUpload.has(candidate.piNumber),
+      );
+      for (const candidate of toArchive) {
+        candidate.isArchivedShipped = true;
+      }
+      if (toArchive.length > 0) {
+        await piRepo.save(toArchive);
+      }
+
+      const importResult = await this.actualContainersImport.import(
+        em,
+        actualContainers,
+        upload,
+      );
+
+      upload.newCardsCreated = newCardsCreated;
+      upload.cardsArchived = toArchive.length;
+      const saved = await uploadRepo.save(upload);
+
+      return {
+        id: saved.id,
+        uploadedAt: saved.uploadedAt,
+        fileName: saved.fileName,
+        rowsProcessed: saved.rowsProcessed,
+        newCardsCreated: saved.newCardsCreated,
+        cardsUpdated: rowsByPiNumber.size - newCardsCreated,
+        cardsArchived: saved.cardsArchived,
+        cardsSkippedInvalidRows: saved.rowsSkipped,
+        snapshotRows,
+        actualContainers: importResult,
+      };
+    });
+  }
+
+  /** Writes every parsed row of every sheet; returns how many rows were archived. */
+  private async saveSnapshot(
+    em: EntityManager,
+    upload: BackorderUpload,
+    sheets: SnapshotSheet[],
+  ): Promise<number> {
+    const repo = em.getRepository(BackorderUploadSnapshot);
+    const entities: BackorderUploadSnapshot[] = [];
+    for (const sheet of sheets) {
+      for (const row of sheet.rows) {
+        entities.push(
+          repo.create({
+            backorderUpload: { id: upload.id } as BackorderUpload,
+            sheetName: sheet.sheetName,
+            sheetIndex: sheet.sheetIndex,
+            rowIndex: row.rowIndex,
+            rawRowData: row.cells,
           }),
         );
-        newCardsCreated++;
-      } else if (pi.isArchivedShipped) {
-        pi.isArchivedShipped = false;
       }
+    }
+    if (entities.length > 0) {
+      await repo.save(entities, { chunk: SNAPSHOT_INSERT_CHUNK });
+    }
+    return entities.length;
+  }
 
-      const oldLineItems = await this.lineItemsRepo.find({
-        where: { pi: { id: pi.id } },
-      });
-      const oldPriorityByKey = new Map<string, number>();
-      for (const old of oldLineItems) {
-        oldPriorityByKey.set(
-          lineItemKey(old.materialNum, old.soNumber),
-          toNumberOrNull(old.priorityQty) ?? 0,
-        );
+  /**
+   * The archived raw rows of one upload, written back into a workbook: the
+   * same sheets in the same order, each cell at its original row/column.
+   * Values only — formulas come back as the cached result they had, and
+   * formatting is not archived.
+   */
+  async exportSnapshot(
+    uploadId: string,
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const upload = await this.repo.findOne({ where: { id: uploadId } });
+    if (!upload) {
+      throw new NotFoundException(`BackorderUpload ${uploadId} not found`);
+    }
+    const stored = await this.dataSource.manager
+      .getRepository(BackorderUploadSnapshot)
+      .find({ where: { backorderUpload: { id: uploadId } } });
+
+    const sheetsByIndex = new Map<number, SnapshotSheet>();
+    for (const row of stored) {
+      let sheet = sheetsByIndex.get(row.sheetIndex);
+      if (!sheet) {
+        sheet = {
+          sheetName: row.sheetName,
+          sheetIndex: row.sheetIndex,
+          rows: [],
+        };
+        sheetsByIndex.set(row.sheetIndex, sheet);
       }
-
-      const lineItems = piRows.map((row) => {
-        const newBalance = row.balanceToBeDelivered ?? 0;
-        const carriedPriority =
-          oldPriorityByKey.get(lineItemKey(row.materialNum, row.soNumber)) ?? 0;
-        const priorityQty = Math.min(carriedPriority, newBalance);
-        return this.lineItemsRepo.create({
-          pi,
-          soNumber: row.soNumber,
-          materialNum: row.materialNum,
-          materialDesc: row.materialDesc,
-          balanceToBeDelivered: numToStr(row.balanceToBeDelivered),
-          quantity: numToStr(row.quantity),
-          mt: numToStr(row.mt),
-          loadFactor: numToStr(row.loadFactor),
-          loadability: numToStr(row.loadability),
-          currentWeekDispatchLoadFactor: numToStr(
-            row.currentWeekDispatchLoadFactor,
-          ),
-          currentWeekDispatchQty: numToStr(row.currentWeekDispatchQty),
-          priorityQty: String(priorityQty),
-        });
-      });
-      const savedLineItems = await this.lineItemsRepo.save(lineItems);
-      await this.allocationRelink.relink(oldLineItems, savedLineItems);
-      if (oldLineItems.length > 0) {
-        await this.lineItemsRepo.delete({
-          id: In(oldLineItems.map((old) => old.id)),
-        });
-      }
-
-      const agg = computePiAggregates(piRows);
-      pi.totalQty = String(agg.totalQty);
-      pi.totalContainers = String(agg.totalContainers);
-      pi.qtyPending = String(agg.qtyPending);
-      pi.containersPending = String(agg.containersPending);
-      pi.currentWeekPlanContainers = String(agg.currentWeekPlanContainers);
-      pi.currentWeekPlanQty = String(agg.currentWeekPlanQty);
-      await this.piRepo.save(pi);
+      sheet.rows.push({ rowIndex: row.rowIndex, cells: row.rawRowData });
     }
 
-    // Cards missing from this upload's snapshot (and not already
-    // archived) are presumed fully shipped. Line items are left alone —
-    // they stay as the last known state, per the pilot's own call not to
-    // touch them on archival. Pilot-scale row counts (tens of cards), so a
-    // plain find + filter + bulk save is plenty — no need for a raw SQL
-    // UPDATE.
-    const piNumbersInUpload = new Set(rowsByPiNumber.keys());
-    const notYetArchived = await this.piRepo.find({
-      where: { isArchivedShipped: false },
-    });
-    const toArchive = notYetArchived.filter(
-      (candidate) => !piNumbersInUpload.has(candidate.piNumber),
-    );
-    for (const candidate of toArchive) {
-      candidate.isArchivedShipped = true;
+    const workbook = buildSnapshotWorkbook([...sheetsByIndex.values()]);
+    if (workbook.worksheets.length === 0) {
+      // A workbook with no sheet is not a valid .xlsx.
+      workbook.addWorksheet("empty");
     }
-    if (toArchive.length > 0) {
-      await this.piRepo.save(toArchive);
-    }
-    const cardsArchived = toArchive.length;
-
-    const upload = this.repo.create({
-      uploadedAt,
-      uploadedBy: { id: actor.id } as User,
-      fileName: file.originalname,
-      rowsProcessed: rows.length,
-      newCardsCreated,
-      cardsArchived,
-      rowsSkipped: skippedRowCount,
-    });
-    const saved = await this.repo.save(upload);
-
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
     return {
-      id: saved.id,
-      uploadedAt: saved.uploadedAt,
-      fileName: saved.fileName,
-      rowsProcessed: saved.rowsProcessed,
-      newCardsCreated: saved.newCardsCreated,
-      cardsUpdated: rowsByPiNumber.size - newCardsCreated,
-      cardsArchived: saved.cardsArchived,
-      cardsSkippedInvalidRows: saved.rowsSkipped,
+      buffer: Buffer.from(arrayBuffer),
+      fileName: `Backorder_snapshot_${formatDateForFilename(upload.uploadedAt)}_${upload.id.slice(0, 8)}.xlsx`,
     };
   }
 

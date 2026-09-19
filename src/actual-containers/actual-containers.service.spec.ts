@@ -1,0 +1,381 @@
+import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { Role } from "../common/enums/role.enum";
+import type { RequestUser } from "../common/auth/request-user.interface";
+import { makeFakeRepo } from "../common/testing/fake-repo";
+import { ActualContainersService } from "./actual-containers.service";
+import { AddContainerFileDto } from "./dto/add-container-file.dto";
+import { UpdateContainerDatesDto } from "./dto/update-container-dates.dto";
+
+const ops: RequestUser = {
+  id: "ops-1",
+  email: "o@ceat.com",
+  role: Role.OPS,
+  customerId: null,
+};
+const client: RequestUser = {
+  id: "c-1",
+  email: "c@x.com",
+  role: Role.CLIENT,
+  customerId: "cust-1",
+};
+const otherClient: RequestUser = {
+  id: "c-2",
+  email: "d@y.com",
+  role: Role.CLIENT,
+  customerId: "cust-2",
+};
+const orphanClient: RequestUser = {
+  id: "c-3",
+  email: "e@z.com",
+  role: Role.CLIENT,
+  customerId: null,
+};
+
+function setup() {
+  const containerRepo = makeFakeRepo();
+  const fileRepo = makeFakeRepo();
+  const lineRepo = makeFakeRepo();
+  const filesService = {
+    save: jest.fn(async (file: { originalname: string }) => ({
+      id: "stored-1",
+      originalName: file.originalname,
+    })),
+    openStoredFile: jest.fn(async (id: string) => ({
+      file: { id },
+      stream: {},
+    })),
+  };
+  // Stand-in for the relations the real repo joins: lineItems, files, files.uploadedBy.
+  const withRelations = {
+    ...containerRepo,
+    findOne: async (options: { where: Record<string, any> }) => {
+      const row = await containerRepo.findOne({ where: options.where });
+      return row
+        ? {
+            ...row,
+            lineItems: lineRepo.rows.filter(
+              (l) => l.actualContainer.id === row.id,
+            ),
+            files: fileRepo.rows.filter((f) => f.actualContainer.id === row.id),
+          }
+        : null;
+    },
+  };
+  const filesWithContainer = {
+    ...fileRepo,
+    findOne: async (options: { where: Record<string, any> }) => {
+      const row = await fileRepo.findOne({ where: options.where });
+      if (!row) return null;
+      const container = containerRepo.rows.find(
+        (c) => c.id === row.actualContainer.id,
+      );
+      return { ...row, actualContainer: container };
+    },
+  };
+  const service = new ActualContainersService(
+    withRelations as any,
+    filesWithContainer as any,
+    filesService as any,
+  );
+  containerRepo.seed({
+    id: "ct-1",
+    containerNumber: "AAAA1111111",
+    customer: { id: "cust-1" },
+    sourceEtd: "2026-04-05",
+    sourceEta: "2026-05-20",
+    overrideEtd: null,
+    overrideEta: null,
+  });
+  containerRepo.seed({
+    id: "ct-2",
+    containerNumber: "BBBB2222222",
+    customer: { id: "cust-2" },
+    sourceEtd: "2026-06-01",
+    sourceEta: null,
+    overrideEtd: null,
+    overrideEta: null,
+  });
+  return { service, containerRepo, fileRepo, lineRepo, filesService };
+}
+
+describe("ActualContainersService", () => {
+  describe("scoping", () => {
+    it("ops sees every container, a client only their own customer's", async () => {
+      const { service } = setup();
+
+      expect(
+        (await service.findAll(ops)).map((c) => c.containerNumber).sort(),
+      ).toEqual(["AAAA1111111", "BBBB2222222"]);
+      expect(
+        (await service.findAll(client)).map((c) => c.containerNumber),
+      ).toEqual(["AAAA1111111"]);
+      expect(
+        (await service.findAll(otherClient)).map((c) => c.containerNumber),
+      ).toEqual(["BBBB2222222"]);
+    });
+
+    it("a client with no customer sees nothing at all, not everything", async () => {
+      const { service } = setup();
+
+      expect(await service.findAll(orphanClient)).toEqual([]);
+      await expect(
+        service.findOne("ct-1", orphanClient),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("404s a container of another customer, exactly like a missing one", async () => {
+      const { service } = setup();
+
+      await expect(service.findOne("ct-2", client)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(service.findOne("missing", client)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(service.findOne("ct-2", ops)).resolves.toMatchObject({
+        id: "ct-2",
+      });
+    });
+
+    it("lists newest effective ETD first — the override counts — with undated ones last", async () => {
+      const { service, containerRepo } = setup();
+      containerRepo.seed({
+        id: "ct-3",
+        containerNumber: "CCCC3333333",
+        customer: { id: "cust-1" },
+        sourceEtd: null,
+        overrideEtd: null,
+      });
+      containerRepo.seed({
+        id: "ct-4",
+        containerNumber: "DDDD4444444",
+        customer: { id: "cust-1" },
+        sourceEtd: "2026-01-01",
+        overrideEtd: "2026-09-01",
+      });
+
+      const order = (await service.findAll(ops)).map((c) => c.containerNumber);
+
+      expect(order).toEqual([
+        "DDDD4444444",
+        "BBBB2222222",
+        "AAAA1111111",
+        "CCCC3333333",
+      ]);
+    });
+
+    it("returns line items ordered by PI, invoice, material and files newest first", async () => {
+      const { service, lineRepo, fileRepo } = setup();
+      const inContainer = { id: "ct-1" };
+      lineRepo.seed({
+        id: "l1",
+        actualContainer: inContainer,
+        piNumber: "200",
+        invoiceNumber: "1",
+        materialNum: "9",
+      });
+      lineRepo.seed({
+        id: "l2",
+        actualContainer: inContainer,
+        piNumber: "100",
+        invoiceNumber: "2",
+        materialNum: "5",
+      });
+      lineRepo.seed({
+        id: "l3",
+        actualContainer: inContainer,
+        piNumber: "100",
+        invoiceNumber: "1",
+        materialNum: "7",
+      });
+      fileRepo.seed({
+        id: "f-old",
+        actualContainer: inContainer,
+        uploadedAt: new Date("2026-01-01"),
+      });
+      fileRepo.seed({
+        id: "f-new",
+        actualContainer: inContainer,
+        uploadedAt: new Date("2026-02-01"),
+      });
+
+      const detail = await service.findOne("ct-1", client);
+
+      expect(detail.lineItems.map((l) => l.id)).toEqual(["l3", "l2", "l1"]);
+      expect(detail.files.map((f) => f.id)).toEqual(["f-new", "f-old"]);
+    });
+  });
+
+  describe("dates", () => {
+    it("sets one override without touching the other or the file's dates", async () => {
+      const { service, containerRepo } = setup();
+
+      await service.updateDates("ct-1", { overrideEtd: "2026-04-12" }, ops);
+
+      expect(containerRepo.rows[0]).toMatchObject({
+        overrideEtd: "2026-04-12",
+        overrideEta: null,
+        sourceEtd: "2026-04-05",
+        sourceEta: "2026-05-20",
+      });
+    });
+
+    it("null clears just that override; the other stays", async () => {
+      const { service, containerRepo } = setup();
+      await service.updateDates(
+        "ct-1",
+        { overrideEtd: "2026-04-12", overrideEta: "2026-06-01" },
+        ops,
+      );
+
+      await service.updateDates("ct-1", { overrideEtd: null }, ops);
+
+      expect(containerRepo.rows[0]).toMatchObject({
+        overrideEtd: null,
+        overrideEta: "2026-06-01",
+      });
+    });
+
+    it("rejects an empty body", async () => {
+      const { service } = setup();
+
+      await expect(service.updateDates("ct-1", {}, ops)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("404s a missing container without writing anything", async () => {
+      const { service, containerRepo } = setup();
+
+      await expect(
+        service.updateDates("missing", { overrideEtd: "2026-04-12" }, ops),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(containerRepo.update).not.toHaveBeenCalled();
+    });
+
+    it("reset-dates clears both overrides and leaves the file's dates", async () => {
+      const { service, containerRepo } = setup();
+      await service.updateDates(
+        "ct-1",
+        { overrideEtd: "2026-04-12", overrideEta: "2026-06-01" },
+        ops,
+      );
+
+      await service.resetDates("ct-1", ops);
+
+      expect(containerRepo.rows[0]).toMatchObject({
+        overrideEtd: null,
+        overrideEta: null,
+        sourceEtd: "2026-04-05",
+        sourceEta: "2026-05-20",
+      });
+    });
+
+    describe("body validation", () => {
+      const check = async (body: object) =>
+        (await validate(plainToInstance(UpdateContainerDatesDto, body))).length;
+
+      it("accepts a real calendar date, null and omission", async () => {
+        expect(await check({ overrideEtd: "2026-09-25" })).toBe(0);
+        expect(await check({ overrideEta: null })).toBe(0);
+        expect(await check({})).toBe(0);
+      });
+
+      it("rejects an impossible day, a datetime and free text", async () => {
+        expect(await check({ overrideEtd: "2026-02-30" })).toBeGreaterThan(0);
+        expect(
+          await check({ overrideEta: "2026-09-25T10:00:00Z" }),
+        ).toBeGreaterThan(0);
+        expect(await check({ overrideEtd: "next week" })).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  describe("files", () => {
+    const upload = {
+      originalname: "packing list.pdf",
+      mimetype: "application/pdf",
+      size: 3,
+      buffer: Buffer.from("abc"),
+    };
+
+    it("adds a file to a container with its name, uploader and trimmed description", async () => {
+      const { service, fileRepo, filesService } = setup();
+
+      const saved = await service.addFile(
+        "ct-1",
+        upload as any,
+        "  packing list  ",
+        ops,
+      );
+
+      expect(filesService.save).toHaveBeenCalledWith(upload, ops.id);
+      expect(saved).toMatchObject({
+        actualContainer: { id: "ct-1" },
+        fileUrl: "/files/stored-1/download",
+        fileName: "packing list.pdf",
+        uploadedBy: { id: ops.id },
+        description: "packing list",
+      });
+      expect(fileRepo.rows).toHaveLength(1);
+    });
+
+    it("stores an empty description as null and refuses an unknown container before saving the bytes", async () => {
+      const { service, filesService } = setup();
+
+      const saved = await service.addFile("ct-1", upload as any, "   ", ops);
+      expect(saved.description).toBeNull();
+
+      await expect(
+        service.addFile("missing", upload as any, undefined, ops),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(filesService.save).toHaveBeenCalledTimes(1);
+    });
+
+    it("removes a file row, and 404s one that does not exist", async () => {
+      const { service, fileRepo } = setup();
+      await service.addFile("ct-1", upload as any, undefined, ops);
+      const id = fileRepo.rows[0].id!;
+
+      await service.removeFile(id);
+
+      expect(fileRepo.rows).toHaveLength(0);
+      await expect(service.removeFile(id)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("lets ops and the owning client download, and 404s another customer's client", async () => {
+      const { service, filesService } = setup();
+      await service.addFile("ct-1", upload as any, undefined, ops);
+      const id = (await service.findOne("ct-1", ops)).files[0].id;
+
+      await expect(service.downloadFile(id, ops)).resolves.toBeDefined();
+      await expect(service.downloadFile(id, client)).resolves.toBeDefined();
+      expect(filesService.openStoredFile).toHaveBeenCalledWith("stored-1");
+      await expect(
+        service.downloadFile(id, otherClient),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.downloadFile(id, orphanClient),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.downloadFile("missing", ops)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("validates the description field", async () => {
+      const ok = await validate(
+        plainToInstance(AddContainerFileDto, { description: "x" }),
+      );
+      const tooLong = await validate(
+        plainToInstance(AddContainerFileDto, { description: "x".repeat(501) }),
+      );
+
+      expect(ok).toHaveLength(0);
+      expect(tooLong.length).toBeGreaterThan(0);
+    });
+  });
+});

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { DataSource, In } from "typeorm";
+import { DataSource, EntityManager, In } from "typeorm";
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { AllocationAction } from "./allocation-action.entity";
 import { ContainerLineAllocation } from "./container-line-allocation.entity";
@@ -22,14 +22,27 @@ import { pairLineItems } from "./utils/pair-line-items";
 export class AllocationRelinkService {
   constructor(private readonly dataSource: DataSource) {}
 
-  async relink(oldItems: PiLineItem[], newItems: PiLineItem[]): Promise<void> {
+  /**
+   * `manager` joins the caller's transaction (the backorder upload runs in
+   * one, and the new line items it points at aren't committed yet, so a
+   * separate transaction couldn't even see them); without it the relink is
+   * its own transaction.
+   */
+  async relink(
+    oldItems: PiLineItem[],
+    newItems: PiLineItem[],
+    manager?: EntityManager,
+  ): Promise<void> {
     if (oldItems.length === 0) {
       return;
     }
 
     const newIdByOldId = pairLineItems(oldItems, newItems);
 
-    await this.dataSource.transaction(async (em) => {
+    const run = (work: (em: EntityManager) => Promise<void>) =>
+      manager ? work(manager) : this.dataSource.transaction(work);
+
+    await run(async (em) => {
       const oldIds = oldItems.map((item) => item.id);
       const allocationRepo = em.getRepository(ContainerLineAllocation);
       const actionRepo = em.getRepository(AllocationAction);

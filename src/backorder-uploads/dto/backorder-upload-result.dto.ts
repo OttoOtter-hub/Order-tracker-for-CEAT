@@ -8,6 +8,51 @@ import { ApiProperty } from "@nestjs/swagger";
  * through this one-off response). GET /backorder-uploads (the audit list)
  * still returns full BackorderUpload entities, unaffected.
  */
+export class ActualContainersUploadSummaryDto {
+  @ApiProperty({ description: "Containers first seen in this file (ETD-ETA)" })
+  containersCreated: number;
+
+  @ApiProperty({
+    description:
+      "Containers of ETD-ETA that already existed — their file-sourced fields were overwritten, override dates untouched",
+  })
+  containersUpdated: number;
+
+  @ApiProperty({
+    description:
+      "Containers that appear in Dispatch but in no ETD-ETA row, ever — created with only a container number (no port/vessel/dates)",
+  })
+  containersWithoutTransportData: number;
+
+  @ApiProperty({ description: "ETA-15 rows applied to a known container" })
+  eta15Updated: number;
+
+  @ApiProperty({
+    description: "ETA-15 rows whose container is not known at all — skipped",
+  })
+  eta15Unmatched: number;
+
+  @ApiProperty({
+    description:
+      "Containers whose dispatch lines were replaced (Radial + Bias combined)",
+  })
+  containersReplaced: number;
+
+  @ApiProperty({ description: "Dispatch lines written in this upload" })
+  dispatchLinesStored: number;
+
+  @ApiProperty({
+    description:
+      "Dispatch rows with a container or material but no usable container id / quantity — dropped",
+  })
+  dispatchRowsSkipped: number;
+
+  @ApiProperty({
+    description: "PI cards whose shipped_qty changed in the full recompute",
+  })
+  cardsShippedQtyChanged: number;
+}
+
 export class BackorderUploadResultDto {
   @ApiProperty()
   id: string;
@@ -21,7 +66,9 @@ export class BackorderUploadResultDto {
   @ApiProperty({ description: "Valid data rows read from Radial BO + Bias BO" })
   rowsProcessed: number;
 
-  @ApiProperty({ description: "PI numbers with no existing card, so a new one was created" })
+  @ApiProperty({
+    description: "PI numbers with no existing card, so a new one was created",
+  })
   newCardsCreated: number;
 
   @ApiProperty({
@@ -41,4 +88,13 @@ export class BackorderUploadResultDto {
       "Rows with a material number but no readable PI number (Quotation cell) — couldn't be attributed to any card, so dropped. Distinct from ordinary blank padding rows, which aren't counted.",
   })
   cardsSkippedInvalidRows: number;
+
+  @ApiProperty({
+    description:
+      "Raw rows of every sheet archived in BackorderUploadSnapshot for this upload",
+  })
+  snapshotRows: number;
+
+  @ApiProperty({ type: ActualContainersUploadSummaryDto })
+  actualContainers: ActualContainersUploadSummaryDto;
 }

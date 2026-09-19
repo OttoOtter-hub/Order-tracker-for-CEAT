@@ -1,4 +1,10 @@
 import * as ExcelJS from "exceljs";
+import { toNumberOrNull, toStringOrNull } from "./cell-values";
+import {
+  ParsedActualContainersData,
+  parseActualContainerSheets,
+} from "./parse-actual-containers";
+import { extractSnapshotSheets, SnapshotSheet } from "./snapshot-sheets";
 
 export interface ParsedBackorderRow {
   piNumber: string;
@@ -25,47 +31,20 @@ export interface ParseBackorderFileResult {
    * "invalid," just empty, so they're not counted here.
    */
   skippedRowCount: number;
+  /** The shipped-container sheets: ETD-ETA, ETA-15 days, Radial/Bias Dispatch. */
+  actualContainers: ParsedActualContainersData;
+  /** Every sheet, raw, for the never-overwritten BackorderUploadSnapshot archive. */
+  snapshotSheets: SnapshotSheet[];
 }
 
 /**
- * Only these two sheets are ever parsed — the source workbook (the
- * factory's weekly export) also carries Summary/Dispatch/ETD-ETA/payment
- * sheets that describe already-shipped/invoiced state, out of scope for
- * this endpoint (open backorder only). Any other sheet, present now or
- * added later, is silently ignored rather than guessed at or rejected —
- * this parser's job is "read what it recognizes," not "validate the whole
- * workbook."
+ * The open-backorder rows (`rows`) come from these two sheets only. The
+ * shipped-container sheets are read separately (parseActualContainerSheets),
+ * and every other sheet — present now or added later — is neither guessed at
+ * nor rejected: it just lands in the raw snapshot. This parser's job is
+ * "read what it recognizes," not "validate the whole workbook."
  */
 const TARGET_SHEET_NAMES = new Set(["radial bo", "bias bo"]);
-
-interface CellValueLike {
-  result?: unknown;
-}
-
-function unwrapFormula(value: unknown): unknown {
-  if (value && typeof value === "object" && "result" in (value as CellValueLike)) {
-    return (value as CellValueLike).result;
-  }
-  return value;
-}
-
-function toStringOrNull(value: unknown): string | null {
-  const unwrapped = unwrapFormula(value);
-  if (unwrapped === null || unwrapped === undefined) {
-    return null;
-  }
-  const str = String(unwrapped).trim();
-  return str.length > 0 ? str : null;
-}
-
-function toNumberOrNull(value: unknown): number | null {
-  const unwrapped = unwrapFormula(value);
-  if (unwrapped === null || unwrapped === undefined || unwrapped === "") {
-    return null;
-  }
-  const num = typeof unwrapped === "number" ? unwrapped : Number(unwrapped);
-  return Number.isFinite(num) ? num : null;
-}
 
 interface HeaderInfo {
   rowNumber: number;
@@ -153,7 +132,11 @@ function parseSheet(sheet: ExcelJS.Worksheet): ParseSheetResult {
 
   const rows: ParsedBackorderRow[] = [];
   let skippedRowCount = 0;
-  for (let rowNumber = header.rowNumber + 1; rowNumber <= sheet.rowCount; rowNumber++) {
+  for (
+    let rowNumber = header.rowNumber + 1;
+    rowNumber <= sheet.rowCount;
+    rowNumber++
+  ) {
     const row = sheet.getRow(rowNumber);
     const piNumber = toStringOrNull(getCell(row, columns.piNumber));
     if (!piNumber) {
@@ -171,7 +154,9 @@ function parseSheet(sheet: ExcelJS.Worksheet): ParseSheetResult {
       soNumber: toStringOrNull(getCell(row, columns.soNumber)),
       materialNum: toStringOrNull(getCell(row, columns.materialNum)),
       materialDesc: toStringOrNull(getCell(row, columns.materialDesc)),
-      balanceToBeDelivered: toNumberOrNull(getCell(row, columns.balanceToBeDelivered)),
+      balanceToBeDelivered: toNumberOrNull(
+        getCell(row, columns.balanceToBeDelivered),
+      ),
       quantity: toNumberOrNull(getCell(row, columns.quantity)),
       mt: toNumberOrNull(getCell(row, columns.mt)),
       loadFactor: toNumberOrNull(getCell(row, columns.loadFactor)),
@@ -179,7 +164,9 @@ function parseSheet(sheet: ExcelJS.Worksheet): ParseSheetResult {
       currentWeekDispatchLoadFactor: toNumberOrNull(
         getCell(row, columns.currentWeekDispatchLoadFactor),
       ),
-      currentWeekDispatchQty: toNumberOrNull(getCell(row, columns.currentWeekDispatchQty)),
+      currentWeekDispatchQty: toNumberOrNull(
+        getCell(row, columns.currentWeekDispatchQty),
+      ),
     });
   }
   return { rows, skippedRowCount };
@@ -207,5 +194,10 @@ export async function parseBackorderFile(
     rows.push(...result.rows);
     skippedRowCount += result.skippedRowCount;
   }
-  return { rows, skippedRowCount };
+  return {
+    rows,
+    skippedRowCount,
+    actualContainers: parseActualContainerSheets(workbook),
+    snapshotSheets: extractSnapshotSheets(workbook),
+  };
 }

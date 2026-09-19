@@ -89,6 +89,12 @@ README.
   режима редактирования тоже. Сужено до `isPriorityMode` — видна строго
   пока режим включён. Логика самого действия не менялась, только условие
   рендера в `PiDetailPage.tsx`. См. [frontend/README.md](frontend/README.md).
+- **v2 Фаза 10** (только backend, **не задеплоено**): фактические отгрузки из
+  того же еженедельного файла — Radial/Bias Dispatch, ETD-ETA, ETA-15
+  days (раньше игнорировались) → ActualContainer/строки/файлы, поле
+  shippedQty на карточке PI, неизменяемый архив всех строк всех листов
+  (BackorderUploadSnapshot) и его выгрузка в xlsx; вся загрузка теперь
+  в одной транзакции. См. "Фаза 10: фактические отгрузки" ниже.
 - **v2 Фаза 9** (фронтенд "Готово к отгрузке" + небольшие доработки backend,
   **не задеплоено**): экраны `/client/ready-to-ship` и `/ops/ready-to-ship` — см.
   [frontend/README.md](frontend/README.md); на backend добавлены `POST
@@ -185,10 +191,21 @@ src/
     utils/stamp-date-on-filename.spec.ts
     utils/build-backorder-export-workbook.ts  # Фаза 5: exceljs-воркбук всего бэкордера
     utils/build-backorder-export-workbook.spec.ts
+    backorder-upload-snapshot.entity.ts  # Фаза 10: сырые строки всех листов каждой загрузки
+    utils/cell-values.ts            # Фаза 10: общие чтения ячеек (0 = пусто, дата 1899 = нет даты)
+    utils/parse-actual-containers.ts  # Фаза 10: ETD-ETA / ETA-15 days / Radial+Bias Dispatch
+    utils/snapshot-sheets.ts        # Фаза 10: все листы <-> JSON <-> xlsx (архив и его выгрузка)
+    testing/weekly-workbook.ts      # Фаза 10: сборка xlsx в форме реального файла для тестов
     backorder.controller.ts         # Фаза 5: GET /backorder/export-xlsx — отдельный
                                      # контроллер, т.к. /backorder-uploads уже занят аудитом
                                      # загрузок, а этот эндпоинт про текущий срез PI. Фаза 6:
                                      # открыт и для client (скоуп по customer_id в сервисе)
+
+  actual-containers/                # Фаза 10: фактические контейнеры (см. "Фаза 10" ниже)
+    actual-container.entity.ts, actual-container-line-item.entity.ts, actual-container-file.entity.ts
+    actual-containers-import.service.ts  # часть загрузки бэкордера: upsert/замена/пересчёт shipped_qty
+    actual-containers.service.ts, actual-containers.controller.ts  # GET/PATCH/POST, файлы
+    dto/update-container-dates.dto.ts, dto/add-container-file.dto.ts
 
   common/utils/format-date.ts       # Фаза 5: Date -> "YYYY-MM-DD" (UTC), общее для обоих экспортов
   common/utils/numeric.ts           # Фаза 5: numeric-колонка (строка из Postgres) -> number | null
@@ -1204,6 +1221,133 @@ v2". Фронтенда у этой фазы нет.
 контейнере, `undo-all` с нетто-логом, `undoableActions`; `makeFakeRepo` получил
 `count`.
 
+## Фаза 10: фактические отгрузки из файла бэкордера
+
+Спецификация — `TZ_v2_addendum_actual_containers.md`. Это **не** связано с
+`ShippingContainer` из "Готово к отгрузке" (там черновой план клиента, здесь —
+то, что CEAT уже реально отгрузил, по его собственной системе). Только backend;
+экран "Готовые контейнеры" (раздел 5 ТЗ) и поле "Отправлено" на карточке PI на
+фронтенде **не сделаны** — не входили в этот заход. Не задеплоено, миграция
+`AddActualContainers1789823053358` (аддитивная: 4 новые таблицы и одна колонка
+с `DEFAULT 0`, прежний релиз с ней совместим).
+
+### Что делает `POST /backorder-uploads` теперь
+
+Один файл — **одна транзакция**: либо ложится всё, либо ничего. (Раньше
+транзакции не было вовсе: каждый шаг писался отдельно, ошибка посередине
+оставляла половину загрузки. `AllocationRelinkService.relink` получил
+необязательный `EntityManager`, чтобы работать внутри общей транзакции — новые
+строки PI, на которые он переставляет аллокации, снаружи ещё не видны.) Сырая
+копия файла (`StoredFile`) по-прежнему пишется до транзакции и остаётся даже
+при откате — это след "что прислали", а не часть состояния.
+
+1. **`BackorderUploadSnapshot`** — сырые строки **всех** листов (включая
+   `Summary` и оба BO), по строке на запись: `sheet_name`, `sheet_index`,
+   `row_index` (номер строки в Excel), `raw_row_data` (`jsonb`, ячейки по
+   колонкам; дата хранится как `{"$date": ISO}`, формула — как её значение).
+   Только `INSERT`, никогда не обновляется и не удаляется. Реальный файл — 1219
+   строк на загрузку (~0,5 МБ). `GET /backorder-uploads/:id/snapshot-export`
+   (ops) собирает из них xlsx: те же листы в том же порядке, каждая ячейка на
+   своём месте (формулы — значением, оформление не хранится).
+2. **`ETD-ETA`** → upsert `ActualContainer` по `container_number`: создаётся при
+   первой встрече, при повторной перезаписываются `port`, `vessel_name`,
+   `source_etd/eta`, `preshipment_invoice`, `commercial_invoice_number`;
+   `override_etd/eta` **не трогаются** никогда (только `PATCH .../dates` и
+   `reset-dates`). `last_seen_in_upload_id` двигается у каждого контейнера,
+   названного любым из листов, одним `UPDATE` на всех.
+3. **`ETA-15 days`** → `bl_number`, `currency`, `invoice_value`,
+   `documents_release_status`, `telex_release_date`, `payment_receipt_status` у
+   совпавших по номеру контейнеров; контейнеры, не попавшие в выборку этой
+   недели, сохраняют прежние значения (не обнуляются). Строка с неизвестным
+   контейнером пропускается и считается в ответе (`eta15Unmatched`).
+4. **`Radial Dispatch` + `Bias Dispatch`** → для каждого `Container ID` полная
+   замена его `ActualContainerLineItem`. Оба листа склеиваются **до** замены:
+   в реальном файле 33 контейнера разбиты между Radial и Bias, замена
+   "по листам" стёрла бы первую половину второй. Контейнеры, которых в файле нет,
+   остаются как были (история). Повторяющиеся строки (одинаковый контейнер/PI/
+   материал/инвойс) сохраняются как есть — их в реальном файле две пары, у
+   одной количество разное (3 и 22) — это данные CEAT, не дедуплицируются.
+5. **`ProformaInvoice.shippedQty`** (новая колонка, `numeric(14,2) NOT NULL
+   DEFAULT 0`) = Σ `Quantity` по **всем** `ActualContainerLineItem` с тем же
+   `pi_number`, полный пересчёт с нуля при каждой загрузке (Dispatch кумулятивен,
+   инкремент задвоил бы), включая архивные карточки; пишутся только изменившиеся.
+   Виден в `GET /proforma-invoices` и `/:id` для обеих ролей (это обычная
+   колонка сущности). Строки с `pi_number`, у которого нет карточки, остаются
+   историей контейнера и ни в чьей сумме не участвуют.
+
+В ответ `POST /backorder-uploads` добавлено `snapshotRows` и объект
+`actualContainers` (`containersCreated/Updated`, `containersWithoutTransportData`,
+`eta15Updated/Unmatched`, `containersReplaced`, `dispatchLinesStored`,
+`dispatchRowsSkipped`, `cardsShippedQtyChanged`). Файл без этих листов (как
+старые тесты) оставляет контейнеры и строки нетронутыми.
+
+### Особенности реального файла, которые парсер обязан переваривать
+
+Проверено на `MTK_ROSBERG_INR.xlsx` (7 листов): 77 контейнеров, 602 строки
+Dispatch (Σ 8004 шт., 35 разных PI, из них 23 — карточки из BO), 6 строк
+`ETA-15`.
+
+- Идентификаторы лежат **числами** (`Quotation Number`, `Material Number`,
+  `Invoice Number`, `Preshipment Invoice`, `Commercial Invoice number`): выводятся
+  как текст без `.0`.
+- Литеральный **`0` = "нет"**: `Preshipment Invoice` = 0 у 40 контейнеров из 77,
+  `Vessel Name` = 0 у 11 → `NULL`, а не строка "0".
+- Пустая дата = **`1899-12-30`** (ячейка с датой, в которой лежит 0): `ETA` пуст у
+  50 контейнеров из 77, `Telex release date`/`Payment Receipt Status` — у всех
+  шести → `NULL`. Любая дата до 1900 читается как "нет даты".
+- `Documents Release` = число `0` → хранится как текст `"0"` (что оно значит —
+  из файла не понять, оставлено как есть).
+- Заголовки с хвостовыми пробелами (`Customer code   `), `B/L No.` со
+  хвостовыми пробелами в значении — обрезаются; номер контейнера приводится к
+  верхнему регистру без пробелов. Строка заголовка ищется в первых 5 строках
+  листа (как у BO).
+- **Замечание по данным, не по коду:** у шести контейнеров, попавших в
+  `ETA-15 days`, в листе `ETD-ETA` ETA пуст (1899), а в `ETA-15 days` стоит
+  `2026-09-20`. По ТЗ из `ETA-15` берутся только перечисленные поля, поэтому
+  `source_eta` у них остаётся `NULL`. Если ETA из `ETA-15` нужна как запасной
+  вариант — это одна строка в `ActualContainersImportService`, решать вам.
+
+### Решения там, где ТЗ молчит
+
+- `customer_id` контейнера: сначала по коду клиента из файла
+  (`Customer code` / `Sold to Party Code` = `customers.customer_code`), иначе
+  первый клиент — тот же приём, что для новых карточек PI (пилот с одним
+  клиентом; при втором клиенте надо будет выбирать явно).
+- Контейнер, у которого есть строки Dispatch, но нет строки в `ETD-ETA` ни сейчас,
+  ни раньше: создаётся "голым" (без порта/судна/дат) и считается в
+  `containersWithoutTransportData` — за ним реальные отгруженные количества.
+- Добавлены поля, которых нет в схеме ТЗ: `sheet_index` (порядок листов в
+  выгрузке) в снапшоте, `file_name` в `ActualContainerFile` (показывать имя без
+  обращения к `stored_files`).
+- `PATCH .../dates`: `{ overrideEtd?, overrideEta? }` — дата `YYYY-MM-DD`
+  (календарная, `2026-02-30` → `400`) ставит override, `null` снимает только его,
+  отсутствие поля — не трогает; пустое тело — `400`. `reset-dates` обнуляет оба.
+- Ответы контейнера содержат вычисляемые `etd`/`eta` (override, иначе файл) и
+  `isEtdOverridden`/`isEtaOverridden`; `source_*` и `override_*` тоже отдаются.
+  Список — новейший эффективный ETD первым, без пагинации (пилотный масштаб).
+- Файл контейнера удаляется только как строка `ActualContainerFile`; сам файл на
+  диске и `stored_files` остаются (как у файлов маркировки).
+
+### Проверено
+
+- **Юнит-тесты: 244** (было 190): парсер листов на синтетическом xlsx в форме
+  реального файла (числа-идентификаторы, 0, дата 1899, split Radial/Bias, шапка
+  не в первой строке), архив листов туда-обратно, полный цикл загрузки на fake-репо
+  (создание и upsert, override переживает загрузку, замена строк только у
+  названных контейнеров, `shipped_qty` при нескольких контейнерах на один PI, при
+  повторной загрузке не задваивается, при уменьшении файла падает; история
+  выпавшего контейнера учитывается), скоуп по клиенту, даты, файлы, валидация DTO.
+- **Живой прогон на реальном файле, локально (Postgres 18, не прод):** первая
+  загрузка — 77 контейнеров, 602 строки, 1219 строк снапшота, `shipped_qty` каждой
+  из 26 карточек совпал с независимым расчётом прямо из xlsx; повторная загрузка
+  того же файла ничего не задваивает (строки и суммы те же, снапшоты копятся,
+  отпечаток `pi_line_items` совпал); override дат переживает загрузку, `reset` и
+  `null` работают; клиент видит свои 77, чужой клиент — 0/`404`, скачивание
+  файла чужим — `404`; выгрузка снапшота — все 16401 непустых ячеек совпали с
+  исходником; принудительный сбой посреди загрузки (CHECK на строках Dispatch) →
+  откат **всего**: ни строки загрузки, ни снапшота, ни контейнеров, `pi_line_items`
+  не изменились. `migration:revert` и повторный `run` — чисто.
+
 ## Авторизация
 
 Не изменилось с v1 — три глобальных механизма, подключённых один раз в
@@ -1238,6 +1382,10 @@ v2". Фронтенда у этой фазы нет.
 | `GET /files/:id/download` | всё | только файлы, на которые ссылается PI своего `customer_id` |
 | `GET /backorder-uploads`, `POST /backorder-uploads` | да | 403 (`@Roles(Role.OPS)` на весь контроллер — внутренние данные планирования завода) |
 | `GET /proforma-invoices/:id/export-xlsx` | да, любой PI | да, только свой PI (owner-check в сервисе, `404` иначе) |
+| `GET /backorder-uploads/:id/snapshot-export` | да | 403 (тот же ops-only контроллер) |
+| `GET /actual-containers`, `GET /actual-containers/:id` | всё | только свой `customer_id` (скоуп в сервисе, чужой id — `404`) |
+| `PATCH /actual-containers/:id/dates`, `POST /:id/reset-dates`, `POST /:id/files`, `DELETE /actual-container-files/:id` | да | 403 |
+| `GET /actual-container-files/:id/download` | да | да, только файлы контейнеров своего `customer_id` (`404` иначе) |
 | `GET /backorder/export-xlsx` | да, весь бэкордер | да, только строки своего `customer_id` (скоуп в сервисе) |
 | `PATCH /pi-line-items/:id/priority` | 403 (явная проверка роли в сервисе — см. "Приоритизация позиций") | да, только своя позиция (owner-check в сервисе, `404` иначе) |
 | `PATCH /proforma-invoices/:id/reset-priority` | 403 (та же явная проверка роли) | да, только свой PI (owner-check в сервисе, `404` иначе) |
@@ -1804,6 +1952,7 @@ npm run dev
 | BackorderUpload | `GET /backorder-uploads` (аудит загрузок), `POST /backorder-uploads` (ops-only, multipart) — см. "Парсинг бэкордера" выше |
 | Backorder export | `GET /backorder/export-xlsx` (обе роли, client скоуплен по `customer_id`) — см. "Экспорт в Excel" выше |
 | PiLineItem | `PATCH /pi-line-items/:id/priority` (client-only, owner-check) — см. "Приоритизация позиций" выше |
+| ActualContainer | `GET /actual-containers`, `GET /:id` (обе роли, скоуп по customer), `PATCH /:id/dates`, `POST /:id/reset-dates`, `POST /:id/files` (ops-only, multipart), `DELETE /actual-container-files/:id` (ops-only), `GET /actual-container-files/:id/download` (обе роли, owner-check); `GET /backorder-uploads/:id/snapshot-export` (ops-only) — см. "Фаза 10" выше |
 | Ready to ship | `GET /ready-to-ship` (обе роли), `POST /ready-to-ship/move`, `/remove`, `/undo-last`, `/undo-all`, `/confirm` (client-only), `POST /containers/:id/unlock` (ops-only), `POST`/`DELETE /container-allocations/:id/marking-file` (client-only), `GET /container-allocations/:id/marking-file/download` (обе роли) — см. "Готово к отгрузке" выше |
 
 `PiLineItem` теперь имеет свой первый write-эндпоинт (`priority`, выше) —
