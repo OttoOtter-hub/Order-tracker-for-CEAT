@@ -10,6 +10,7 @@ export const READY_TO_SHIP_EXPORT_HEADERS = [
   "Количество",
   "Load Factor",
   "Проформа (PI)",
+  "Название",
   "SO",
 ] as const;
 
@@ -22,6 +23,8 @@ export interface ReadyToShipExportRow {
   /** quantity / loadability to 4 places; null when the line has no loadability. */
   loadFactor: number | null;
   piNumber: string;
+  /** The card's name, null (an empty cell) when it has none. */
+  piLabel: string | null;
   soNumber: string | null;
 }
 
@@ -87,6 +90,7 @@ export function buildReadyToShipExportRows(
           allocation.loadability,
         ),
         piNumber: allocation.piNumber,
+        piLabel: allocation.piLabel ?? null,
         soNumber: allocation.soNumber,
       });
     }
@@ -103,6 +107,7 @@ export function buildReadyToShipExportRows(
       quantity: line.remainingQty,
       loadFactor: loadFactorOf(line.remainingQty, line.loadability),
       piNumber: line.piNumber,
+      piLabel: line.piLabel ?? null,
       soNumber: line.soNumber,
     });
   }
@@ -128,12 +133,13 @@ export function buildReadyToShipExportWorkbook(
       row.quantity,
       row.loadFactor,
       row.piNumber,
+      row.piLabel,
       row.soNumber,
     ]);
   }
 
   sheet.getColumn(5).numFmt = "0.0000";
-  const widths = [12, 14, 44, 12, 12, 16, 14];
+  const widths = [12, 14, 44, 12, 12, 16, 22, 14];
   widths.forEach((width, index) => {
     sheet.getColumn(index + 1).width = width;
   });

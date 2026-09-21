@@ -22,7 +22,7 @@ import { ContainerDatesEditor } from "@/pages/shared/actual-containers/Container
 import { ContainerFiles } from "@/pages/shared/actual-containers/ContainerFiles"
 import { DateCell } from "@/pages/shared/actual-containers/DateCell"
 import { useTableSort } from "@/hooks/useTableSort"
-import { formatDay, formatNumber } from "@/lib/format"
+import { formatDay, formatNumber, formatPiTitle } from "@/lib/format"
 import { formatStatusValue, sumQuantities } from "@/lib/actualContainers"
 import { getErrorMessage } from "@/lib/errors"
 
@@ -83,8 +83,8 @@ export function ActualContainerDetailPage() {
   // containers can belong to PIs that never had one here). The PI list is
   // already cached by the PI screens, so this is usually free.
   const { data: piList } = usePiListQuery()
-  const piIdByNumber = useMemo(
-    () => new Map((piList ?? []).map((pi) => [pi.piNumber, pi.id])),
+  const piByNumber = useMemo(
+    () => new Map((piList ?? []).map((pi) => [pi.piNumber, pi])),
     [piList]
   )
 
@@ -241,7 +241,8 @@ export function ActualContainerDetailPage() {
                   <TableCell />
                 </TableRow>
                 {lines.map((line) => {
-                  const piId = line.piNumber ? piIdByNumber.get(line.piNumber) : undefined
+                  const pi = line.piNumber ? piByNumber.get(line.piNumber) : undefined
+                  const piId = pi?.id
                   return (
                     <TableRow key={line.id}>
                       <TableCell className="tabular-nums">
@@ -253,7 +254,7 @@ export function ActualContainerDetailPage() {
                             className="underline underline-offset-4"
                             data-pi-link={line.piNumber}
                           >
-                            {line.piNumber}
+                            {formatPiTitle(line.piNumber, pi?.label)}
                           </Link>
                         ) : (
                           <span title="Карточки с таким номером PI нет">

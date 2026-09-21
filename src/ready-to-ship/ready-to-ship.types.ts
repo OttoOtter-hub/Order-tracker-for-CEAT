@@ -2,6 +2,8 @@ export interface UnallocatedLineView {
   piLineItemId: string;
   piId: string;
   piNumber: string;
+  /** The card's client-given name, null when none. */
+  piLabel: string | null;
   soNumber: string | null;
   materialNum: string | null;
   materialDesc: string | null;
@@ -16,6 +18,7 @@ export interface AllocationView {
   piLineItemId: string;
   piId: string;
   piNumber: string;
+  piLabel: string | null;
   soNumber: string | null;
   materialNum: string | null;
   materialDesc: string | null;

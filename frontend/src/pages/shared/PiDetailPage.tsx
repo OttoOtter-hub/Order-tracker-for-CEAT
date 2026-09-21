@@ -29,6 +29,7 @@ import { SortableHead } from "@/components/SortableHead"
 import { FileUploadForm } from "@/components/FileUploadForm"
 import { AddAdditionalFileForm } from "@/pages/shared/AddAdditionalFileForm"
 import { PriorityInput } from "@/pages/shared/PriorityInput"
+import { PiLabelEditor } from "@/pages/shared/PiLabelEditor"
 import { useAuth } from "@/auth/AuthContext"
 import {
   usePiDetailQuery,
@@ -43,7 +44,7 @@ import {
 } from "@/api/proformaInvoices"
 import { useUpdatePriorityMutation } from "@/api/piLineItems"
 import { PI_STATUS } from "@/lib/statusStyles"
-import { formatDateTime, formatNumber } from "@/lib/format"
+import { formatDateTime, formatNumber, formatPiTitle } from "@/lib/format"
 import { openFile } from "@/lib/download"
 import { getErrorMessage } from "@/lib/errors"
 import { useTableSort } from "@/hooks/useTableSort"
@@ -234,6 +235,8 @@ export function PiDetailPage() {
   }, [pi?.lineItems, priorityDrafts])
 
   const editModeActive = isClient && isPriorityMode && !pi?.isArchivedShipped
+  // The name is the client's to set, but only until the PI is signed.
+  const canEditLabel = isClient && !!pi && !pi.signedFileUrl
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Загрузка...</p>
@@ -254,7 +257,16 @@ export function PiDetailPage() {
       </Button>
 
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{pi.piNumber}</h1>
+        {canEditLabel ? (
+          <>
+            <h1 className="text-xl font-semibold">{pi.piNumber}</h1>
+            <PiLabelEditor key={pi.id} piId={pi.id} label={pi.label} />
+          </>
+        ) : (
+          <h1 className="text-xl font-semibold break-words">
+            {formatPiTitle(pi.piNumber, pi.label)}
+          </h1>
+        )}
         <StatusBadge status={pi.status} map={PI_STATUS} />
         {isOps && (
           <span className="text-sm text-muted-foreground">

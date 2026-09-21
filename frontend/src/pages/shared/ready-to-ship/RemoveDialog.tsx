@@ -24,7 +24,7 @@ import {
   useRemoveMutation,
   type ContainerAllocation,
 } from "@/api/readyToShip"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
 
 export interface RemoveTarget {
@@ -116,7 +116,7 @@ function RemoveForm({
           </span>{" "}
           · {allocation.materialDesc ?? "—"}
           <br />
-          PI {allocation.piNumber} · сейчас в контейнере{" "}
+          PI {formatPiTitle(allocation.piNumber, allocation.piLabel)} · сейчас в контейнере{" "}
           {formatNumber(String(allocation.allocatedQty))} шт. Убранное вернётся в
           список готового.
         </DialogDescription>

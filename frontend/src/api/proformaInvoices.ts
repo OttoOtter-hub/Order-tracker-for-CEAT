@@ -38,6 +38,9 @@ export interface ProformaInvoice {
   createdAt: string
   updatedAt: string
   piNumber: string
+  // Set only by the client, at most 30 characters, and only until the signed
+  // file is uploaded — after that the backend refuses any change (400).
+  label: string | null
   customer: Customer
   status: PiStatus
   piFileUrl: string | null
@@ -192,6 +195,28 @@ export function useReplacementDecisionMutation(id: string) {
     onSuccess: (pi) => {
       queryClient.invalidateQueries({ queryKey: ["proforma-invoices"] })
       queryClient.setQueryData(["proforma-invoices", id], pi)
+    },
+  })
+}
+
+export const PI_LABEL_MAX_LENGTH = 30
+
+// PATCH /proforma-invoices/:id/label — client-only, and only while the PI is
+// unsigned (400 afterwards). An empty string or null clears the label.
+export function useUpdateLabelMutation(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (label: string | null) =>
+      apiClient.patch<ProformaInvoice>(`/proforma-invoices/${id}/label`, {
+        label,
+      }),
+    onSuccess: (pi) => {
+      queryClient.invalidateQueries({ queryKey: ["proforma-invoices"] })
+      queryClient.setQueryData(["proforma-invoices", id], pi)
+    },
+    // A refusal means the PI was signed meanwhile — refetch so the field locks.
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ["proforma-invoices"] })
     },
   })
 }

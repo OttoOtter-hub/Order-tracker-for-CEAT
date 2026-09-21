@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { FileUploadForm } from "@/components/FileUploadForm"
 import { useUploadPiMutation } from "@/api/proformaInvoices"
 import { getErrorMessage } from "@/lib/errors"
+import { formatPiTitle } from "@/lib/format"
 
 interface UploadPiDialogProps {
   basePath: string
@@ -31,7 +32,7 @@ export function UploadPiDialog({ basePath }: UploadPiDialogProps) {
     mutation.mutate(file, {
       onSuccess: (pi) => {
         setOpen(false)
-        toast.success(`Проформа ${pi.piNumber} загружена`)
+        toast.success(`Проформа ${formatPiTitle(pi.piNumber, pi.label)} загружена`)
         navigate(`${basePath}/pi/${pi.id}`)
       },
       onError: (error) => {

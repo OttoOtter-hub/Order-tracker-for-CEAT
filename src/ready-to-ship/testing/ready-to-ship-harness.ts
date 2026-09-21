@@ -121,6 +121,7 @@ export function seedLine(
   overrides: {
     id: string;
     piNumber?: string;
+    piLabel?: string | null;
     materialNum?: string;
     soNumber?: string;
     loadability?: string | null;
@@ -134,6 +135,7 @@ export function seedLine(
     pi: {
       id: `pi-of-${overrides.id}`,
       piNumber: overrides.piNumber ?? "100000001",
+      label: overrides.piLabel ?? null,
       isArchivedShipped: overrides.archived ?? false,
       customer: { id: overrides.customerId ?? "cust-1" },
     },

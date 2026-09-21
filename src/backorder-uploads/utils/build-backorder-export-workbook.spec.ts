@@ -32,6 +32,7 @@ function makePi(overrides: Partial<ProformaInvoice>): ProformaInvoice {
     pendingReplacementFileUrl: null,
     signedFileUrl: null,
     piFileUrl: null,
+    label: null,
     lineItems: [],
     ...overrides,
   });
@@ -75,8 +76,56 @@ describe("buildBackorderExportWorkbook", () => {
     const columnHeaderIndex = rows.findIndex((r) => r[1] === "PI Number");
     const dataRows = rows.slice(columnHeaderIndex + 1);
     expect(dataRows).toHaveLength(2);
-    expect(dataRows[0].slice(1, 4)).toEqual(["100037320", pi.status, "A"]);
-    expect(dataRows[1].slice(1, 4)).toEqual(["100037320", pi.status, "B"]);
+    // no label -> the "Название" cell (column 3) is empty
+    expect(dataRows[0].slice(1, 5)).toEqual([
+      "100037320",
+      undefined,
+      pi.status,
+      "A",
+    ]);
+    expect(dataRows[1].slice(1, 5)).toEqual([
+      "100037320",
+      undefined,
+      pi.status,
+      "B",
+    ]);
+  });
+
+  it("puts the label next to the PI number on every row of that PI, empty for a PI without one", async () => {
+    const labelled = makePi({
+      piNumber: "100039270",
+      label: "Орел",
+      lineItems: [
+        makeLineItem({ materialNum: "A" }),
+        makeLineItem({ materialNum: "B" }),
+      ],
+    });
+    const plain = makePi({
+      piNumber: "100039271",
+      label: null,
+      lineItems: [makeLineItem({ materialNum: "C" })],
+    });
+
+    const rows = await readWorkbookRows(
+      buildBackorderExportWorkbook(
+        [labelled, plain],
+        new Date("2026-09-01T00:00:00Z"),
+        new Date("2026-09-03T00:00:00Z"),
+      ),
+    );
+
+    const headerIndex = rows.findIndex((r) => r[1] === "PI Number");
+    expect(rows[headerIndex].slice(1, 4)).toEqual([
+      "PI Number",
+      "Название",
+      "PI Status",
+    ]);
+    const dataRows = rows.slice(headerIndex + 1);
+    expect(dataRows.map((r) => [r[1], r[2], r[4]])).toEqual([
+      ["100039270", "Орел", "A"],
+      ["100039270", "Орел", "B"],
+      ["100039271", undefined, "C"],
+    ]);
   });
 
   it("adds Priority Qty / Priority Load Factor after the existing columns, dashes where there is no priority", async () => {
@@ -121,14 +170,14 @@ describe("buildBackorderExportWorkbook", () => {
     );
 
     const headerRow = rows.find((r) => r[1] === "PI Number")!;
-    expect(headerRow.slice(1)).toHaveLength(14);
-    expect(headerRow.slice(12)).toEqual([
+    expect(headerRow.slice(1)).toHaveLength(15);
+    expect(headerRow.slice(13)).toEqual([
       "Current Week Dispatch Qty",
       "Priority Qty",
       "Priority Load Factor",
     ]);
     const priorityOf = (material: string) =>
-      rows.find((r) => r[3] === material)!.slice(13);
+      rows.find((r) => r[4] === material)!.slice(14);
     expect(priorityOf("A")).toEqual([40, 0.2]);
     expect(priorityOf("B")).toEqual(["—", "—"]);
     expect(priorityOf("C")).toEqual([25, "—"]);
@@ -161,6 +210,6 @@ describe("buildBackorderExportWorkbook", () => {
     const columnHeaderIndex = rows.findIndex((r) => r[1] === "PI Number");
     const dataRows = rows.slice(columnHeaderIndex + 1);
     expect(dataRows).toHaveLength(1);
-    expect(dataRows[0][3]).toBe("ACTIVE");
+    expect(dataRows[0][4]).toBe("ACTIVE");
   });
 });

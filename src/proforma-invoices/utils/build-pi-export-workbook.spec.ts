@@ -33,6 +33,7 @@ function makePi(overrides: Partial<ProformaInvoice>): ProformaInvoice {
     pendingReplacementFileUrl: null,
     signedFileUrl: null,
     piFileUrl: null,
+    label: null,
     lineItems: [],
     ...overrides,
   });
@@ -81,7 +82,9 @@ describe("buildPiExportWorkbook", () => {
 
     // header block
     expect(rows[0].slice(1)).toEqual(["PI number", "100037320"]);
-    expect(rows[1].slice(1)).toEqual([
+    expect(rows[1][1]).toBe("Название");
+    expect(rows[1][2]).toBeUndefined(); // no label -> empty cell
+    expect(rows[2].slice(1)).toEqual([
       "Status",
       PiStatus.MISSING_SIGNED_DOCUMENT,
     ]);
@@ -126,6 +129,26 @@ describe("buildPiExportWorkbook", () => {
     expect(totalsRow[10]).toBe(2); // cwdp qty
     expect(totalsRow[11]).toBe("—"); // no priorities at all
     expect(totalsRow[12]).toBe("—");
+  });
+
+  describe("label", () => {
+    it("writes the label in the header block right under the PI number", async () => {
+      const rows = await readWorkbookRows(
+        buildPiExportWorkbook(makePi({ label: "Орел" })),
+      );
+
+      expect(rows[0].slice(1)).toEqual(["PI number", "100037320"]);
+      expect(rows[1].slice(1)).toEqual(["Название", "Орел"]);
+    });
+
+    it("leaves the value cell empty when there is no label", async () => {
+      const rows = await readWorkbookRows(
+        buildPiExportWorkbook(makePi({ label: null })),
+      );
+
+      expect(rows[1][1]).toBe("Название");
+      expect(rows[1][2]).toBeUndefined();
+    });
   });
 
   describe("priority columns", () => {

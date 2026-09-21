@@ -12,6 +12,7 @@ function allocation(overrides: Record<string, unknown>) {
     piLineItemId: "l",
     piId: "p",
     piNumber: "100000001",
+    piLabel: null,
     soNumber: "300000001",
     materialNum: "MAT",
     materialDesc: "some tyre",
@@ -32,6 +33,7 @@ function line(overrides: Record<string, unknown>) {
     piLineItemId: "l",
     piId: "p",
     piNumber: "100000001",
+    piLabel: null,
     soNumber: "300000001",
     materialNum: "MAT",
     materialDesc: "some tyre",
@@ -63,6 +65,7 @@ describe("buildReadyToShipExportRows", () => {
             allocatedQty: 30,
             loadability: 50,
             piNumber: "100037320",
+            piLabel: "Орел",
             soNumber: "300029159",
           }),
         ]),
@@ -74,6 +77,7 @@ describe("buildReadyToShipExportRows", () => {
           remainingQty: 70,
           loadability: 50,
           piNumber: "100037321",
+          piLabel: "Сокол",
           soNumber: "300029160",
         }),
       ],
@@ -87,6 +91,7 @@ describe("buildReadyToShipExportRows", () => {
         quantity: 30,
         loadFactor: 0.6,
         piNumber: "100037320",
+        piLabel: "Орел",
         soNumber: "300029159",
       },
       {
@@ -96,9 +101,21 @@ describe("buildReadyToShipExportRows", () => {
         quantity: 70,
         loadFactor: 1.4,
         piNumber: "100037321",
+        piLabel: "Сокол",
         soNumber: "300029160",
       },
     ]);
+  });
+
+  it("carries a missing label as null, on both container rows and OK to mix rows", () => {
+    const rows = buildReadyToShipExportRows({
+      containers: [
+        container("Контейнер 1", [allocation({ piLabel: undefined })]),
+      ],
+      unallocatedLines: [line({ piLabel: undefined })],
+    });
+
+    expect(rows.map((r) => r.piLabel)).toEqual([null, null]);
   });
 
   it("rounds the load factor to 4 places", () => {
@@ -187,7 +204,7 @@ describe("buildReadyToShipExportWorkbook", () => {
     return loaded;
   }
 
-  it("writes one sheet with the seven headers, then the rows: numbers as numbers, blanks empty", async () => {
+  it("writes one sheet with the eight headers, then the rows: numbers as numbers, blanks empty", async () => {
     const workbook = await reload(
       buildReadyToShipExportWorkbook({
         containers: [
@@ -196,6 +213,7 @@ describe("buildReadyToShipExportWorkbook", () => {
               materialNum: "107071",
               allocatedQty: 30,
               loadability: 50,
+              piLabel: "Орел",
             }),
           ]),
         ],
@@ -221,6 +239,7 @@ describe("buildReadyToShipExportWorkbook", () => {
       "Количество",
       "Load Factor",
       "Проформа (PI)",
+      "Название",
       "SO",
     ]);
     expect(values(2)).toEqual([
@@ -230,13 +249,15 @@ describe("buildReadyToShipExportWorkbook", () => {
       30,
       0.6,
       "100000001",
+      "Орел",
       "300000001",
     ]);
     const noLoad = sheet.getRow(3);
     expect(noLoad.getCell(1).value).toBe("OK to mix");
     expect(noLoad.getCell(4).value).toBe(7);
     expect(noLoad.getCell(5).value).toBeNull();
-    expect(noLoad.getCell(7).value).toBeNull();
+    expect(noLoad.getCell(7).value).toBeNull(); // no label -> empty cell
+    expect(noLoad.getCell(8).value).toBeNull();
     expect(sheet.rowCount).toBe(3);
   });
 

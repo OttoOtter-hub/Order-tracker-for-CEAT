@@ -57,7 +57,10 @@ describe("ProformaInvoicesService", () => {
       }),
     };
     customersService = {
-      findFirst: jest.fn(async () => ({ id: "cust-1", name: "MTK ROSBERG LLC" })),
+      findFirst: jest.fn(async () => ({
+        id: "cust-1",
+        name: "MTK ROSBERG LLC",
+      })),
     };
     service = new ProformaInvoicesService(
       repo as any,
@@ -77,7 +80,9 @@ describe("ProformaInvoicesService", () => {
       await expect(
         service.uploadPi(file("no-digits-here.pdf"), opsActor),
       ).rejects.toThrow(
-        new BadRequestException("не удалось распознать номер PI из имени файла"),
+        new BadRequestException(
+          "не удалось распознать номер PI из имени файла",
+        ),
       );
       expect(filesService.save).not.toHaveBeenCalled();
     });
@@ -99,7 +104,10 @@ describe("ProformaInvoicesService", () => {
       expect(result.piNumber).toBe("100037320");
       expect(result.createdFrom).toBe(PiCreatedFrom.PI_UPLOAD);
       expect(result.piFileUrl).toBe("/files/file-1/download");
-      expect(result.customer).toEqual({ id: "cust-1", name: "MTK ROSBERG LLC" });
+      expect(result.customer).toEqual({
+        id: "cust-1",
+        name: "MTK ROSBERG LLC",
+      });
     });
   });
 
@@ -213,7 +221,9 @@ describe("ProformaInvoicesService", () => {
       await expect(
         service.replacementDecision("pi-1", true, clientActor),
       ).rejects.toThrow(
-        new BadRequestException("нет активного предложения замены для этого PI"),
+        new BadRequestException(
+          "нет активного предложения замены для этого PI",
+        ),
       );
     });
   });
@@ -256,6 +266,99 @@ describe("ProformaInvoicesService", () => {
 
       const { fileName } = await service.exportXlsx("pi-1", clientActor);
       expect(fileName).toContain("100037320");
+    });
+  });
+
+  describe("updateLabel", () => {
+    function seedPi(overrides: Record<string, unknown> = {}) {
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        label: null,
+        signedFileUrl: null,
+        customer: { id: "cust-1" },
+        lineItems: [],
+        ...overrides,
+      });
+    }
+    const stored = () => repo.rows.find((r) => r.id === "pi-1")!.label;
+
+    it("lets the client set a label before the PI is signed, and returns the card with it", async () => {
+      seedPi();
+
+      const result = await service.updateLabel("pi-1", "Орел", clientActor);
+
+      expect(result.label).toBe("Орел");
+      expect(stored()).toBe("Орел");
+    });
+
+    it("lets the client change it again while the PI is still unsigned", async () => {
+      seedPi({ label: "Орел" });
+
+      await service.updateLabel("pi-1", "Сокол", clientActor);
+
+      expect(stored()).toBe("Сокол");
+    });
+
+    it("trims the text; an empty, blank or null label is stored as null", async () => {
+      seedPi();
+
+      await service.updateLabel("pi-1", "  Орел ", clientActor);
+      expect(stored()).toBe("Орел");
+
+      await service.updateLabel("pi-1", "", clientActor);
+      expect(stored()).toBeNull();
+
+      await service.updateLabel("pi-1", "Орел", clientActor);
+      await service.updateLabel("pi-1", "   ", clientActor);
+      expect(stored()).toBeNull();
+
+      await service.updateLabel("pi-1", "Орел", clientActor);
+      await service.updateLabel("pi-1", null, clientActor);
+      expect(stored()).toBeNull();
+    });
+
+    it("400s once the PI is signed — for a change, a clear, and even when no label was ever set", async () => {
+      seedPi({ label: "Орел", signedFileUrl: "/files/s/download" });
+      const locked = new BadRequestException(
+        "название можно менять только до подписания проформы",
+      );
+
+      await expect(
+        service.updateLabel("pi-1", "Сокол", clientActor),
+      ).rejects.toThrow(locked);
+      await expect(
+        service.updateLabel("pi-1", null, clientActor),
+      ).rejects.toThrow(locked);
+      expect(stored()).toBe("Орел");
+
+      repo.rows[0].label = null;
+      await expect(
+        service.updateLabel("pi-1", "Сокол", clientActor),
+      ).rejects.toThrow(locked);
+      expect(stored()).toBeNull();
+    });
+
+    it("rejects an ops actor with 403 — before signing and after", async () => {
+      seedPi();
+      await expect(
+        service.updateLabel("pi-1", "Орел", opsActor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      repo.rows[0].signedFileUrl = "/files/s/download";
+      await expect(
+        service.updateLabel("pi-1", "Орел", opsActor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(stored()).toBeNull();
+    });
+
+    it("404s for a client whose customer doesn't own the PI, leaving the label alone", async () => {
+      seedPi({ label: "Орел" });
+
+      await expect(
+        service.updateLabel("pi-1", "Сокол", otherClientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(stored()).toBe("Орел");
     });
   });
 

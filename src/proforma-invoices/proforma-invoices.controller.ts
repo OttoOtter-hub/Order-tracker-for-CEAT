@@ -20,6 +20,7 @@ import { MAX_FILE_SIZE_BYTES } from "../common/constants/file-upload";
 import { ProformaInvoicesService } from "./proforma-invoices.service";
 import { AddAdditionalFileDto } from "./dto/add-additional-file.dto";
 import { ReplacementDecisionDto } from "./dto/replacement-decision.dto";
+import { UpdateLabelDto } from "./dto/update-label.dto";
 
 const FILE_UPLOAD_OPTIONS = { limits: { fileSize: MAX_FILE_SIZE_BYTES } };
 const FILE_UPLOAD_BODY_SCHEMA = {
@@ -29,7 +30,9 @@ const FILE_UPLOAD_BODY_SCHEMA = {
   },
 };
 
-function requireFile(file: Express.Multer.File | undefined): Express.Multer.File {
+function requireFile(
+  file: Express.Multer.File | undefined,
+): Express.Multer.File {
   if (!file) {
     throw new BadRequestException("file is required");
   }
@@ -169,6 +172,21 @@ export class ProformaInvoicesController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.service.replacementDecision(id, dto.approved, user);
+  }
+
+  /**
+   * Client names the card, once signed it is locked for good (400). Ops
+   * reaches the handler through "ops always allowed" and is rejected with a
+   * 403 in the service.
+   */
+  @ClientWriteAllowed()
+  @Patch(":id/label")
+  updateLabel(
+    @Param("id") id: string,
+    @Body() dto: UpdateLabelDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.updateLabel(id, dto.label, user);
   }
 
   /**

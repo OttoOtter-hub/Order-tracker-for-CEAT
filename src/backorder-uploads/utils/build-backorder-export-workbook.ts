@@ -9,6 +9,7 @@ import {
 
 const ROW_HEADERS = [
   "PI Number",
+  "Название",
   "PI Status",
   "Material Num",
   "Material Desc",
@@ -53,6 +54,7 @@ export function buildBackorderExportWorkbook(
     for (const item of pi.lineItems ?? []) {
       sheet.addRow([
         pi.piNumber,
+        pi.label ?? null,
         pi.status,
         item.materialNum,
         item.materialDesc,

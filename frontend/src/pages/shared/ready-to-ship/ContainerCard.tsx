@@ -22,7 +22,7 @@ import {
   type ShippingContainer,
 } from "@/api/readyToShip"
 import { FILL_CARD, fillLevel, formatPercent } from "@/lib/fill"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
 import { pluralFiles } from "@/lib/readyToShip"
 import { cn } from "@/lib/utils"
@@ -264,7 +264,7 @@ export function ContainerCard({
                       {allocation.materialDesc ?? "—"}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      PI {allocation.piNumber}
+                      PI {formatPiTitle(allocation.piNumber, allocation.piLabel)}
                       {allocation.soNumber ? ` · SO ${allocation.soNumber}` : ""}
                     </div>
                   </div>

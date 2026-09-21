@@ -28,7 +28,7 @@ import {
   type UnallocatedLine,
 } from "@/api/readyToShip"
 import { FILL_TEXT, fillLevel, formatPercent } from "@/lib/fill"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 
@@ -149,7 +149,7 @@ function MoveForm({
           </span>{" "}
           · {line.materialDesc ?? "—"}
           <br />
-          PI {line.piNumber} · SO {line.soNumber ?? "—"} · остаток{" "}
+          PI {formatPiTitle(line.piNumber, line.piLabel)} · SO {line.soNumber ?? "—"} · остаток{" "}
           {formatNumber(String(line.remainingQty))} шт.
         </DialogDescription>
       </DialogHeader>

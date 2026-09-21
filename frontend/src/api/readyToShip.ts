@@ -9,6 +9,7 @@ export interface UnallocatedLine {
   piLineItemId: string
   piId: string
   piNumber: string
+  piLabel: string | null
   soNumber: string | null
   materialNum: string | null
   materialDesc: string | null
@@ -28,6 +29,7 @@ export interface ContainerAllocation {
   piLineItemId: string
   piId: string
   piNumber: string
+  piLabel: string | null
   soNumber: string | null
   materialNum: string | null
   materialDesc: string | null

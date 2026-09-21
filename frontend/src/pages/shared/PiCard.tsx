@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { StatusBadge } from "@/components/StatusBadge"
 import { PI_STATUS } from "@/lib/statusStyles"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatPiTitle } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { ProformaInvoice } from "@/api/proformaInvoices"
 
@@ -30,7 +30,9 @@ export function PiCard({ pi, onClick }: PiCardProps) {
     >
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
-          <CardTitle>{pi.piNumber}</CardTitle>
+          <CardTitle className="break-words">
+            {formatPiTitle(pi.piNumber, pi.label)}
+          </CardTitle>
           <StatusBadge status={pi.status} map={PI_STATUS} />
         </div>
       </CardHeader>

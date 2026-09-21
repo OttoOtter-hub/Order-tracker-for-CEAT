@@ -36,7 +36,12 @@ export class ProformaInvoicesService {
 
   findAll(): Promise<ProformaInvoice[]> {
     return this.repo.find({
-      relations: ["customer", "lineItems", "additionalFiles", "additionalFiles.uploadedBy"],
+      relations: [
+        "customer",
+        "lineItems",
+        "additionalFiles",
+        "additionalFiles.uploadedBy",
+      ],
       order: { createdAt: "DESC" },
     });
   }
@@ -264,6 +269,36 @@ export class ProformaInvoicesService {
   }
 
   /**
+   * The client names their card — only until it is signed. Once
+   * signed_file_url is set (and nothing ever clears it) the name is locked
+   * for good, whether or not it was ever filled in: no unlock path exists.
+   * Client-only like resetPriority (RolesGuard would let ops through the
+   * @ClientWriteAllowed handler, so the role check is explicit); a blank
+   * name is stored as null.
+   */
+  async updateLabel(
+    id: string,
+    label: string | null,
+    actor: RequestUser,
+  ): Promise<ProformaInvoice> {
+    if (actor.role !== Role.CLIENT) {
+      throw new ForbiddenException("Название может задавать только клиент");
+    }
+    const pi = await this.findOwnedByActor(id, actor);
+    if (pi.signedFileUrl) {
+      throw new BadRequestException(
+        "название можно менять только до подписания проформы",
+      );
+    }
+    const trimmed = label === null ? "" : label.trim();
+    await this.repo.update(
+      { id: pi.id },
+      { label: trimmed === "" ? null : trimmed },
+    );
+    return this.findOne(pi.id);
+  }
+
+  /**
    * Client-only, same reasoning as PiLineItemsService.updatePriority — ops
    * can see priority (a plain column in the API response) but must not
    * change it directly, and RolesGuard's "ops always allowed" rule doesn't
@@ -274,12 +309,18 @@ export class ProformaInvoicesService {
    * if it fails partway), and it's one round-trip instead of N regardless
    * of how many line items the card has.
    */
-  async resetPriority(id: string, actor: RequestUser): Promise<ProformaInvoice> {
+  async resetPriority(
+    id: string,
+    actor: RequestUser,
+  ): Promise<ProformaInvoice> {
     if (actor.role !== Role.CLIENT) {
       throw new ForbiddenException("Сброс приоритета доступен только клиенту");
     }
     const pi = await this.findOwnedByActor(id, actor);
-    await this.lineItemsRepo.update({ pi: { id: pi.id } }, { priorityQty: "0" });
+    await this.lineItemsRepo.update(
+      { pi: { id: pi.id } },
+      { priorityQty: "0" },
+    );
     return this.findOne(pi.id);
   }
 }

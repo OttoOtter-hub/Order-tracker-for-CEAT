@@ -93,3 +93,10 @@ describe("ProformaInvoice.priorityTotalQty / priorityTotalContainers", () => {
     expect(pi.priorityTotalContainers).toBe(0);
   });
 });
+
+describe("ProformaInvoice.label", () => {
+  it("is part of the serialized card, null when unset", () => {
+    expect(instanceToPlain(makePi({ label: "Орел" })).label).toBe("Орел");
+    expect(instanceToPlain(makePi({ label: null })).label).toBeNull();
+  });
+});

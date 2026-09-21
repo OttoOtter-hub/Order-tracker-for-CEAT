@@ -21,6 +21,14 @@ export class ProformaInvoice extends BaseEntity {
   @JoinColumn({ name: "customer_id" })
   customer: Customer;
 
+  /**
+   * Client-chosen name of the card (max 30). Settable only until the signed
+   * copy is uploaded — signed_file_url is never cleared, so from then on it
+   * is locked for good (see ProformaInvoicesService.updateLabel).
+   */
+  @Column({ type: "varchar", length: 30, nullable: true })
+  label: string | null;
+
   @Column({ name: "pi_file_url", type: "text", nullable: true })
   piFileUrl: string | null;
 

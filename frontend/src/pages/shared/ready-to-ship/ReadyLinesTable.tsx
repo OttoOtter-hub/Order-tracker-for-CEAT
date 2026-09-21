@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table"
 import { SortableHead } from "@/components/SortableHead"
 import { useTableSort } from "@/hooks/useTableSort"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatPiTitle } from "@/lib/format"
 import { isPlaceable, NOT_PLACEABLE_HINT } from "@/lib/readyToShip"
 import type { UnallocatedLine } from "@/api/readyToShip"
 
@@ -37,7 +37,9 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
   return (
     <TableRow data-line-id={line.piLineItemId}>
       <TableCell className="text-xs">
-        <div>{line.piNumber}</div>
+        <div className="break-words">
+          {formatPiTitle(line.piNumber, line.piLabel)}
+        </div>
         <div className="text-muted-foreground">SO {line.soNumber ?? "—"}</div>
       </TableCell>
       <TableCell className="max-w-44 whitespace-normal">
@@ -99,9 +101,13 @@ export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps
     const needle = query.trim().toLowerCase()
     if (!needle) return sorted
     return sorted.filter((line) =>
-      [line.piNumber, line.materialNum, line.materialDesc, line.soNumber].some(
-        (field) => field?.toLowerCase().includes(needle)
-      )
+      [
+        line.piNumber,
+        line.piLabel,
+        line.materialNum,
+        line.materialDesc,
+        line.soNumber,
+      ].some((field) => field?.toLowerCase().includes(needle))
     )
   }, [sorted, query])
 
@@ -120,7 +126,7 @@ export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Поиск: материал, описание, PI, SO"
+            placeholder="Поиск: материал, описание, PI, название, SO"
             aria-label="Поиск по списку готового"
             className="pl-8"
           />

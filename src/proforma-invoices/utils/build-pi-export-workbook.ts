@@ -41,6 +41,7 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
   ];
 
   sheet.addRow(["PI number", pi.piNumber]);
+  sheet.addRow(["Название", pi.label ?? null]);
   sheet.addRow(["Status", pi.status]);
   sheet.addRow(["SO numbers", soNumbers.join(", ")]);
   sheet.addRow(["Total Qty", toNumberOrNull(pi.totalQty)]);

@@ -27,6 +27,7 @@ describe("ReadyToShipService.exportXlsx", () => {
     seedLine(h, {
       id: "l1",
       piNumber: "100037320",
+      piLabel: "Орел",
       materialNum: "M1",
       soNumber: "S1",
       loadability: "50",
@@ -60,11 +61,34 @@ describe("ReadyToShipService.exportXlsx", () => {
         "Количество",
         "Load Factor",
         "Проформа (PI)",
+        "Название",
         "SO",
       ],
-      [1, "M1", "desc l1", 30, 0.6, "100037320", "S1"],
-      ["OK to mix", "M1", "desc l1", 70, 1.4, "100037320", "S1"],
-      ["OK to mix", "M2", "desc l2", 7, undefined, "100037321", "S2"],
+      [1, "M1", "desc l1", 30, 0.6, "100037320", "Орел", "S1"],
+      ["OK to mix", "M1", "desc l1", 70, 1.4, "100037320", "Орел", "S1"],
+      // a PI without a label -> an empty cell, not "null"
+      [
+        "OK to mix",
+        "M2",
+        "desc l2",
+        7,
+        undefined,
+        "100037321",
+        undefined,
+        "S2",
+      ],
+    ]);
+  });
+
+  it("getView carries the PI label on allocations and on lines, null when a PI has none", async () => {
+    const view = await h.service.getView(clientActor);
+
+    expect(view.containers[0].allocations.map((a) => a.piLabel)).toEqual([
+      "Орел",
+    ]);
+    expect(view.unallocatedLines.map((l) => [l.piNumber, l.piLabel])).toEqual([
+      ["100037320", "Орел"],
+      ["100037321", null],
     ]);
   });
 

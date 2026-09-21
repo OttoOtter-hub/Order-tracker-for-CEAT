@@ -1,3 +1,13 @@
+// How a PI is named wherever its number is shown: "100039270: Орел", or just
+// "100039270" when the card has no label (no dangling colon).
+export function formatPiTitle(
+  piNumber: string,
+  label: string | null | undefined
+): string {
+  const trimmed = label?.trim()
+  return trimmed ? `${piNumber}: ${trimmed}` : piNumber
+}
+
 export function formatCurrency(
   value: string | null | undefined,
   currency = "USD"
