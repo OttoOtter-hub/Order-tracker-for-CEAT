@@ -94,6 +94,13 @@ export class ActualContainersImportService {
         };
     const touched = new Map<string, ActualContainer>();
 
+    const eta15ByContainer = new Map(
+      data.eta15.map((row) => [row.containerNumber, row]),
+    );
+    const etdEtaContainers = new Set(
+      data.containers.map((row) => row.containerNumber),
+    );
+
     // ETD-ETA: create on first sight, otherwise overwrite the source_* fields
     // only — override_etd / override_eta are never assigned here.
     for (const row of data.containers) {
@@ -112,8 +119,16 @@ export class ActualContainersImportService {
       }
       container.port = row.port;
       container.vesselName = row.vesselName;
-      container.sourceEtd = row.sourceEtd;
-      container.sourceEta = row.sourceEta;
+      // A date ETD-ETA leaves empty (the real file has an Excel zero date for 50
+      // of 77 ETAs) is taken from this week's ETA-15 row, which for the
+      // containers closest to arrival is the only place that knows it; a date
+      // nothing provides never wipes one that is already known. Nowhere = null,
+      // which the screens show as a dash.
+      const eta15 = eta15ByContainer.get(row.containerNumber);
+      container.sourceEtd =
+        row.sourceEtd ?? eta15?.etd ?? container.sourceEtd ?? null;
+      container.sourceEta =
+        row.sourceEta ?? eta15?.eta ?? container.sourceEta ?? null;
       container.preshipmentInvoice = row.preshipmentInvoice;
       container.commercialInvoiceNumber = row.commercialInvoiceNumber;
       touched.set(row.containerNumber, container);
@@ -135,6 +150,11 @@ export class ActualContainersImportService {
       container.documentsReleaseStatus = row.documentsReleaseStatus;
       container.telexReleaseDate = row.telexReleaseDate;
       container.paymentReceiptStatus = row.paymentReceiptStatus;
+      if (!etdEtaContainers.has(row.containerNumber)) {
+        // Not in this week's ETD-ETA: only fill dates that are still empty.
+        container.sourceEtd = container.sourceEtd ?? row.etd;
+        container.sourceEta = container.sourceEta ?? row.eta;
+      }
       touched.set(row.containerNumber, container);
       result.eta15Updated++;
     }

@@ -160,6 +160,8 @@ export function containerRow(spec: ContainerRowSpec): unknown[] {
 
 export interface Eta15RowSpec {
   container: string;
+  etd?: string | null;
+  eta?: string | null;
   bl?: string;
   currency?: string;
   value?: number;
@@ -180,8 +182,8 @@ export function eta15Row(spec: Eta15RowSpec): unknown[] {
     spec.container,
     spec.currency ?? "INR",
     spec.value ?? 2423377.89,
-    excelDate("2026-07-31"),
-    excelDate("2026-09-20"),
+    excelDate(spec.etd === undefined ? "2026-07-31" : spec.etd),
+    excelDate(spec.eta === undefined ? "2026-09-20" : spec.eta),
     spec.docs ?? 0,
     excelDate(spec.telex === undefined ? null : spec.telex),
     excelDate(spec.payment === undefined ? null : spec.payment),

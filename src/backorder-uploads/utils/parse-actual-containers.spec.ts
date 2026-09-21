@@ -113,6 +113,8 @@ describe("parseBackorderFile — shipped-container sheets", () => {
     expect(actualContainers.eta15).toEqual([
       {
         containerNumber: "CRSU9167145",
+        etd: "2026-07-31",
+        eta: "2026-09-20",
         blNumber: "ALIN26000843",
         currency: "INR",
         invoiceValue: 2423377.89,
@@ -122,6 +124,8 @@ describe("parseBackorderFile — shipped-container sheets", () => {
       },
       {
         containerNumber: "GESU6835948",
+        etd: "2026-07-31",
+        eta: "2026-09-20",
         blNumber: "ALIN26000843",
         currency: "INR",
         invoiceValue: 2423377.89,

@@ -350,6 +350,131 @@ describe("backorder upload — shipped containers", () => {
     });
   });
 
+  describe("ETD/ETA that ETD-ETA leaves empty", () => {
+    it("takes ETA (and ETD) from the container's ETA-15 row when ETD-ETA has none, and the ETD-ETA date wins when it has one", async () => {
+      const { uploads, repos } = setup();
+
+      await uploads.upload(
+        (await buildWeeklyFile({
+          containers: [
+            // ETD known, ETA empty (the Excel zero date, as in the real file).
+            containerRow({ container: "AAAA1111111", etd: "2026-07-01" }),
+            // both known: ETD-ETA must win over the ETA-15 row.
+            containerRow({
+              container: "BBBB2222222",
+              etd: "2026-07-02",
+              eta: "2026-08-15",
+            }),
+            // both empty and not in ETA-15 either: stays empty.
+            containerRow({ container: "CCCC3333333", etd: null }),
+            // ETD-ETA has neither date, ETA-15 has both.
+            containerRow({ container: "DDDD4444444", etd: null }),
+          ],
+          eta15: [
+            eta15Row({
+              container: "AAAA1111111",
+              etd: "2026-07-31",
+              eta: "2026-09-20",
+            }),
+            eta15Row({
+              container: "BBBB2222222",
+              etd: "2026-07-31",
+              eta: "2026-09-20",
+            }),
+            eta15Row({
+              container: "DDDD4444444",
+              etd: "2026-07-31",
+              eta: "2026-09-21",
+            }),
+          ],
+        })) as any,
+        ops,
+      );
+
+      const dates = (n: string) => {
+        const c = containerByNumber(repos.containerRepo, n);
+        return [c.sourceEtd, c.sourceEta];
+      };
+      expect(dates("AAAA1111111")).toEqual(["2026-07-01", "2026-09-20"]);
+      expect(dates("BBBB2222222")).toEqual(["2026-07-02", "2026-08-15"]);
+      expect(dates("CCCC3333333")).toEqual([null, null]);
+      expect(dates("DDDD4444444")).toEqual(["2026-07-31", "2026-09-21"]);
+    });
+
+    it("keeps a date learned earlier when a later file has it nowhere, and never touches a manual date", async () => {
+      const { uploads, containers, repos } = setup();
+      await uploads.upload(
+        (await buildWeeklyFile({
+          containers: [
+            containerRow({ container: "AAAA1111111", etd: "2026-07-01" }),
+          ],
+          eta15: [eta15Row({ container: "AAAA1111111", eta: "2026-09-20" })],
+        })) as any,
+        ops,
+      );
+      const id = containerByNumber(repos.containerRepo, "AAAA1111111").id;
+      await containers.updateDates(id, { overrideEta: "2026-10-01" }, ops);
+
+      // Next week the container has dropped out of the 15-day sample and
+      // ETD-ETA still has no ETA.
+      await uploads.upload(
+        (await buildWeeklyFile({
+          containers: [
+            containerRow({ container: "AAAA1111111", etd: "2026-07-01" }),
+          ],
+        })) as any,
+        ops,
+      );
+
+      expect(
+        containerByNumber(repos.containerRepo, "AAAA1111111"),
+      ).toMatchObject({
+        sourceEta: "2026-09-20",
+        overrideEta: "2026-10-01",
+      });
+    });
+
+    it("for a container ETD-ETA does not list this week, fills only dates that are still empty", async () => {
+      const { uploads, repos } = setup();
+      await uploads.upload(
+        (await buildWeeklyFile({
+          containers: [
+            containerRow({
+              container: "AAAA1111111",
+              etd: "2026-07-01",
+              eta: "2026-08-01",
+            }),
+            containerRow({ container: "BBBB2222222", etd: "2026-07-02" }),
+          ],
+        })) as any,
+        ops,
+      );
+
+      await uploads.upload(
+        (await buildWeeklyFile({
+          eta15: [
+            eta15Row({
+              container: "AAAA1111111",
+              etd: "2026-07-31",
+              eta: "2026-09-20",
+            }),
+            eta15Row({
+              container: "BBBB2222222",
+              etd: "2026-07-31",
+              eta: "2026-09-20",
+            }),
+          ],
+        })) as any,
+        ops,
+      );
+
+      const a = containerByNumber(repos.containerRepo, "AAAA1111111");
+      const b = containerByNumber(repos.containerRepo, "BBBB2222222");
+      expect([a.sourceEtd, a.sourceEta]).toEqual(["2026-07-01", "2026-08-01"]);
+      expect([b.sourceEtd, b.sourceEta]).toEqual(["2026-07-02", "2026-09-20"]);
+    });
+  });
+
   describe("Radial/Bias Dispatch -> line items", () => {
     it("stores every line, including a container whose lines are split between the Radial and Bias sheets", async () => {
       const { uploads, repos } = setup();

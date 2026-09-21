@@ -20,6 +20,9 @@ export interface ParsedContainerRow {
 
 export interface ParsedEta15Row {
   containerNumber: string;
+  /** This sheet's own ETD / ETA columns — used only to fill a date ETD-ETA lacks. */
+  etd: string | null;
+  eta: string | null;
   blNumber: string | null;
   currency: string | null;
   invoiceValue: number | null;
@@ -177,6 +180,8 @@ function parseEta15Sheet(sheet: ExcelJS.Worksheet): ParsedEta15Row[] {
     }
     byContainer.set(containerNumber, {
       containerNumber,
+      etd: toDateOrNull(read(rowNumber, "etd")),
+      eta: toDateOrNull(read(rowNumber, "eta")),
       blNumber: toStringOrNull(read(rowNumber, "b/l no.")),
       currency: toStringOrNull(read(rowNumber, "currency")),
       invoiceValue: toNumberOrNull(read(rowNumber, "invoice value doc cur.")),
