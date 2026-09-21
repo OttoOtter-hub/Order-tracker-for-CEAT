@@ -1,4 +1,5 @@
 import { toast } from "sonner"
+import i18n from "@/i18n"
 import { clearStoredSession, getStoredToken } from "@/auth/storage"
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000"
@@ -79,7 +80,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (response.status === 403) {
-    toast.error("Недостаточно прав")
+    toast.error(i18n.t("common.forbidden"))
     throw new ApiError("Forbidden", 403)
   }
 

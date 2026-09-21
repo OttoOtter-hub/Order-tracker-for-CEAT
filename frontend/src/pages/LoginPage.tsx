@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { useNavigate } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -28,6 +29,7 @@ interface LoginFormValues {
 }
 
 export function LoginPage() {
+  const { t } = useTranslation()
   const { login } = useAuth()
   const navigate = useNavigate()
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -44,8 +46,8 @@ export function LoginPage() {
     } catch (error) {
       const message =
         error instanceof ApiError && error.status === 401
-          ? "Неверный email или пароль"
-          : "Не удалось войти, попробуйте ещё раз"
+          ? t("login.invalidCredentials")
+          : t("login.failed")
       toast.error(message)
     } finally {
       setIsSubmitting(false)
@@ -57,7 +59,7 @@ export function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>CEAT Order Tracking</CardTitle>
-          <CardDescription>Войдите, чтобы продолжить</CardDescription>
+          <CardDescription>{t("login.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Form {...form}>
@@ -65,10 +67,10 @@ export function LoginPage() {
               <FormField
                 control={form.control}
                 name="email"
-                rules={{ required: "Укажите email" }}
+                rules={{ required: t("login.emailRequired") }}
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Email</FormLabel>
+                    <FormLabel>{t("login.emailLabel")}</FormLabel>
                     <FormControl>
                       <Input
                         type="email"
@@ -84,10 +86,10 @@ export function LoginPage() {
               <FormField
                 control={form.control}
                 name="password"
-                rules={{ required: "Укажите пароль" }}
+                rules={{ required: t("login.passwordRequired") }}
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Пароль</FormLabel>
+                    <FormLabel>{t("login.passwordLabel")}</FormLabel>
                     <FormControl>
                       <Input
                         type="password"
@@ -100,7 +102,7 @@ export function LoginPage() {
                 )}
               />
               <Button type="submit" disabled={isSubmitting} className="mt-2">
-                {isSubmitting ? "Вход..." : "Войти"}
+                {isSubmitting ? t("login.submitting") : t("login.submit")}
               </Button>
             </form>
           </Form>

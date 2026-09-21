@@ -1,18 +1,28 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { FileText, LogOut, Ship, Truck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { LanguageSwitcher } from "@/components/LanguageSwitcher"
 import { useAuth } from "@/auth/AuthContext"
+import { useCustomersQuery } from "@/api/customers"
 
 const NAV_ITEMS = [
-  { to: "/client/pi", label: "Мои PI", icon: FileText },
-  { to: "/client/ready-to-ship", label: "Готово к отгрузке", icon: Truck },
-  { to: "/client/actual-containers", label: "Готовые контейнеры", icon: Ship },
+  { to: "/client/pi", labelKey: "nav.pi", icon: FileText },
+  { to: "/client/ready-to-ship", labelKey: "nav.readyToShip", icon: Truck },
+  { to: "/client/actual-containers", labelKey: "nav.shipped", icon: Ship },
 ]
 
 export function ClientLayout() {
+  const { t } = useTranslation()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  // The API scopes /customers to the client's own customer, so this is the
+  // company the user belongs to (matched by id anyway, not by position).
+  const { data: customers } = useCustomersQuery()
+  const customerName =
+    customers?.find((customer) => customer.id === user?.customerId)?.name ??
+    t("nav.clientFallback")
 
   function handleLogout() {
     logout()
@@ -21,13 +31,13 @@ export function ClientLayout() {
 
   return (
     <div className="flex min-h-svh">
-      <aside className="flex w-64 shrink-0 flex-col border-r bg-muted/30">
+      <aside className="sticky top-0 flex h-svh w-64 shrink-0 flex-col self-start overflow-y-auto border-r bg-muted/30">
         <div className="px-4 py-4">
-          <p className="text-sm font-semibold">MTK Rosberg</p>
+          <p className="text-sm font-semibold">{customerName}</p>
           <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          {NAV_ITEMS.map(({ to, labelKey, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -39,10 +49,13 @@ export function ClientLayout() {
               }
             >
               <Icon className="size-4" />
-              {label}
+              {t(labelKey)}
             </NavLink>
           ))}
         </nav>
+        <div className="border-t px-4 py-3">
+          <LanguageSwitcher />
+        </div>
         <div className="border-t p-2">
           <Button
             variant="ghost"
@@ -50,7 +63,7 @@ export function ClientLayout() {
             onClick={handleLogout}
           >
             <LogOut className="size-4" />
-            Выйти
+            {t("nav.logout")}
           </Button>
         </div>
       </aside>

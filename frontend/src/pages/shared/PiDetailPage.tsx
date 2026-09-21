@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { ArrowLeft } from "lucide-react"
 import {
@@ -53,30 +54,31 @@ import { sumByLoadabilityGroups } from "@/lib/sumByLoadability"
 
 const PRIORITY_SAVE_DEBOUNCE_MS = 500
 
-function DownloadButton({ url, label = "Скачать" }: { url: string; label?: string }) {
+function DownloadButton({ url, label }: { url: string; label?: string }) {
+  const { t } = useTranslation()
   return (
     <Button
       variant="outline"
       size="sm"
       onClick={() =>
-        openFile(url).catch(() => toast.error("Не удалось скачать файл"))
+        openFile(url).catch(() => toast.error(t("common.downloadFailed")))
       }
     >
-      {label}
+      {label ?? t("common.download")}
     </Button>
   )
 }
 
 const LINE_ITEM_COLUMNS = [
-  { key: "materialNum", label: "Материал" },
-  { key: "materialDesc", label: "Описание" },
-  { key: "balanceToBeDelivered", label: "Остаток" },
-  { key: "quantity", label: "Кол-во" },
-  { key: "mt", label: "MT" },
-  { key: "loadFactor", label: "Load Factor" },
-  { key: "loadability", label: "Loadability" },
-  { key: "plan", label: "План недели" },
-  { key: "priorityQty", label: "Приоритет" },
+  { key: "materialNum", labelKey: "piDetail.lines.columns.material" },
+  { key: "materialDesc", labelKey: "piDetail.lines.columns.description" },
+  { key: "balanceToBeDelivered", labelKey: "piDetail.lines.columns.balance" },
+  { key: "quantity", labelKey: "piDetail.lines.columns.quantity" },
+  { key: "mt", labelKey: "piDetail.lines.columns.mt" },
+  { key: "loadFactor", labelKey: "piDetail.lines.columns.loadFactor" },
+  { key: "loadability", labelKey: "piDetail.lines.columns.loadability" },
+  { key: "plan", labelKey: "piDetail.lines.columns.weekPlan" },
+  { key: "priorityQty", labelKey: "piDetail.lines.columns.priority" },
 ] as const
 
 type LineItemSortKey = (typeof LINE_ITEM_COLUMNS)[number]["key"]
@@ -113,6 +115,7 @@ function sumField(
 }
 
 export function PiDetailPage() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -179,7 +182,7 @@ export function PiDetailPage() {
         {
           onError: (error) =>
             toast.error(
-              getErrorMessage(error, "Не удалось сохранить приоритет")
+              getErrorMessage(error, t("piDetail.lines.saveFailed"))
             ),
         }
       )
@@ -187,7 +190,7 @@ export function PiDetailPage() {
   }
 
   function handleResetPriority() {
-    if (!window.confirm("Сбросить весь приоритет по этой проформе?")) {
+    if (!window.confirm(t("piDetail.lines.confirmReset"))) {
       return
     }
     // A pending per-row debounced save landing after this would silently
@@ -204,11 +207,11 @@ export function PiDetailPage() {
           zeroed[item.id] = 0
         }
         setPriorityDrafts(zeroed)
-        toast.success("Приоритет сброшен")
+        toast.success(t("piDetail.lines.resetDone"))
       },
       onError: (error) =>
         toast.error(
-          getErrorMessage(error, "Не удалось сбросить приоритет")
+          getErrorMessage(error, t("piDetail.lines.resetFailed"))
         ),
     })
   }
@@ -239,10 +242,12 @@ export function PiDetailPage() {
   const canEditLabel = isClient && !!pi && !pi.signedFileUrl
 
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Загрузка...</p>
+    return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
   }
   if (!pi) {
-    return <p className="text-sm text-muted-foreground">Карточка не найдена.</p>
+    return (
+      <p className="text-sm text-muted-foreground">{t("piDetail.notFound")}</p>
+    )
   }
 
   return (
@@ -253,7 +258,7 @@ export function PiDetailPage() {
         className="w-fit"
         onClick={() => navigate(`${basePath}/pi`)}
       >
-        <ArrowLeft /> К списку
+        <ArrowLeft /> {t("common.backToList")}
       </Button>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -280,7 +285,7 @@ export function PiDetailPage() {
             className="ml-auto"
             onClick={() => setIsPriorityMode((v) => !v)}
           >
-            {isPriorityMode ? "Готово" : "Режим приоритизации"}
+            {isPriorityMode ? t("piDetail.priorityDone") : t("piDetail.priorityMode")}
           </Button>
         )}
         {isPriorityMode && (
@@ -290,7 +295,7 @@ export function PiDetailPage() {
             disabled={resetPriority.isPending}
             onClick={handleResetPriority}
           >
-            {resetPriority.isPending ? "Сброс..." : "Сбросить"}
+            {resetPriority.isPending ? t("piDetail.resetting") : t("piDetail.reset")}
           </Button>
         )}
         <Button
@@ -302,12 +307,12 @@ export function PiDetailPage() {
             setIsExporting(true)
             exportPiXlsx(pi.id)
               .catch(() =>
-                toast.error("Не удалось выгрузить Excel")
+                toast.error(t("piDetail.exportFailed"))
               )
               .finally(() => setIsExporting(false))
           }}
         >
-          {isExporting ? "Выгрузка..." : "Скачать Excel"}
+          {isExporting ? t("common.exporting") : t("piDetail.downloadExcel")}
         </Button>
       </div>
 
@@ -318,21 +323,23 @@ export function PiDetailPage() {
         data-testid="pi-aggregates"
       >
         <div>
-          <span className="text-muted-foreground">Всего: </span>
+          <span className="text-muted-foreground">{t("piDetail.total")}: </span>
           {formatNumber(pi.totalQty)}
         </div>
         <div>
-          <span className="text-muted-foreground">Ожидает: </span>
+          <span className="text-muted-foreground">{t("piDetail.pending")}: </span>
           {formatNumber(pi.qtyPending)}
         </div>
         <div data-testid="pi-shipped">
-          <span className="text-muted-foreground">Отправлено: </span>
+          <span className="text-muted-foreground">{t("piDetail.shipped")}: </span>
           {formatNumber(pi.shippedQty)}
         </div>
         {/* Live from the drafts, so it follows an edit as you type; equals the
             server's priorityLineItemsCount once the save has landed. */}
         <div data-testid="pi-priority-lines">
-          <span className="text-muted-foreground">Приоритетных позиций: </span>
+          <span className="text-muted-foreground">
+            {t("piDetail.priorityLines")}:{" "}
+          </span>
           {livePriorityTotals.lineCount}
         </div>
       </div>
@@ -340,45 +347,45 @@ export function PiDetailPage() {
       {/* Files */}
       <Card>
         <CardHeader>
-          <CardTitle>Файлы</CardTitle>
+          <CardTitle>{t("piDetail.files.title")}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
           {/* Original PI file */}
           <div className="grid gap-2">
-            <h3 className="text-sm font-medium">Исходная проформа</h3>
+            <h3 className="text-sm font-medium">{t("piDetail.files.original")}</h3>
             {pi.piFileUrl ? (
               <div className="flex flex-wrap items-center gap-2">
                 <DownloadButton url={pi.piFileUrl} />
                 <span className="text-xs text-muted-foreground">
-                  загружено {formatDateTime(pi.piFileUploadedAt)}
+                  {t("common.uploadedAt", { date: formatDateTime(pi.piFileUploadedAt) })}
                   {pi.piFileUploadedBy && ` · ${pi.piFileUploadedBy.email}`}
                 </span>
                 {isOps && !pi.pendingReplacementFileUrl && (
                   <Dialog open={proposeOpen} onOpenChange={setProposeOpen}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm">
-                        Предложить замену
+                        {t("piDetail.files.proposeReplacement")}
                       </Button>
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>Предложить замену файла</DialogTitle>
+                        <DialogTitle>{t("piDetail.files.proposeTitle")}</DialogTitle>
                       </DialogHeader>
                       <FileUploadForm
                         accept=".pdf,application/pdf"
-                        submitLabel="Предложить"
+                        submitLabel={t("piDetail.files.propose")}
                         isSubmitting={proposeReplacement.isPending}
                         onSubmit={(file) =>
                           proposeReplacement.mutate(file, {
                             onSuccess: () => {
                               setProposeOpen(false)
-                              toast.success("Замена предложена клиенту")
+                              toast.success(t("piDetail.files.proposed"))
                             },
                             onError: (error) =>
                               toast.error(
                                 getErrorMessage(
                                   error,
-                                  "Не удалось предложить замену"
+                                  t("piDetail.files.proposeFailed")
                                 )
                               ),
                           })
@@ -391,20 +398,20 @@ export function PiDetailPage() {
             ) : isOps ? (
               <FileUploadForm
                 accept=".pdf,application/pdf"
-                submitLabel="Загрузить проформу"
+                submitLabel={t("piDetail.files.uploadProforma")}
                 isSubmitting={uploadPi.isPending}
                 onSubmit={(file) =>
                   uploadPi.mutate(file, {
                     onError: (error) =>
                       toast.error(
-                        getErrorMessage(error, "Не удалось загрузить файл")
+                        getErrorMessage(error, t("common.uploadFailed"))
                       ),
                   })
                 }
               />
             ) : (
               <p className="text-sm text-muted-foreground">
-                Проформа ещё не загружена CEAT.
+                {t("piDetail.files.notUploadedByCeat")}
               </p>
             )}
           </div>
@@ -413,12 +420,12 @@ export function PiDetailPage() {
 
           {/* Signed file */}
           <div className="grid gap-2">
-            <h3 className="text-sm font-medium">Подписанный файл</h3>
+            <h3 className="text-sm font-medium">{t("piDetail.files.signed")}</h3>
             {pi.signedFileUrl ? (
               <div className="flex flex-wrap items-center gap-2">
                 <DownloadButton url={pi.signedFileUrl} />
                 <span className="text-xs text-muted-foreground">
-                  загружено {formatDateTime(pi.signedFileUploadedAt)}
+                  {t("common.uploadedAt", { date: formatDateTime(pi.signedFileUploadedAt) })}
                   {pi.signedFileUploadedBy &&
                     ` · ${pi.signedFileUploadedBy.email}`}
                 </span>
@@ -426,20 +433,20 @@ export function PiDetailPage() {
             ) : !isOps ? (
               <FileUploadForm
                 accept=".pdf,application/pdf"
-                submitLabel="Загрузить подписанный файл"
+                submitLabel={t("piDetail.files.uploadSigned")}
                 isSubmitting={uploadSigned.isPending}
                 onSubmit={(file) =>
                   uploadSigned.mutate(file, {
                     onError: (error) =>
                       toast.error(
-                        getErrorMessage(error, "Не удалось загрузить файл")
+                        getErrorMessage(error, t("common.uploadFailed"))
                       ),
                   })
                 }
               />
             ) : (
               <p className="text-sm text-muted-foreground">
-                Клиент ещё не загрузил подписанный файл.
+                {t("piDetail.files.notSignedYet")}
               </p>
             )}
           </div>
@@ -448,7 +455,7 @@ export function PiDetailPage() {
 
           {/* Additional files */}
           <div className="grid gap-2">
-            <h3 className="text-sm font-medium">Доп. файлы</h3>
+            <h3 className="text-sm font-medium">{t("piDetail.files.additional")}</h3>
             {pi.additionalFiles && pi.additionalFiles.length > 0 ? (
               <ul className="grid gap-2">
                 {pi.additionalFiles.map((f) => (
@@ -456,7 +463,7 @@ export function PiDetailPage() {
                     key={f.id}
                     className="flex flex-wrap items-center gap-2 text-sm"
                   >
-                    <DownloadButton url={f.fileUrl} label="Скачать" />
+                    <DownloadButton url={f.fileUrl} />
                     <span className="text-xs text-muted-foreground">
                       {formatDateTime(f.uploadedAt)} · {f.uploadedBy?.email ?? "—"}
                       {f.description && ` — ${f.description}`}
@@ -465,7 +472,9 @@ export function PiDetailPage() {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-muted-foreground">Нет доп. файлов.</p>
+              <p className="text-sm text-muted-foreground">
+                {t("piDetail.files.noAdditional")}
+              </p>
             )}
             <AddAdditionalFileForm
               isSubmitting={addAdditionalFile.isPending}
@@ -473,10 +482,10 @@ export function PiDetailPage() {
                 addAdditionalFile.mutate(
                   { file, description },
                   {
-                    onSuccess: () => toast.success("Файл добавлен"),
+                    onSuccess: () => toast.success(t("common.fileAdded")),
                     onError: (error) =>
                       toast.error(
-                        getErrorMessage(error, "Не удалось добавить файл")
+                        getErrorMessage(error, t("common.addFileFailed"))
                       ),
                   }
                 )
@@ -490,25 +499,27 @@ export function PiDetailPage() {
       {pi.pendingReplacementFileUrl && (
         <Card className="ring-blue-500/30">
           <CardHeader>
-            <CardTitle>CEAT предложил замену файла</CardTitle>
+            <CardTitle>{t("piDetail.replacement.title")}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
                 <span className="text-sm text-muted-foreground">
-                  Текущий файл
+                  {t("piDetail.replacement.current")}
                 </span>
                 {pi.piFileUrl && <DownloadButton url={pi.piFileUrl} />}
               </div>
               <div className="grid gap-1">
                 <span className="text-sm text-muted-foreground">
-                  Предложенный файл
+                  {t("piDetail.replacement.proposedFile")}
                 </span>
                 <DownloadButton url={pi.pendingReplacementFileUrl} />
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              предложено {formatDateTime(pi.pendingReplacementProposedAt)}
+              {t("piDetail.replacement.proposedAt", {
+                date: formatDateTime(pi.pendingReplacementProposedAt),
+              })}
               {pi.pendingReplacementProposedBy &&
                 ` · ${pi.pendingReplacementProposedBy.email}`}
             </p>
@@ -518,35 +529,35 @@ export function PiDetailPage() {
                   disabled={replacementDecision.isPending}
                   onClick={() =>
                     replacementDecision.mutate(true, {
-                      onSuccess: () => toast.success("Замена одобрена"),
+                      onSuccess: () => toast.success(t("piDetail.replacement.approved")),
                       onError: (error) =>
                         toast.error(
-                          getErrorMessage(error, "Не удалось одобрить замену")
+                          getErrorMessage(error, t("piDetail.replacement.approveFailed"))
                         ),
                     })
                   }
                 >
-                  Одобрить
+                  {t("piDetail.replacement.approve")}
                 </Button>
                 <Button
                   variant="outline"
                   disabled={replacementDecision.isPending}
                   onClick={() =>
                     replacementDecision.mutate(false, {
-                      onSuccess: () => toast.success("Замена отклонена"),
+                      onSuccess: () => toast.success(t("piDetail.replacement.rejected")),
                       onError: (error) =>
                         toast.error(
-                          getErrorMessage(error, "Не удалось отклонить замену")
+                          getErrorMessage(error, t("piDetail.replacement.rejectFailed"))
                         ),
                     })
                   }
                 >
-                  Отклонить
+                  {t("piDetail.replacement.reject")}
                 </Button>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Ожидает решения клиента.
+                {t("piDetail.replacement.awaiting")}
               </p>
             )}
           </CardContent>
@@ -556,11 +567,13 @@ export function PiDetailPage() {
       {/* Line items */}
       <Card>
         <CardHeader>
-          <CardTitle>Позиции</CardTitle>
+          <CardTitle>{t("piDetail.lines.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           {sortedLineItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Нет позиций.</p>
+            <p className="text-sm text-muted-foreground">
+              {t("piDetail.lines.empty")}
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -572,14 +585,14 @@ export function PiDetailPage() {
                       direction={direction}
                       onClick={() => toggleSort(col.key)}
                     >
-                      {col.label}
+                      {t(col.labelKey)}
                     </SortableHead>
                   ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 <TableRow className="bg-muted/50 font-semibold hover:bg-muted/50">
-                  <TableCell>Всего</TableCell>
+                  <TableCell>{t("piDetail.lines.total")}</TableCell>
                   <TableCell />
                   <TableCell>{formatNumber(pi.qtyPending)}</TableCell>
                   <TableCell>{formatNumber(pi.totalQty)}</TableCell>
@@ -608,7 +621,7 @@ export function PiDetailPage() {
                   <TableCell />
                 </TableRow>
                 <TableRow className="bg-muted/50 font-semibold hover:bg-muted/50">
-                  <TableCell>Приоритет</TableCell>
+                  <TableCell>{t("piDetail.lines.priorityRow")}</TableCell>
                   <TableCell />
                   <TableCell />
                   <TableCell />
@@ -617,9 +630,10 @@ export function PiDetailPage() {
                   <TableCell />
                   <TableCell />
                   <TableCell>
-                    {formatNumber(String(livePriorityTotals.totalQty))} /{" "}
-                    {formatNumber(String(livePriorityTotals.totalContainers))}{" "}
-                    конт.
+                    {t("piDetail.lines.priorityTotal", {
+                      qty: formatNumber(String(livePriorityTotals.totalQty)),
+                      n: formatNumber(String(livePriorityTotals.totalContainers)),
+                    })}
                   </TableCell>
                 </TableRow>
                 {sortedLineItems.map((item) => {

@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Download, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -23,6 +24,7 @@ interface ContainerFilesProps {
 // One flat list of files, no types (packing list, photos, Excel, PDF — any
 // format), as the spec asks.
 export function ContainerFiles({ containerId, files, canEdit }: ContainerFilesProps) {
+  const { t } = useTranslation()
   const add = useAddContainerFileMutation(containerId)
   const remove = useDeleteContainerFileMutation(containerId)
   const [toDelete, setToDelete] = useState<ActualContainerFile | null>(null)
@@ -33,7 +35,9 @@ export function ContainerFiles({ containerId, files, canEdit }: ContainerFilesPr
   return (
     <div className="grid gap-3">
       {files.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Файлов пока нет.</p>
+        <p className="text-sm text-muted-foreground">
+          {t("shipped.detail.files.empty")}
+        </p>
       ) : (
         <ul className="grid gap-2" data-testid="container-files">
           {files.map((file) => (
@@ -49,11 +53,11 @@ export function ContainerFiles({ containerId, files, canEdit }: ContainerFilesPr
                 variant="outline"
                 onClick={() =>
                   downloadContainerFile(file.id, file.fileName).catch((error) =>
-                    toast.error(getErrorMessage(error, "Не удалось скачать файл"))
+                    toast.error(getErrorMessage(error, t("common.downloadFailed")))
                   )
                 }
               >
-                <Download /> Скачать
+                <Download /> {t("common.download")}
               </Button>
               {canEdit && (
                 <Button
@@ -63,7 +67,7 @@ export function ContainerFiles({ containerId, files, canEdit }: ContainerFilesPr
                   className="text-destructive hover:text-destructive"
                   onClick={() => setToDelete(file)}
                 >
-                  <Trash2 /> Удалить
+                  <Trash2 /> {t("common.delete")}
                 </Button>
               )}
               <span className="text-xs text-muted-foreground">
@@ -84,11 +88,11 @@ export function ContainerFiles({ containerId, files, canEdit }: ContainerFilesPr
               { file, description },
               {
                 onSuccess: () => {
-                  toast.success("Файл добавлен")
+                  toast.success(t("common.fileAdded"))
                   setFormVersion((v) => v + 1)
                 },
                 onError: (error) =>
-                  toast.error(getErrorMessage(error, "Не удалось добавить файл")),
+                  toast.error(getErrorMessage(error, t("common.addFileFailed"))),
               }
             )
           }
@@ -100,20 +104,22 @@ export function ContainerFiles({ containerId, files, canEdit }: ContainerFilesPr
         onOpenChange={(open) => {
           if (!open) setToDelete(null)
         }}
-        title="Удалить файл?"
-        description={`«${toDelete?.fileName ?? ""}» будет удалён из списка файлов контейнера.`}
-        confirmLabel="Удалить"
+        title={t("shipped.detail.files.deleteTitle")}
+        description={t("shipped.detail.files.deleteDescription", {
+          name: toDelete?.fileName ?? "",
+        })}
+        confirmLabel={t("common.delete")}
         destructive
         isPending={remove.isPending}
         onConfirm={() => {
           if (!toDelete) return
           remove.mutate(toDelete.id, {
             onSuccess: () => {
-              toast.success("Файл удалён")
+              toast.success(t("shipped.detail.files.deleted"))
               setToDelete(null)
             },
             onError: (error) => {
-              toast.error(getErrorMessage(error, "Не удалось удалить файл"))
+              toast.error(getErrorMessage(error, t("common.deleteFileFailed")))
               setToDelete(null)
             },
           })

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Pencil } from "lucide-react"
 import { formatDay } from "@/lib/format"
 import { overrideHint } from "@/lib/actualContainers"
@@ -14,6 +15,7 @@ interface DateCellProps {
 // A date that CEAT changed by hand must not pass for the file's own — it is
 // amber with a pencil, and the tooltip says what the file had.
 export function DateCell({ value, overridden, sourceValue }: DateCellProps) {
+  const { t } = useTranslation()
   if (!value) {
     return <span className="text-muted-foreground">—</span>
   }
@@ -27,7 +29,7 @@ export function DateCell({ value, overridden, sourceValue }: DateCellProps) {
       title={overridden ? overrideHint(sourceValue) : undefined}
     >
       {formatDay(value)}
-      {overridden && <Pencil className="size-3" aria-label="дата изменена вручную" />}
+      {overridden && <Pencil className="size-3" aria-label={t("shipped.overrideAria")} />}
     </span>
   )
 }

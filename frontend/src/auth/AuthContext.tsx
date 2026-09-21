@@ -53,7 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     const payload = decodeJwt(accessToken)
     if (!payload) {
-      throw new Error("Сервер вернул некорректный токен")
+      // Never shown: LoginPage turns any non-401 failure into its own message.
+      throw new Error("The server returned an invalid token")
     }
     const authUser: AuthUser = {
       id: payload.sub,

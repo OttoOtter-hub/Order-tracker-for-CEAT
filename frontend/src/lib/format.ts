@@ -1,3 +1,8 @@
+import { numberLocale } from "@/i18n"
+
+// Dates below keep their fixed dd.mm.yyyy layout in both languages (the
+// "ru-RU" locale is used for that layout only); numbers follow the UI language.
+
 // How a PI is named wherever its number is shown: "100039270: Орел", or just
 // "100039270" when the card has no label (no dangling colon).
 export function formatPiTitle(
@@ -19,7 +24,7 @@ export function formatCurrency(
   if (Number.isNaN(numeric)) {
     return "—"
   }
-  return new Intl.NumberFormat("ru-RU", {
+  return new Intl.NumberFormat(numberLocale(), {
     style: "currency",
     currency,
     maximumFractionDigits: 2,
@@ -91,7 +96,7 @@ export function formatNumber(
   if (Number.isNaN(numeric)) {
     return "—"
   }
-  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits }).format(
+  return new Intl.NumberFormat(numberLocale(), { maximumFractionDigits }).format(
     numeric
   )
 }

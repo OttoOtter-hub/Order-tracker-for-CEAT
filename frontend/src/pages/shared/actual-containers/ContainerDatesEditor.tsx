@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -31,6 +32,7 @@ function DateField({
   overridden,
   sourceValue,
 }: DateFieldProps) {
+  const { t } = useTranslation()
   return (
     <div className="grid gap-1.5">
       <div className="flex items-center gap-2">
@@ -40,7 +42,7 @@ function DateField({
             variant="outline"
             className="border-transparent bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
           >
-            изменено вручную
+            {t("shipped.detail.dates.manual")}
           </Badge>
         )}
       </div>
@@ -53,8 +55,8 @@ function DateField({
       />
       <span className="text-xs text-muted-foreground">
         {sourceValue
-          ? `В файле: ${formatDay(sourceValue)}`
-          : "В файле даты нет"}
+          ? t("shipped.detail.dates.inFile", { date: formatDay(sourceValue) })
+          : t("shipped.detail.dates.noDateInFile")}
       </span>
     </div>
   )
@@ -68,6 +70,7 @@ function DateField({
 // effective dates change on the server, so the inputs always start from what
 // is really stored (no effect-driven state syncing).
 export function ContainerDatesEditor({ container }: { container: ActualContainer }) {
+  const { t } = useTranslation()
   const update = useUpdateContainerDatesMutation(container.id)
   const reset = useResetContainerDatesMutation(container.id)
   const [etd, setEtd] = useState(container.etd ?? "")
@@ -100,9 +103,9 @@ export function ContainerDatesEditor({ container }: { container: ActualContainer
     event.preventDefault()
     if (!hasChanges) return
     update.mutate(changes, {
-      onSuccess: () => toast.success("Даты сохранены"),
+      onSuccess: () => toast.success(t("shipped.detail.dates.saved")),
       onError: (error) =>
-        toast.error(getErrorMessage(error, "Не удалось сохранить даты")),
+        toast.error(getErrorMessage(error, t("shipped.detail.dates.saveFailed"))),
     })
   }
 
@@ -116,7 +119,7 @@ export function ContainerDatesEditor({ container }: { container: ActualContainer
         <div className="flex flex-wrap gap-6">
           <DateField
             id="override-etd"
-            label="ETD"
+            label={t("shipped.detail.etd")}
             value={etd}
             onChange={setEtd}
             overridden={container.isEtdOverridden}
@@ -124,7 +127,7 @@ export function ContainerDatesEditor({ container }: { container: ActualContainer
           />
           <DateField
             id="override-eta"
-            label="ETA"
+            label={t("shipped.detail.eta")}
             value={eta}
             onChange={setEta}
             overridden={container.isEtaOverridden}
@@ -133,7 +136,9 @@ export function ContainerDatesEditor({ container }: { container: ActualContainer
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="submit" size="sm" disabled={!hasChanges || update.isPending}>
-            {update.isPending ? "Сохранение..." : "Сохранить даты"}
+            {update.isPending
+              ? t("common.saving")
+              : t("shipped.detail.dates.save")}
           </Button>
           {hasOverride && (
             <Button
@@ -143,12 +148,11 @@ export function ContainerDatesEditor({ container }: { container: ActualContainer
               disabled={reset.isPending}
               onClick={() => setConfirmReset(true)}
             >
-              Сбросить до данных файла
+              {t("shipped.detail.dates.resetToFile")}
             </Button>
           )}
           <span className="text-xs text-muted-foreground">
-            Введённая дата заменяет дату файла и не перезаписывается
-            еженедельной загрузкой. Пустое поле снимает ручную дату.
+            {t("shipped.detail.dates.hint")}
           </span>
         </div>
       </form>
@@ -156,19 +160,19 @@ export function ContainerDatesEditor({ container }: { container: ActualContainer
       <ConfirmDialog
         open={confirmReset}
         onOpenChange={setConfirmReset}
-        title="Сбросить даты до данных файла?"
-        description="Ручные ETD/ETA будут удалены, снова будут показаны даты из файла бэкордера."
-        confirmLabel="Сбросить"
+        title={t("shipped.detail.dates.resetTitle")}
+        description={t("shipped.detail.dates.resetDescription")}
+        confirmLabel={t("shipped.detail.dates.resetConfirm")}
         destructive
         isPending={reset.isPending}
         onConfirm={() =>
           reset.mutate(undefined, {
             onSuccess: () => {
-              toast.success("Даты сброшены до данных файла")
+              toast.success(t("shipped.detail.dates.resetDone"))
               setConfirmReset(false)
             },
             onError: (error) => {
-              toast.error(getErrorMessage(error, "Не удалось сбросить даты"))
+              toast.error(getErrorMessage(error, t("shipped.detail.dates.resetFailed")))
               setConfirmReset(false)
             },
           })

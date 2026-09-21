@@ -1,5 +1,6 @@
 export interface StatusStyle {
-  label: string
+  // i18n key of the badge text; null for an unknown status, which is shown raw.
+  labelKey: string | null
   className: string
 }
 
@@ -13,16 +14,19 @@ const GREEN = "bg-green-500/10 text-green-600 dark:bg-green-500/20 dark:text-gre
 const PURPLE = "bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400"
 
 export const PI_STATUS: Record<string, StatusStyle> = {
-  missing_pi_document: { label: "Нет файла PI", className: GRAY },
-  missing_signed_document: { label: "Нет подписанного файла", className: AMBER },
-  signed: { label: "Подписан", className: GREEN },
-  replacement_pending: { label: "Ожидает замены", className: BLUE },
-  archived_shipped: { label: "В архиве (отгружен)", className: PURPLE },
+  missing_pi_document: { labelKey: "piStatus.missing_pi_document", className: GRAY },
+  missing_signed_document: {
+    labelKey: "piStatus.missing_signed_document",
+    className: AMBER,
+  },
+  signed: { labelKey: "piStatus.signed", className: GREEN },
+  replacement_pending: { labelKey: "piStatus.replacement_pending", className: BLUE },
+  archived_shipped: { labelKey: "piStatus.archived_shipped", className: PURPLE },
 }
 
 export function statusStyle(
   map: Record<string, StatusStyle>,
   status: string
 ): StatusStyle {
-  return map[status] ?? { label: status, className: GRAY }
+  return map[status] ?? { labelKey: null, className: GRAY }
 }

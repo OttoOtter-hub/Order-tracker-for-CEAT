@@ -1,17 +1,20 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { FileText, LogOut, Ship, Truck, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { LanguageSwitcher } from "@/components/LanguageSwitcher"
 import { useAuth } from "@/auth/AuthContext"
 
 const NAV_ITEMS = [
-  { to: "/ops/pi", label: "PI", icon: FileText },
-  { to: "/ops/ready-to-ship", label: "Готово к отгрузке", icon: Truck },
-  { to: "/ops/actual-containers", label: "Готовые контейнеры", icon: Ship },
-  { to: "/ops/backorder-upload", label: "Загрузка бэкордера", icon: Upload },
+  { to: "/ops/pi", labelKey: "nav.pi", icon: FileText },
+  { to: "/ops/ready-to-ship", labelKey: "nav.readyToShip", icon: Truck },
+  { to: "/ops/actual-containers", labelKey: "nav.shipped", icon: Ship },
+  { to: "/ops/backorder-upload", labelKey: "nav.backorderUpload", icon: Upload },
 ]
 
 export function OpsLayout() {
+  const { t } = useTranslation()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
@@ -22,13 +25,13 @@ export function OpsLayout() {
 
   return (
     <div className="flex min-h-svh">
-      <aside className="flex w-60 shrink-0 flex-col border-r bg-muted/30">
+      <aside className="sticky top-0 flex h-svh w-60 shrink-0 flex-col self-start overflow-y-auto border-r bg-muted/30">
         <div className="px-4 py-4">
-          <p className="text-sm font-semibold">CEAT · Ops</p>
+          <p className="text-sm font-semibold">{t("nav.opsTitle")}</p>
           <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          {NAV_ITEMS.map(({ to, labelKey, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -40,10 +43,13 @@ export function OpsLayout() {
               }
             >
               <Icon className="size-4" />
-              {label}
+              {t(labelKey)}
             </NavLink>
           ))}
         </nav>
+        <div className="border-t px-4 py-3">
+          <LanguageSwitcher />
+        </div>
         <div className="border-t p-2">
           <Button
             variant="ghost"
@@ -51,7 +57,7 @@ export function OpsLayout() {
             onClick={handleLogout}
           >
             <LogOut className="size-4" />
-            Выйти
+            {t("nav.logout")}
           </Button>
         </div>
       </aside>

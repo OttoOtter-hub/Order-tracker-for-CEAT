@@ -1,3 +1,5 @@
+import { numberLocale } from "@/i18n"
+
 // How full a container is, as the client sees it. The thresholds are the
 // spec's: up to 90% is unremarkable, 90-100% is yellow ("nearly full"), and
 // anything above 100% is red — that is also exactly what blocks "Подтвердить"
@@ -32,5 +34,5 @@ export const FILL_CARD: Record<FillLevel, string> = {
 }
 
 export function formatPercent(percent: number): string {
-  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(percent)}%`
+  return `${new Intl.NumberFormat(numberLocale(), { maximumFractionDigits: 1 }).format(percent)}%`
 }

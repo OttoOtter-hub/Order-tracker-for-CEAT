@@ -1,4 +1,5 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -65,6 +66,7 @@ function RemoveForm({
   customerId,
   onClose,
 }: RemoveDialogProps & { target: RemoveTarget }) {
+  const { t } = useTranslation()
   const { allocation, containerLabel } = target
   const remove = useRemoveMutation(customerId)
   const max = Math.floor(allocation.allocatedQty)
@@ -75,12 +77,15 @@ function RemoveForm({
         qty: z
           .string()
           .trim()
-          .min(1, "Укажите количество")
-          .refine((v) => /^\d+$/.test(v), "Только целое число штук")
-          .refine((v) => Number(v) >= 1, "Не меньше 1")
-          .refine((v) => Number(v) <= max, `Не больше, чем в контейнере (${max})`),
+          .min(1, t("readyToShip.remove.errors.required"))
+          .refine((v) => /^\d+$/.test(v), t("readyToShip.remove.errors.integer"))
+          .refine((v) => Number(v) >= 1, t("readyToShip.remove.errors.min"))
+          .refine(
+            (v) => Number(v) <= max,
+            t("readyToShip.remove.errors.max", { max })
+          ),
       }),
-    [max]
+    [max, t]
   )
 
   const form = useForm<RemoveFormValues>({
@@ -89,6 +94,15 @@ function RemoveForm({
     defaultValues: { qty: String(max) },
   })
 
+  // A validation message already on screen was built in the old language:
+  // re-validate when the language changes so it is rebuilt in the new one.
+  useEffect(() => {
+    const failed = Object.keys(form.formState.errors) as (keyof RemoveFormValues)[]
+    if (failed.length > 0) {
+      void form.trigger(failed)
+    }
+  }, [t, form])
+
   function onSubmit(values: RemoveFormValues) {
     const amount = Number(values.qty)
     remove.mutate(
@@ -96,12 +110,15 @@ function RemoveForm({
       {
         onSuccess: () => {
           toast.success(
-            `Возвращено в список: ${formatNumber(String(amount))} шт. (${allocation.materialNum ?? "—"})`
+            t("readyToShip.remove.success", {
+              qty: formatNumber(String(amount)),
+              material: allocation.materialNum ?? "—",
+            })
           )
           onClose()
         },
         onError: (error) =>
-          toast.error(getErrorMessage(error, "Не удалось убрать позицию")),
+          toast.error(getErrorMessage(error, t("readyToShip.remove.failed"))),
       }
     )
   }
@@ -109,16 +126,19 @@ function RemoveForm({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Убрать из «{containerLabel}»</DialogTitle>
+        <DialogTitle>
+          {t("readyToShip.remove.title", { container: containerLabel })}
+        </DialogTitle>
         <DialogDescription>
           <span className="font-medium text-foreground">
             {allocation.materialNum ?? "—"}
           </span>{" "}
           · {allocation.materialDesc ?? "—"}
           <br />
-          PI {formatPiTitle(allocation.piNumber, allocation.piLabel)} · сейчас в контейнере{" "}
-          {formatNumber(String(allocation.allocatedQty))} шт. Убранное вернётся в
-          список готового.
+          {t("readyToShip.remove.info", {
+            title: formatPiTitle(allocation.piNumber, allocation.piLabel),
+            qty: formatNumber(String(allocation.allocatedQty)),
+          })}
         </DialogDescription>
       </DialogHeader>
       <Form {...form}>
@@ -128,7 +148,7 @@ function RemoveForm({
             name="qty"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Сколько убрать</FormLabel>
+                <FormLabel>{t("readyToShip.remove.qty")}</FormLabel>
                 <div className="flex items-center gap-2">
                   <FormControl>
                     <Input
@@ -153,7 +173,7 @@ function RemoveForm({
                       })
                     }
                   >
-                    Всё ({formatNumber(String(max))})
+                    {t("common.all", { max: formatNumber(String(max)) })}
                   </Button>
                 </div>
                 <FormMessage />
@@ -162,13 +182,15 @@ function RemoveForm({
           />
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button
               type="submit"
               disabled={remove.isPending || !form.formState.isValid}
             >
-              {remove.isPending ? "Выполняется..." : "Убрать"}
+              {remove.isPending
+                ? t("common.working")
+                : t("readyToShip.remove.submit")}
             </Button>
           </div>
         </form>

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { useTranslation } from "react-i18next"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,7 @@ export function ConfirmDialog({
   isPending = false,
   onConfirm,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -47,7 +49,7 @@ export function ConfirmDialog({
             disabled={isPending}
             onClick={() => onOpenChange(false)}
           >
-            Отмена
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
@@ -55,7 +57,7 @@ export function ConfirmDialog({
             disabled={isPending}
             onClick={onConfirm}
           >
-            {isPending ? "Выполняется..." : confirmLabel}
+            {isPending ? t("common.working") : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

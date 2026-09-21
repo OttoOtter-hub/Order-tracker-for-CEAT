@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -30,13 +31,13 @@ type SortKey =
   | "eta"
   | "commercialInvoiceNumber"
 
-const COLUMNS: { key: SortKey; label: string }[] = [
-  { key: "containerNumber", label: "Контейнер" },
-  { key: "port", label: "Порт" },
-  { key: "vesselName", label: "Судно" },
-  { key: "etd", label: "ETD" },
-  { key: "eta", label: "ETA" },
-  { key: "commercialInvoiceNumber", label: "Commercial invoice" },
+const COLUMNS: { key: SortKey; labelKey: string }[] = [
+  { key: "containerNumber", labelKey: "shipped.columns.container" },
+  { key: "port", labelKey: "shipped.columns.port" },
+  { key: "vesselName", labelKey: "shipped.columns.vessel" },
+  { key: "etd", labelKey: "shipped.columns.etd" },
+  { key: "eta", labelKey: "shipped.columns.eta" },
+  { key: "commercialInvoiceNumber", labelKey: "shipped.columns.commercialInvoice" },
 ]
 
 // ISO "YYYY-MM-DD" strings order correctly as text; missing dates sink to the
@@ -61,20 +62,26 @@ function searchText(container: ActualContainer): string {
 // Only what the "ETA-15 days" sheet actually filled in — a container outside
 // that week's sample shows nothing here rather than a row of dashes.
 function Eta15Badges({ container }: { container: ActualContainer }) {
+  const { t } = useTranslation()
   const badges: { label: string; title: string }[] = []
   if (container.blNumber) {
-    badges.push({ label: `B/L ${container.blNumber}`, title: "Коносамент (B/L)" })
+    badges.push({
+      label: t("shipped.badges.bl", { value: container.blNumber }),
+      title: t("shipped.badges.blTitle"),
+    })
   }
   if (container.telexReleaseDate) {
     badges.push({
-      label: `Telex ${formatDay(container.telexReleaseDate)}`,
-      title: "Дата telex release",
+      label: t("shipped.badges.telex", { date: formatDay(container.telexReleaseDate) }),
+      title: t("shipped.badges.telexTitle"),
     })
   }
   if (container.paymentReceiptStatus) {
     badges.push({
-      label: `Оплата: ${formatStatusValue(container.paymentReceiptStatus)}`,
-      title: "Статус получения оплаты",
+      label: t("shipped.badges.payment", {
+        value: formatStatusValue(container.paymentReceiptStatus),
+      }),
+      title: t("shipped.badges.paymentTitle"),
     })
   }
   if (badges.length === 0) {
@@ -94,6 +101,7 @@ function Eta15Badges({ container }: { container: ActualContainer }) {
 // Used by /ops/actual-containers and /client/actual-containers — the same
 // read-only picture; the API scopes a client to their own customer.
 export function ActualContainersPage() {
+  const { t } = useTranslation()
   const { user } = useAuth()
   const navigate = useNavigate()
   const { data, isLoading, isError, error, refetch } = useActualContainersQuery()
@@ -115,11 +123,9 @@ export function ActualContainersPage() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Готовые контейнеры</h1>
+          <h1 className="text-xl font-semibold">{t("shipped.title")}</h1>
           <p className="text-sm text-muted-foreground">
-            Контейнеры, которые CEAT уже отгрузил, по данным еженедельного файла.
-            Дата, изменённая вручную, выделена и помечена карандашом. Зелёным
-            выделены контейнеры, к которым приложен файл.
+            {t("shipped.description")}
           </p>
         </div>
         <div className="relative w-full max-w-xs">
@@ -128,34 +134,35 @@ export function ActualContainersPage() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Поиск: контейнер, судно, порт, инвойс, B/L"
-            aria-label="Поиск по контейнерам"
+            placeholder={t("shipped.searchPlaceholder")}
+            aria-label={t("shipped.searchAria")}
             className="pl-8"
           />
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Загрузка...</p>}
+      {isLoading && (
+        <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+      )}
 
       {isError && (
         <div className="flex flex-col items-start gap-2">
           <p className="text-sm text-destructive">
-            {getErrorMessage(error, "Не удалось загрузить контейнеры")}
+            {getErrorMessage(error, t("shipped.loadFailed"))}
           </p>
           <button
             type="button"
             className="text-sm underline"
             onClick={() => refetch()}
           >
-            Повторить
+            {t("common.retry")}
           </button>
         </div>
       )}
 
       {data && data.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          Пока нет ни одного контейнера — они появятся после загрузки
-          еженедельного файла бэкордера с листами отгрузок.
+          {t("shipped.empty")}
         </p>
       )}
 
@@ -164,12 +171,12 @@ export function ActualContainersPage() {
           <CardContent>
             <p className="mb-2 text-xs text-muted-foreground">
               {query.trim()
-                ? `Найдено ${visible.length} из ${data.length}`
-                : `Контейнеров: ${data.length}`}
+                ? t("shipped.found", { n: visible.length, total: data.length })
+                : t("shipped.count", { n: data.length })}
             </p>
             {visible.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                По запросу «{query}» ничего не найдено.
+                {t("shipped.noResults", { query })}
               </p>
             ) : (
               <Table data-testid="actual-containers-table">
@@ -182,10 +189,10 @@ export function ActualContainersPage() {
                         direction={direction}
                         onClick={() => toggleSort(col.key)}
                       >
-                        {col.label}
+                        {t(col.labelKey)}
                       </SortableHead>
                     ))}
-                    <TableHead>ETA-15</TableHead>
+                    <TableHead>{t("shipped.columns.eta15")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

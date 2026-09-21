@@ -1,4 +1,5 @@
 import { toast } from "sonner"
+import { useTranslation } from "react-i18next"
 import {
   Card,
   CardContent,
@@ -24,30 +25,35 @@ import { getErrorMessage } from "@/lib/errors"
 import { useState } from "react"
 
 function ResultCard({ result }: { result: BackorderUploadResult }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Загрузка «{result.fileName}» обработана</CardTitle>
+        <CardTitle>{t("backorder.resultTitle", { name: result.fileName })}</CardTitle>
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
         <div>
-          <span className="text-muted-foreground">Строк обработано: </span>
+          <span className="text-muted-foreground">
+            {t("backorder.rowsProcessed")}:{" "}
+          </span>
           {result.rowsProcessed}
         </div>
         <div>
-          <span className="text-muted-foreground">Новых карточек: </span>
+          <span className="text-muted-foreground">{t("backorder.newCards")}: </span>
           {result.newCardsCreated}
         </div>
         <div>
-          <span className="text-muted-foreground">Обновлено карточек: </span>
+          <span className="text-muted-foreground">
+            {t("backorder.cardsUpdated")}:{" "}
+          </span>
           {result.cardsUpdated}
         </div>
         <div>
-          <span className="text-muted-foreground">Заархивировано: </span>
+          <span className="text-muted-foreground">{t("backorder.archived")}: </span>
           {result.cardsArchived}
         </div>
         <div>
-          <span className="text-muted-foreground">Пропущено строк: </span>
+          <span className="text-muted-foreground">{t("backorder.skipped")}: </span>
           {result.cardsSkippedInvalidRows}
         </div>
       </CardContent>
@@ -56,6 +62,7 @@ function ResultCard({ result }: { result: BackorderUploadResult }) {
 }
 
 export function BackorderUploadPage() {
+  const { t } = useTranslation()
   const { data: uploads, isLoading } = useBackorderUploadsQuery()
   const mutation = useUploadBackorderMutation()
   const [lastResult, setLastResult] = useState<BackorderUploadResult | null>(
@@ -64,16 +71,16 @@ export function BackorderUploadPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold">Загрузка бэкордера</h1>
+      <h1 className="text-xl font-semibold">{t("backorder.title")}</h1>
 
       <Card>
         <CardHeader>
-          <CardTitle>Загрузить файл</CardTitle>
+          <CardTitle>{t("backorder.uploadCard")}</CardTitle>
         </CardHeader>
         <CardContent>
           <FileUploadForm
             accept=".xlsx"
-            submitLabel="Загрузить"
+            submitLabel={t("backorder.submit")}
             isSubmitting={mutation.isPending}
             className="flex flex-col gap-3 sm:max-w-sm"
             onSubmit={(file) =>
@@ -81,12 +88,17 @@ export function BackorderUploadPage() {
                 onSuccess: (result) => {
                   setLastResult(result)
                   toast.success(
-                    `Обработано ${result.rowsProcessed} строк: ${result.newCardsCreated} новых, ${result.cardsUpdated} обновлено, ${result.cardsArchived} заархивировано`
+                    t("backorder.success", {
+                      rows: result.rowsProcessed,
+                      created: result.newCardsCreated,
+                      updated: result.cardsUpdated,
+                      archived: result.cardsArchived,
+                    })
                   )
                 },
                 onError: (error) =>
                   toast.error(
-                    getErrorMessage(error, "Не удалось загрузить файл")
+                    getErrorMessage(error, t("backorder.failed"))
                   ),
               })
             }
@@ -98,26 +110,28 @@ export function BackorderUploadPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>История загрузок</CardTitle>
+          <CardTitle>{t("backorder.history")}</CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading && (
-            <p className="text-sm text-muted-foreground">Загрузка...</p>
+            <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
           )}
           {!isLoading && (!uploads || uploads.length === 0) && (
-            <p className="text-sm text-muted-foreground">Загрузок ещё не было.</p>
+            <p className="text-sm text-muted-foreground">
+              {t("backorder.empty")}
+            </p>
           )}
           {uploads && uploads.length > 0 && (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Дата</TableHead>
-                  <TableHead>Файл</TableHead>
-                  <TableHead>Загрузил</TableHead>
-                  <TableHead>Строк</TableHead>
-                  <TableHead>Новых карточек</TableHead>
-                  <TableHead>Заархивировано</TableHead>
-                  <TableHead>Пропущено строк</TableHead>
+                  <TableHead>{t("backorder.columns.date")}</TableHead>
+                  <TableHead>{t("backorder.columns.file")}</TableHead>
+                  <TableHead>{t("backorder.columns.uploadedBy")}</TableHead>
+                  <TableHead>{t("backorder.columns.rows")}</TableHead>
+                  <TableHead>{t("backorder.columns.newCards")}</TableHead>
+                  <TableHead>{t("backorder.columns.archived")}</TableHead>
+                  <TableHead>{t("backorder.columns.skipped")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

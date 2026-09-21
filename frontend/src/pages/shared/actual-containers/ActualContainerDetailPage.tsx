@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -43,13 +44,13 @@ type LineSortKey =
   | "invoiceNumber"
   | "pgiDate"
 
-const LINE_COLUMNS: { key: LineSortKey; label: string }[] = [
-  { key: "piNumber", label: "PI" },
-  { key: "materialNum", label: "Материал" },
-  { key: "materialDesc", label: "Описание" },
-  { key: "quantity", label: "Кол-во" },
-  { key: "invoiceNumber", label: "Инвойс" },
-  { key: "pgiDate", label: "PGI дата" },
+const LINE_COLUMNS: { key: LineSortKey; labelKey: string }[] = [
+  { key: "piNumber", labelKey: "shipped.detail.lines.columns.pi" },
+  { key: "materialNum", labelKey: "shipped.detail.lines.columns.material" },
+  { key: "materialDesc", labelKey: "shipped.detail.lines.columns.description" },
+  { key: "quantity", labelKey: "shipped.detail.lines.columns.quantity" },
+  { key: "invoiceNumber", labelKey: "shipped.detail.lines.columns.invoice" },
+  { key: "pgiDate", labelKey: "shipped.detail.lines.columns.pgiDate" },
 ]
 
 function lineSortValue(
@@ -72,6 +73,7 @@ function hasEta15Data(container: ActualContainer): boolean {
 }
 
 export function ActualContainerDetailPage() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -94,7 +96,7 @@ export function ActualContainerDetailPage() {
   >(container?.lineItems, lineSortValue, "piNumber")
 
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Загрузка...</p>
+    return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
   }
   if (isError || !container) {
     return (
@@ -104,12 +106,12 @@ export function ActualContainerDetailPage() {
           size="sm"
           onClick={() => navigate(`${basePath}/actual-containers`)}
         >
-          <ArrowLeft /> К списку
+          <ArrowLeft /> {t("common.backToList")}
         </Button>
         <p className="text-sm text-muted-foreground">
           {isError
-            ? getErrorMessage(error, "Контейнер не найден.")
-            : "Контейнер не найден."}
+            ? getErrorMessage(error, t("shipped.detail.notFound"))
+            : t("shipped.detail.notFound")}
         </p>
       </div>
     )
@@ -126,32 +128,32 @@ export function ActualContainerDetailPage() {
         className="w-fit"
         onClick={() => navigate(`${basePath}/actual-containers`)}
       >
-        <ArrowLeft /> К списку
+        <ArrowLeft /> {t("common.backToList")}
       </Button>
 
       <h1 className="text-xl font-semibold">{container.containerNumber}</h1>
 
       <Card>
         <CardHeader>
-          <CardTitle>Отправка</CardTitle>
+          <CardTitle>{t("shipped.detail.shipment")}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
           <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Порт">{container.port ?? "—"}</Field>
-            <Field label="Судно">{container.vesselName ?? "—"}</Field>
-            <Field label="Commercial invoice">
+            <Field label={t("shipped.detail.port")}>{container.port ?? "—"}</Field>
+            <Field label={t("shipped.detail.vessel")}>{container.vesselName ?? "—"}</Field>
+            <Field label={t("shipped.detail.commercialInvoice")}>
               {container.commercialInvoiceNumber ?? "—"}
             </Field>
             {!isOps && (
               <>
-                <Field label="ETD">
+                <Field label={t("shipped.detail.etd")}>
                   <DateCell
                     value={container.etd}
                     overridden={container.isEtdOverridden}
                     sourceValue={container.sourceEtd}
                   />
                 </Field>
-                <Field label="ETA">
+                <Field label={t("shipped.detail.eta")}>
                   <DateCell
                     value={container.eta}
                     overridden={container.isEtaOverridden}
@@ -173,31 +175,35 @@ export function ActualContainerDetailPage() {
       {hasEta15Data(container) && (
         <Card data-testid="eta15-card">
           <CardHeader>
-            <CardTitle>Документы и оплата (ETA-15)</CardTitle>
+            <CardTitle>{t("shipped.detail.eta15.title")}</CardTitle>
           </CardHeader>
           <CardContent>
             <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {container.blNumber && <Field label="B/L">{container.blNumber}</Field>}
+              {container.blNumber && (
+                <Field label={t("shipped.detail.eta15.bl")}>{container.blNumber}</Field>
+              )}
               {container.invoiceValue !== null && (
-                <Field label="Сумма инвойса">
+                <Field label={t("shipped.detail.eta15.invoiceValue")}>
                   {formatNumber(container.invoiceValue)} {container.currency ?? ""}
                 </Field>
               )}
               {container.invoiceValue === null && container.currency && (
-                <Field label="Валюта">{container.currency}</Field>
+                <Field label={t("shipped.detail.eta15.currency")}>
+                  {container.currency}
+                </Field>
               )}
               {container.documentsReleaseStatus !== null && (
-                <Field label="Documents release">
+                <Field label={t("shipped.detail.eta15.documentsRelease")}>
                   {container.documentsReleaseStatus}
                 </Field>
               )}
               {container.telexReleaseDate && (
-                <Field label="Telex release">
+                <Field label={t("shipped.detail.eta15.telexRelease")}>
                   {formatDay(container.telexReleaseDate)}
                 </Field>
               )}
               {container.paymentReceiptStatus && (
-                <Field label="Получение оплаты">
+                <Field label={t("shipped.detail.eta15.paymentReceipt")}>
                   {formatStatusValue(container.paymentReceiptStatus)}
                 </Field>
               )}
@@ -208,7 +214,7 @@ export function ActualContainerDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Файлы</CardTitle>
+          <CardTitle>{t("shipped.detail.files.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           <ContainerFiles containerId={container.id} files={files} canEdit={isOps} />
@@ -217,11 +223,13 @@ export function ActualContainerDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Позиции</CardTitle>
+          <CardTitle>{t("shipped.detail.lines.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           {lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Нет позиций.</p>
+            <p className="text-sm text-muted-foreground">
+              {t("shipped.detail.lines.empty")}
+            </p>
           ) : (
             <Table data-testid="container-lines-table">
               <TableHeader>
@@ -233,14 +241,14 @@ export function ActualContainerDetailPage() {
                       direction={direction}
                       onClick={() => toggleSort(col.key)}
                     >
-                      {col.label}
+                      {t(col.labelKey)}
                     </SortableHead>
                   ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 <TableRow className="bg-muted/50 font-semibold hover:bg-muted/50">
-                  <TableCell>Всего</TableCell>
+                  <TableCell>{t("shipped.detail.lines.total")}</TableCell>
                   <TableCell />
                   <TableCell />
                   <TableCell data-testid="lines-total">
@@ -266,7 +274,7 @@ export function ActualContainerDetailPage() {
                             {formatPiTitle(line.piNumber, pi?.label)}
                           </Link>
                         ) : (
-                          <span title="Карточки с таким номером PI нет">
+                          <span title={t("shipped.detail.lines.noCard")}>
                             {line.piNumber}
                           </span>
                         )}

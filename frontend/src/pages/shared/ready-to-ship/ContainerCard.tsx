@@ -1,4 +1,5 @@
 import { useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import {
   Download,
@@ -24,7 +25,6 @@ import {
 import { FILL_CARD, fillLevel, formatPercent } from "@/lib/fill"
 import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
-import { pluralFiles } from "@/lib/readyToShip"
 import { cn } from "@/lib/utils"
 
 export type ReadyToShipMode = "client" | "ops"
@@ -44,6 +44,7 @@ interface MarkingCellProps {
 // the container is confirmed — a draft's quantity can still change, and a
 // change deletes the file) and deletes; both roles can download.
 function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
+  const { t } = useTranslation()
   const upload = useUploadMarkingMutation()
   const remove = useDeleteMarkingMutation()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -60,10 +61,12 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
       {
         onSuccess: () =>
           toast.success(
-            hasFile ? "Файл маркировки заменён" : "Файл маркировки загружен"
+            hasFile
+              ? t("readyToShip.marking.replacedToast")
+              : t("readyToShip.marking.uploadedToast")
           ),
         onError: (error) =>
-          toast.error(getErrorMessage(error, "Не удалось загрузить файл")),
+          toast.error(getErrorMessage(error, t("common.uploadFailed"))),
       }
     )
   }
@@ -80,14 +83,14 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
           title={
             container.isConfirmed
               ? undefined
-              : "Файл действует, пока не изменится количество в этой строке"
+              : t("readyToShip.marking.validUntilChanged")
           }
         >
-          <FileCheck /> Файл загружен
+          <FileCheck /> {t("readyToShip.marking.uploaded")}
         </Badge>
       ) : (
         <Badge variant="outline" className={AMBER_BADGE}>
-          <FileX /> Нет файла
+          <FileX /> {t("readyToShip.marking.missing")}
         </Badge>
       )}
 
@@ -98,11 +101,11 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
           variant="outline"
           onClick={() =>
             downloadMarkingFile(allocation.id).catch((error) =>
-              toast.error(getErrorMessage(error, "Не удалось скачать файл"))
+              toast.error(getErrorMessage(error, t("common.downloadFailed")))
             )
           }
         >
-          <Download /> Скачать
+          <Download /> {t("common.download")}
         </Button>
       )}
 
@@ -127,7 +130,11 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
             onClick={() => inputRef.current?.click()}
           >
             <Upload />
-            {upload.isPending ? "Загрузка..." : hasFile ? "Заменить" : "Загрузить"}
+            {upload.isPending
+              ? t("common.uploading")
+              : hasFile
+                ? t("readyToShip.marking.replace")
+                : t("readyToShip.marking.upload")}
           </Button>
         </>
       )}
@@ -141,24 +148,27 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
             disabled={remove.isPending}
             onClick={() => setConfirmDelete(true)}
           >
-            <Trash2 /> Удалить
+            <Trash2 /> {t("common.delete")}
           </Button>
           <ConfirmDialog
             open={confirmDelete}
             onOpenChange={setConfirmDelete}
-            title="Удалить файл маркировки?"
-            description={`${allocation.materialNum ?? "—"} в «${container.label}»: файл будет удалён, его нужно будет загрузить заново.`}
-            confirmLabel="Удалить"
+            title={t("readyToShip.marking.deleteTitle")}
+            description={t("readyToShip.marking.deleteDescription", {
+              material: allocation.materialNum ?? "—",
+              container: container.label,
+            })}
+            confirmLabel={t("common.delete")}
             destructive
             isPending={remove.isPending}
             onConfirm={() =>
               remove.mutate(allocation.id, {
                 onSuccess: () => {
                   setConfirmDelete(false)
-                  toast.success("Файл маркировки удалён")
+                  toast.success(t("readyToShip.marking.deletedToast"))
                 },
                 onError: (error) =>
-                  toast.error(getErrorMessage(error, "Не удалось удалить файл")),
+                  toast.error(getErrorMessage(error, t("common.deleteFileFailed"))),
               })
             }
           />
@@ -181,6 +191,7 @@ export function ContainerCard({
   onRemove,
   onUnlock,
 }: ContainerCardProps) {
+  const { t } = useTranslation()
   const level = fillLevel(container.fillPercent)
   const isClient = mode === "client"
   const showCounter =
@@ -200,13 +211,13 @@ export function ContainerCard({
             <div className="flex flex-wrap items-center gap-1.5">
               {container.isConfirmed ? (
                 <Badge variant="outline" className={GREEN_BADGE}>
-                  Подтверждён
+                  {t("readyToShip.card.confirmed")}
                 </Badge>
               ) : (
-                <Badge variant="secondary">Черновик</Badge>
+                <Badge variant="secondary">{t("readyToShip.card.draft")}</Badge>
               )}
               {container.isOverfilled && (
-                <Badge variant="destructive">Перегружен</Badge>
+                <Badge variant="destructive">{t("readyToShip.card.overfilled")}</Badge>
               )}
             </div>
           </div>
@@ -220,8 +231,10 @@ export function ContainerCard({
                 className="text-sm text-muted-foreground"
                 data-testid="marking-counter"
               >
-                Маркировка: {pluralFiles(container.markingFilesUploaded)} из{" "}
-                {container.markingFilesTotal}
+                {t("readyToShip.card.markingCounter", {
+                  count: container.markingFilesUploaded,
+                  total: container.markingFilesTotal,
+                })}
               </span>
             ) : (
               <span />
@@ -233,7 +246,7 @@ export function ContainerCard({
                 variant="outline"
                 onClick={() => onUnlock(container)}
               >
-                <LockOpen /> Разблокировать
+                <LockOpen /> {t("readyToShip.card.unlock")}
               </Button>
             )}
           </div>
@@ -241,8 +254,7 @@ export function ContainerCard({
 
         {container.isOverfilled && (
           <p className="text-sm text-destructive">
-            Заполнение больше 100% — подтвердить план нельзя, пока контейнер не
-            разгружен.
+            {t("readyToShip.card.overfilledWarning")}
           </p>
         )}
       </CardHeader>
@@ -264,17 +276,23 @@ export function ContainerCard({
                       {allocation.materialDesc ?? "—"}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      PI {formatPiTitle(allocation.piNumber, allocation.piLabel)}
-                      {allocation.soNumber ? ` · SO ${allocation.soNumber}` : ""}
+                      {t("readyToShip.card.pi", {
+                        title: formatPiTitle(allocation.piNumber, allocation.piLabel),
+                      })}
+                      {allocation.soNumber
+                        ? t("readyToShip.card.piSo", { so: allocation.soNumber })
+                        : ""}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <div className="font-medium tabular-nums">
-                      {formatNumber(String(allocation.allocatedQty))} шт.
+                      {t("common.qtyPcs", {
+                        qty: formatNumber(String(allocation.allocatedQty)),
+                      })}
                     </div>
                     <div
                       className="text-xs text-muted-foreground tabular-nums"
-                      title="Доля контейнера, которую занимает эта строка"
+                      title={t("readyToShip.card.shareHint")}
                     >
                       {formatPercent(allocation.fillContribution * 100)}
                     </div>
@@ -287,7 +305,7 @@ export function ContainerCard({
                           onRemove({ allocation, containerLabel: container.label })
                         }
                       >
-                        Убрать
+                        {t("readyToShip.card.remove")}
                       </Button>
                     )}
                   </div>

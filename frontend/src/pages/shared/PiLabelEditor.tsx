@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ interface PiLabelEditorProps {
 // the PI is unsigned (the parent stops rendering it once it is signed — from
 // then on the label is plain text, with no way back).
 export function PiLabelEditor({ piId, label }: PiLabelEditorProps) {
+  const { t } = useTranslation()
   const updateLabel = useUpdateLabelMutation(piId)
   const [draft, setDraft] = useState(label ?? "")
 
@@ -28,10 +30,10 @@ export function PiLabelEditor({ piId, label }: PiLabelEditorProps) {
     updateLabel.mutate(trimmed === "" ? null : trimmed, {
       onSuccess: (pi) => {
         setDraft(pi.label ?? "")
-        toast.success("Название сохранено")
+        toast.success(t("labelEditor.saved"))
       },
       onError: (error) =>
-        toast.error(getErrorMessage(error, "Не удалось сохранить название")),
+        toast.error(getErrorMessage(error, t("labelEditor.failed"))),
     })
   }
 
@@ -47,8 +49,8 @@ export function PiLabelEditor({ piId, label }: PiLabelEditorProps) {
       <Input
         value={draft}
         maxLength={PI_LABEL_MAX_LENGTH}
-        placeholder="Название"
-        aria-label="Название"
+        placeholder={t("labelEditor.placeholder")}
+        aria-label={t("labelEditor.placeholder")}
         className="h-8 w-56"
         onChange={(e) => setDraft(e.target.value)}
       />
@@ -58,7 +60,7 @@ export function PiLabelEditor({ piId, label }: PiLabelEditorProps) {
         variant="outline"
         disabled={!isDirty || updateLabel.isPending}
       >
-        {updateLabel.isPending ? "Сохранение..." : "Сохранить"}
+        {updateLabel.isPending ? t("common.saving") : t("common.save")}
       </Button>
     </form>
   )

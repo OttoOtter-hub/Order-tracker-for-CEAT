@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -24,6 +25,7 @@ interface UploadPiDialogProps {
 // number already exists (e.g. created from a backorder row) this fills in
 // its pi_file_url, otherwise it creates a new card.
 export function UploadPiDialog({ basePath }: UploadPiDialogProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
   const mutation = useUploadPiMutation()
@@ -32,11 +34,13 @@ export function UploadPiDialog({ basePath }: UploadPiDialogProps) {
     mutation.mutate(file, {
       onSuccess: (pi) => {
         setOpen(false)
-        toast.success(`Проформа ${formatPiTitle(pi.piNumber, pi.label)} загружена`)
+        toast.success(
+          t("uploadPi.success", { title: formatPiTitle(pi.piNumber, pi.label) })
+        )
         navigate(`${basePath}/pi/${pi.id}`)
       },
       onError: (error) => {
-        toast.error(getErrorMessage(error, "Не удалось загрузить проформу"))
+        toast.error(getErrorMessage(error, t("uploadPi.failed")))
       },
     })
   }
@@ -44,20 +48,16 @@ export function UploadPiDialog({ basePath }: UploadPiDialogProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>Загрузить проформу</Button>
+        <Button>{t("uploadPi.trigger")}</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Загрузить проформу</DialogTitle>
-          <DialogDescription>
-            Номер PI распознаётся из имени файла. Если карточка с этим
-            номером уже есть и файл ещё не загружен — он будет прикреплён к
-            ней, иначе создастся новая карточка.
-          </DialogDescription>
+          <DialogTitle>{t("uploadPi.title")}</DialogTitle>
+          <DialogDescription>{t("uploadPi.description")}</DialogDescription>
         </DialogHeader>
         <FileUploadForm
           accept=".pdf,application/pdf"
-          submitLabel="Загрузить"
+          submitLabel={t("uploadPi.submit")}
           isSubmitting={mutation.isPending}
           onSubmit={handleSubmit}
         />

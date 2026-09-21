@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import { useTranslation } from "react-i18next"
 import { Download } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -49,24 +50,29 @@ export function ReadyToShipPage() {
 // The pilot has exactly one, which is then picked automatically; a picker
 // appears as soon as a second one exists.
 function OpsReadyToShip() {
+  const { t } = useTranslation()
   const { data: customers, isLoading } = useCustomersQuery()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const customerId = selectedId ?? customers?.[0]?.id
 
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Загрузка...</p>
+    return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
   }
   if (!customerId) {
-    return <p className="text-sm text-muted-foreground">Нет клиентов.</p>
+    return (
+      <p className="text-sm text-muted-foreground">
+        {t("readyToShip.noCustomers")}
+      </p>
+    )
   }
 
   return (
     <div className="flex flex-col gap-4">
       {customers && customers.length > 1 && (
         <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Клиент:</span>
+          <span className="text-muted-foreground">{t("readyToShip.customer")}:</span>
           <Select value={customerId} onValueChange={setSelectedId}>
-            <SelectTrigger className="w-64" aria-label="Клиент">
+            <SelectTrigger className="w-64" aria-label={t("readyToShip.customer")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -91,6 +97,7 @@ function ReadyToShipContent({
   mode: ReadyToShipMode
   customerId?: string
 }) {
+  const { t } = useTranslation()
   const isClient = mode === "client"
   const query = useReadyToShipQuery(customerId)
   const unlock = useUnlockContainerMutation()
@@ -137,16 +144,16 @@ function ReadyToShipContent({
   }, [view])
 
   if (query.isLoading) {
-    return <p className="text-sm text-muted-foreground">Загрузка...</p>
+    return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
   }
   if (query.isError || !view || !summary) {
     return (
       <div className="flex flex-col items-start gap-2">
         <p className="text-sm text-destructive">
-          {getErrorMessage(query.error, "Не удалось загрузить раздел")}
+          {getErrorMessage(query.error, t("readyToShip.loadFailed"))}
         </p>
         <Button variant="outline" size="sm" onClick={() => query.refetch()}>
-          Повторить
+          {t("common.retry")}
         </Button>
       </div>
     )
@@ -160,11 +167,11 @@ function ReadyToShipContent({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-xl font-semibold">Готово к отгрузке</h1>
+          <h1 className="text-xl font-semibold">{t("readyToShip.title")}</h1>
           <p className="text-sm text-muted-foreground">
             {isClient
-              ? "Разложите план недели по контейнерам, подтвердите и приложите маркировку."
-              : "Состояние плана клиента (только просмотр). Подтверждённый контейнер можно разблокировать."}
+              ? t("readyToShip.descriptionClient")
+              : t("readyToShip.descriptionOps")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -173,13 +180,17 @@ function ReadyToShipContent({
             data-testid="ready-summary"
           >
             <Badge variant="secondary">
-              Строк к распределению: {view.unallocatedLines.length}
+              {t("readyToShip.badgeLines", { n: view.unallocatedLines.length })}
             </Badge>
             <Badge variant="secondary">
-              Остаток: {formatNumber(String(summary.remainingTotal))} шт.
+              {t("readyToShip.badgeRemaining", {
+                qty: formatNumber(String(summary.remainingTotal)),
+              })}
             </Badge>
             <Badge variant="secondary">
-              Контейнеров: {summary.visibleContainers.length}
+              {t("readyToShip.badgeContainers", {
+                n: summary.visibleContainers.length,
+              })}
             </Badge>
           </div>
           <Button
@@ -191,13 +202,13 @@ function ReadyToShipContent({
               setIsExporting(true)
               exportReadyToShipXlsx(customerId)
                 .catch((error) =>
-                  toast.error(getErrorMessage(error, "Не удалось выгрузить Excel"))
+                  toast.error(getErrorMessage(error, t("readyToShip.exportFailed")))
                 )
                 .finally(() => setIsExporting(false))
             }}
           >
             <Download />
-            {isExporting ? "Выгрузка..." : "Выгрузить в Excel"}
+            {isExporting ? t("common.exporting") : t("readyToShip.exportExcel")}
           </Button>
         </div>
       </div>
@@ -209,7 +220,7 @@ function ReadyToShipContent({
       <div className="grid gap-4 min-[1400px]:grid-cols-2 min-[1400px]:items-start">
         <Card className="min-[1400px]:sticky min-[1400px]:top-4" data-testid="ready-panel">
           <CardHeader>
-            <CardTitle>Список готового</CardTitle>
+            <CardTitle>{t("readyToShip.list.title")}</CardTitle>
           </CardHeader>
           <CardContent>
             <ReadyLinesTable
@@ -222,16 +233,23 @@ function ReadyToShipContent({
 
         <section className="flex flex-col gap-3" data-testid="containers-panel">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-medium">Контейнеры</h2>
+            <h2 className="text-base font-medium">
+              {t("readyToShip.containers.title")}
+            </h2>
             <span className="text-xs text-muted-foreground">
-              в работе {summary.working.length} · подтверждено{" "}
-              {summary.confirmed.length} · свободно {summary.free.length}
+              {t("readyToShip.containers.counts", {
+                working: summary.working.length,
+                confirmed: summary.confirmed.length,
+                free: summary.free.length,
+              })}
             </span>
           </div>
 
           {filled.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              Пока ничего не размещено{isClient ? ": используйте «Переместить» в списке слева." : "."}
+              {isClient
+                ? t("readyToShip.containers.emptyClient")
+                : t("readyToShip.containers.emptyOps")}
             </p>
           )}
 
@@ -249,7 +267,7 @@ function ReadyToShipContent({
             <Card size="sm" data-testid="free-slots">
               <CardHeader>
                 <CardTitle className="text-sm">
-                  Свободные слоты ({summary.free.length})
+                  {t("readyToShip.containers.freeSlots", { n: summary.free.length })}
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-1.5">
@@ -288,20 +306,24 @@ function ReadyToShipContent({
           onOpenChange={(open) => {
             if (!open) setUnlockTarget(null)
           }}
-          title={`Разблокировать «${unlockTarget?.label ?? ""}»?`}
-          description="После разблокировки клиент сможет менять состав этого контейнера, файлы маркировки на изменённых строках будут удалены."
-          confirmLabel="Разблокировать"
+          title={t("readyToShip.unlock.title", { label: unlockTarget?.label ?? "" })}
+          description={t("readyToShip.unlock.description")}
+          confirmLabel={t("readyToShip.unlock.confirm")}
           destructive
           isPending={unlock.isPending}
           onConfirm={() => {
             if (!unlockTarget) return
             unlock.mutate(unlockTarget.id, {
               onSuccess: () => {
-                toast.success(`«${unlockTarget.label}» разблокирован`)
+                toast.success(
+                  t("readyToShip.unlock.done", { label: unlockTarget.label })
+                )
                 setUnlockTarget(null)
               },
               onError: (error) => {
-                toast.error(getErrorMessage(error, "Не удалось разблокировать"))
+                toast.error(
+                  getErrorMessage(error, t("readyToShip.unlock.failed"))
+                )
                 setUnlockTarget(null)
               },
             })

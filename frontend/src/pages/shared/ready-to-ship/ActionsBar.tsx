@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { toast } from "sonner"
+import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import {
@@ -16,6 +17,7 @@ import { getErrorMessage } from "@/lib/errors"
 // stays true after everything was taken out again, so an accidental "remove"
 // can still be undone).
 export function ActionsBar({ view }: { view: ReadyToShipView }) {
+  const { t } = useTranslation()
   const undoLast = useUndoLastMutation()
   const undoAll = useUndoAllMutation()
   const confirm = useConfirmMutation()
@@ -35,11 +37,13 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
   // and explains *why* it's off instead of leaving the client guessing.
   let confirmBlockedReason: string | null = null
   if (overfilled.length > 0) {
-    confirmBlockedReason = `Нельзя подтвердить: перегружены ${overfilled
-      .map((c) => `${c.label} (${formatPercent(c.fillPercent)})`)
-      .join(", ")}`
+    confirmBlockedReason = t("readyToShip.actions.blockedOver", {
+      list: overfilled
+        .map((c) => `${c.label} (${formatPercent(c.fillPercent)})`)
+        .join(", "),
+    })
   } else if (!view.canConfirm) {
-    confirmBlockedReason = "Нечего подтверждать: нет контейнеров с позициями"
+    confirmBlockedReason = t("readyToShip.actions.blockedNothing")
   }
 
   return (
@@ -49,10 +53,10 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
     >
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto text-sm">
-          <span className="font-medium">Несохранённые изменения</span>
+          <span className="font-medium">{t("readyToShip.actions.title")}</span>
           <span className="text-muted-foreground">
             {" "}
-            · контейнеров с позициями: {drafts.length}
+            · {t("readyToShip.actions.containersWithItems", { n: drafts.length })}
           </span>
         </div>
 
@@ -63,13 +67,15 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
           disabled={undoLast.isPending || view.undoableActions === 0}
           onClick={() =>
             undoLast.mutate(undefined, {
-              onSuccess: () => toast.success("Последнее действие отменено"),
+              onSuccess: () => toast.success(t("readyToShip.actions.undoneOne")),
               onError: (error) =>
-                toast.error(getErrorMessage(error, "Не удалось отменить действие")),
+                toast.error(
+                  getErrorMessage(error, t("readyToShip.actions.undoOneFailed"))
+                ),
             })
           }
         >
-          Отменить одно действие
+          {t("readyToShip.actions.undoOne")}
         </Button>
 
         <Button
@@ -79,7 +85,7 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
           disabled={undoAll.isPending || view.undoableActions === 0}
           onClick={() => setUndoAllOpen(true)}
         >
-          Отменить всё
+          {t("readyToShip.actions.undoAll")}
         </Button>
 
         {/* A disabled <button> swallows pointer events, so the hint lives on a wrapper. */}
@@ -90,7 +96,7 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
             disabled={confirmBlockedReason !== null || confirm.isPending}
             onClick={() => setConfirmOpen(true)}
           >
-            Подтвердить
+            {t("readyToShip.actions.confirm")}
           </Button>
         </span>
       </div>
@@ -107,19 +113,21 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
       <ConfirmDialog
         open={undoAllOpen}
         onOpenChange={setUndoAllOpen}
-        title="Отменить все несохранённые изменения?"
-        description="Все перемещения в незафиксированных контейнерах будут откатаны, позиции вернутся в список готового. Подтверждённые контейнеры не затрагиваются. Действие необратимо для текущей сессии."
-        confirmLabel="Отменить всё"
+        title={t("readyToShip.actions.undoAllTitle")}
+        description={t("readyToShip.actions.undoAllDescription")}
+        confirmLabel={t("readyToShip.actions.undoAll")}
         destructive
         isPending={undoAll.isPending}
         onConfirm={() =>
           undoAll.mutate(undefined, {
             onSuccess: () => {
               setUndoAllOpen(false)
-              toast.success("Все несохранённые изменения отменены")
+              toast.success(t("readyToShip.actions.undoAllDone"))
             },
             onError: (error) =>
-              toast.error(getErrorMessage(error, "Не удалось отменить изменения")),
+              toast.error(
+                getErrorMessage(error, t("readyToShip.actions.undoAllFailed"))
+              ),
           })
         }
       />
@@ -127,21 +135,25 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title="Подтвердить план?"
-        description={`Будут подтверждены все контейнеры с позициями (${drafts.length}). После этого состав можно менять только после разблокировки CEAT, а для каждой позиции нужно будет загрузить файл маркировки.`}
-        confirmLabel="Подтвердить"
+        title={t("readyToShip.actions.confirmTitle")}
+        description={t("readyToShip.actions.confirmDescription", {
+          n: drafts.length,
+        })}
+        confirmLabel={t("readyToShip.actions.confirm")}
         isPending={confirm.isPending}
         onConfirm={() =>
           confirm.mutate(undefined, {
             onSuccess: () => {
               setConfirmOpen(false)
-              toast.success("План подтверждён")
+              toast.success(t("readyToShip.actions.confirmDone"))
             },
             // The server re-checks the 100% rule; on a race (or a stale
             // screen) its message names the offending containers.
             onError: (error) => {
               setConfirmOpen(false)
-              toast.error(getErrorMessage(error, "Не удалось подтвердить"))
+              toast.error(
+                getErrorMessage(error, t("readyToShip.actions.confirmFailed"))
+              )
             },
           })
         }

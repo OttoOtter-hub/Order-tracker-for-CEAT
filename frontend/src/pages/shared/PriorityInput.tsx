@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
@@ -18,6 +19,7 @@ export function PriorityInput({
   loadability,
   onChange,
 }: PriorityInputProps) {
+  const { t } = useTranslation()
   // Priority counts tires — always whole units, never a fraction of one.
   // maxInt floors a (theoretically, if ever) fractional balance down to
   // the highest valid integer priority, so "Весь остаток" can never commit
@@ -58,12 +60,12 @@ export function PriorityInput({
           className="h-8 px-2 text-xs"
           onClick={() => commit(maxInt)}
         >
-          Весь остаток
+          {t("piDetail.lines.fullBalance")}
         </Button>
       </div>
       {containers !== null && (
         <span className="text-xs text-muted-foreground">
-          = {containers.toFixed(2)} конт.
+          {t("common.equalsContainers", { n: containers.toFixed(2) })}
         </span>
       )}
     </div>

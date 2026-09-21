@@ -1,11 +1,12 @@
 import { ApiError } from "@/api/client"
+import i18n from "@/i18n"
 import { resolveFileUrl } from "@/lib/fileUrl"
 import { getStoredToken } from "@/auth/storage"
 
 // A failed download carries the server's own explanation in its JSON body
 // (e.g. "customerId обязателен"); surface it instead of a generic message.
 async function downloadError(response: Response): Promise<ApiError> {
-  let message = "Не удалось скачать файл"
+  let message = i18n.t("common.downloadFailed")
   try {
     const body = (await response.json()) as { message?: unknown }
     if (typeof body.message === "string") {

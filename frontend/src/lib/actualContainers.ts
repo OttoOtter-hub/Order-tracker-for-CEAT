@@ -1,3 +1,4 @@
+import i18n from "@/i18n"
 import { formatDay } from "@/lib/format"
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -15,8 +16,8 @@ export function formatStatusValue(value: string | null): string {
 // Tooltip text for a date CEAT typed over the file's own.
 export function overrideHint(sourceValue: string | null): string {
   return sourceValue
-    ? `Дата изменена вручную (в файле: ${formatDay(sourceValue)})`
-    : "Дата изменена вручную (в файле даты нет)"
+    ? i18n.t("shipped.overrideHint", { date: formatDay(sourceValue) })
+    : i18n.t("shipped.overrideHintNoSource")
 }
 
 // Sum of the line quantities (numeric strings) for a totals row.

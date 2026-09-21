@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -12,6 +13,7 @@ export function AddAdditionalFileForm({
   onSubmit,
   isSubmitting,
 }: AddAdditionalFileFormProps) {
+  const { t } = useTranslation()
   const [file, setFile] = useState<File | null>(null)
   const [description, setDescription] = useState("")
 
@@ -29,13 +31,13 @@ export function AddAdditionalFileForm({
         onChange={(e) => setFile(e.target.files?.[0] ?? null)}
       />
       <Textarea
-        placeholder="Описание (необязательно)"
+        placeholder={t("common.descriptionOptional")}
         value={description}
         onChange={(e) => setDescription(e.target.value)}
         rows={2}
       />
       <Button type="submit" disabled={!file || isSubmitting} className="self-start">
-        {isSubmitting ? "Загрузка..." : "Добавить файл"}
+        {isSubmitting ? t("common.uploading") : t("common.addFile")}
       </Button>
     </form>
   )

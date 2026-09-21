@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { StatusBadge } from "@/components/StatusBadge"
 import { PI_STATUS } from "@/lib/statusStyles"
@@ -11,6 +12,7 @@ interface PiCardProps {
 }
 
 export function PiCard({ pi, onClick }: PiCardProps) {
+  const { t } = useTranslation()
   const soNumbers = [
     ...new Set((pi.lineItems ?? []).map((li) => li.soNumber).filter(Boolean)),
   ] as string[]
@@ -39,29 +41,35 @@ export function PiCard({ pi, onClick }: PiCardProps) {
       <CardContent className="grid gap-2 text-sm">
         {soNumbers.length > 0 && (
           <div className="text-muted-foreground">
-            SO: {soNumbers.join(", ")}
+            {t("piCard.so")}: {soNumbers.join(", ")}
           </div>
         )}
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
           <div>
-            <span className="text-muted-foreground">Всего: </span>
+            <span className="text-muted-foreground">{t("piCard.total")}: </span>
             {formatNumber(pi.totalQty)}
           </div>
           <div>
-            <span className="text-muted-foreground">Ожидает: </span>
+            <span className="text-muted-foreground">{t("piCard.pending")}: </span>
             {formatNumber(pi.qtyPending)}
           </div>
           <div>
-            <span className="text-muted-foreground">Конт. ожидает: </span>
+            <span className="text-muted-foreground">
+              {t("piCard.containersPending")}:{" "}
+            </span>
             {formatNumber(pi.containersPending)}
           </div>
           <div>
-            <span className="text-muted-foreground">План нед.: </span>
-            {formatNumber(pi.currentWeekPlanContainers)} конт. /{" "}
-            {formatNumber(pi.currentWeekPlanQty)} шт.
+            <span className="text-muted-foreground">{t("piCard.weekPlan")}: </span>
+            {t("piCard.weekPlanValue", {
+              containers: formatNumber(pi.currentWeekPlanContainers),
+              qty: formatNumber(pi.currentWeekPlanQty),
+            })}
           </div>
           <div data-testid="pi-card-priority-lines">
-            <span className="text-muted-foreground">Приоритетных позиций: </span>
+            <span className="text-muted-foreground">
+              {t("piCard.priorityLines")}:{" "}
+            </span>
             {pi.priorityLineItemsCount ?? 0}
           </div>
         </div>

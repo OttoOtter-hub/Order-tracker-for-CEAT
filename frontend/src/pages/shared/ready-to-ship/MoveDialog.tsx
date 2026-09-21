@@ -1,4 +1,5 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -72,6 +73,7 @@ function MoveForm({
   onClose,
   onMoved,
 }: MoveDialogProps & { line: UnallocatedLine }) {
+  const { t } = useTranslation()
   const move = useMoveMutation(customerId)
   // The backend only takes whole units; a fractional remainder (never seen in
   // practice) can only be moved down to the integer below it.
@@ -83,13 +85,16 @@ function MoveForm({
         qty: z
           .string()
           .trim()
-          .min(1, "Укажите количество")
-          .refine((v) => /^\d+$/.test(v), "Только целое число штук")
-          .refine((v) => Number(v) >= 1, "Не меньше 1")
-          .refine((v) => Number(v) <= max, `Не больше остатка (${max})`),
-        containerId: z.string().min(1, "Выберите контейнер"),
+          .min(1, t("readyToShip.move.errors.required"))
+          .refine((v) => /^\d+$/.test(v), t("readyToShip.move.errors.integer"))
+          .refine((v) => Number(v) >= 1, t("readyToShip.move.errors.min"))
+          .refine(
+            (v) => Number(v) <= max,
+            t("readyToShip.move.errors.max", { max })
+          ),
+        containerId: z.string().min(1, t("readyToShip.move.errors.container")),
       }),
-    [max]
+    [max, t]
   )
 
   const preferred = containers.find(
@@ -100,6 +105,15 @@ function MoveForm({
     mode: "onChange",
     defaultValues: { qty: "", containerId: preferred?.id ?? "" },
   })
+
+  // A validation message already on screen was built in the old language:
+  // re-validate when the language changes so it is rebuilt in the new one.
+  useEffect(() => {
+    const failed = Object.keys(form.formState.errors) as (keyof MoveFormValues)[]
+    if (failed.length > 0) {
+      void form.trigger(failed)
+    }
+  }, [t, form])
 
   const qtyText = form.watch("qty")
   const selectedId = form.watch("containerId")
@@ -128,13 +142,16 @@ function MoveForm({
       {
         onSuccess: () => {
           toast.success(
-            `Перемещено ${formatNumber(String(amount))} шт. в «${target?.label ?? "контейнер"}»`
+            t("readyToShip.move.success", {
+              qty: formatNumber(String(amount)),
+              label: target?.label ?? t("readyToShip.move.successFallbackLabel"),
+            })
           )
           onMoved(values.containerId)
           onClose()
         },
         onError: (error) =>
-          toast.error(getErrorMessage(error, "Не удалось переместить")),
+          toast.error(getErrorMessage(error, t("readyToShip.move.failed"))),
       }
     )
   }
@@ -142,15 +159,18 @@ function MoveForm({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Переместить в контейнер</DialogTitle>
+        <DialogTitle>{t("readyToShip.move.title")}</DialogTitle>
         <DialogDescription>
           <span className="font-medium text-foreground">
             {line.materialNum ?? "—"}
           </span>{" "}
           · {line.materialDesc ?? "—"}
           <br />
-          PI {formatPiTitle(line.piNumber, line.piLabel)} · SO {line.soNumber ?? "—"} · остаток{" "}
-          {formatNumber(String(line.remainingQty))} шт.
+          {t("readyToShip.move.info", {
+            title: formatPiTitle(line.piNumber, line.piLabel),
+            so: line.soNumber ?? "—",
+            qty: formatNumber(String(line.remainingQty)),
+          })}
         </DialogDescription>
       </DialogHeader>
 
@@ -161,7 +181,7 @@ function MoveForm({
             name="qty"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Количество</FormLabel>
+                <FormLabel>{t("readyToShip.move.qty")}</FormLabel>
                 <div className="flex items-center gap-2">
                   <FormControl>
                     <Input
@@ -170,7 +190,7 @@ function MoveForm({
                       min={1}
                       max={max}
                       step={1}
-                      placeholder={`1–${max}`}
+                      placeholder={t("readyToShip.move.placeholder", { max })}
                       autoFocus
                       className="w-32"
                       {...field}
@@ -187,11 +207,13 @@ function MoveForm({
                       })
                     }
                   >
-                    Всё ({formatNumber(String(max))})
+                    {t("common.all", { max: formatNumber(String(max)) })}
                   </Button>
                   {loadability !== null && qtyIsValid && (
                     <span className="text-xs text-muted-foreground">
-                      = {((qty ?? 0) / loadability).toFixed(2)} конт.
+                      {t("common.equalsContainers", {
+                        n: ((qty ?? 0) / loadability).toFixed(2),
+                      })}
                     </span>
                   )}
                 </div>
@@ -205,16 +227,15 @@ function MoveForm({
             name="containerId"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Контейнер</FormLabel>
+                <FormLabel>{t("readyToShip.move.container")}</FormLabel>
                 {!hasTarget ? (
                   <p className="text-sm text-muted-foreground">
-                    Все контейнеры подтверждены — переместить некуда. Попросите
-                    CEAT разблокировать нужный.
+                    {t("readyToShip.move.allConfirmed")}
                   </p>
                 ) : (
                   <div
                     role="radiogroup"
-                    aria-label="Контейнер"
+                    aria-label={t("readyToShip.move.container")}
                     className="grid max-h-72 gap-1.5 overflow-y-auto pr-1"
                   >
                     {containers.map((container) => {
@@ -244,7 +265,7 @@ function MoveForm({
                           </span>
                           {container.isConfirmed ? (
                             <span className="text-xs text-muted-foreground">
-                              подтверждён
+                              {t("readyToShip.move.confirmedTag")}
                             </span>
                           ) : (
                             <>
@@ -258,7 +279,7 @@ function MoveForm({
                                     "w-20 shrink-0 text-right text-xs tabular-nums",
                                     FILL_TEXT[fillLevel(projected)]
                                   )}
-                                  title="Заполнение после перемещения"
+                                  title={t("readyToShip.move.afterMove")}
                                 >
                                   → {formatPercent(projected)}
                                 </span>
@@ -278,21 +299,24 @@ function MoveForm({
           {selectedProjected !== null && selectedProjected > 100 && (
             <p className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-              «{selected?.label}» будет заполнен на{" "}
-              {formatPercent(selectedProjected)}: переместить можно, но
-              подтвердить план не получится, пока контейнер перегружен.
+              {t("readyToShip.move.overloadWarning", {
+                label: selected?.label,
+                percent: formatPercent(selectedProjected),
+              })}
             </p>
           )}
 
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button
               type="submit"
               disabled={move.isPending || !hasTarget || !form.formState.isValid}
             >
-              {move.isPending ? "Перемещение..." : "Переместить"}
+              {move.isPending
+                ? t("readyToShip.move.submitting")
+                : t("readyToShip.move.submit")}
             </Button>
           </div>
         </form>

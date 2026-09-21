@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { Search, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -6,7 +7,7 @@ import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/tab
 import { SortableHead } from "@/components/SortableHead"
 import { useTableSort } from "@/hooks/useTableSort"
 import { formatNumber, formatPiTitle } from "@/lib/format"
-import { isPlaceable, NOT_PLACEABLE_HINT } from "@/lib/readyToShip"
+import { isPlaceable } from "@/lib/readyToShip"
 import type { UnallocatedLine } from "@/api/readyToShip"
 
 type SortKey = "piNumber" | "material" | "remaining"
@@ -33,6 +34,7 @@ interface LineRowProps {
 // (a fresh view replaces all of them, but identical rows bail out here on
 // the local-state re-renders in between) need to be diffed again.
 const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
+  const { t } = useTranslation()
   const placeable = isPlaceable(line)
   return (
     <TableRow data-line-id={line.piLineItemId}>
@@ -40,7 +42,9 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
         <div className="break-words">
           {formatPiTitle(line.piNumber, line.piLabel)}
         </div>
-        <div className="text-muted-foreground">SO {line.soNumber ?? "—"}</div>
+        <div className="text-muted-foreground">
+          {t("readyToShip.list.so", { so: line.soNumber ?? "—" })}
+        </div>
       </TableCell>
       <TableCell className="max-w-44 whitespace-normal">
         <div className="font-medium">{line.materialNum ?? "—"}</div>
@@ -50,10 +54,10 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
         {!placeable && (
           <div
             className="mt-1 inline-flex items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive"
-            title={NOT_PLACEABLE_HINT}
+            title={t("readyToShip.list.notPlaceableHint")}
           >
             <TriangleAlert className="size-3" />
-            нельзя разместить
+            {t("readyToShip.list.notPlaceable")}
           </div>
         )}
       </TableCell>
@@ -61,7 +65,9 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
         <div className="font-medium">{formatNumber(String(line.remainingQty))}</div>
         {placeable && (
           <div className="text-xs text-muted-foreground">
-            ≈ {(line.remainingQty / (line.loadability as number)).toFixed(2)} конт.
+            {t("readyToShip.list.approxContainers", {
+              n: (line.remainingQty / (line.loadability as number)).toFixed(2),
+            })}
           </div>
         )}
       </TableCell>
@@ -72,10 +78,10 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
             size="xs"
             variant="outline"
             disabled={!placeable}
-            title={placeable ? undefined : NOT_PLACEABLE_HINT}
+            title={placeable ? undefined : t("readyToShip.list.notPlaceableHint")}
             onClick={() => onMove(line)}
           >
-            Переместить
+            {t("readyToShip.list.move")}
           </Button>
         </TableCell>
       )}
@@ -91,6 +97,7 @@ interface ReadyLinesTableProps {
 }
 
 export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps) {
+  const { t } = useTranslation()
   const [query, setQuery] = useState("")
   const { sorted, sortKey, direction, toggleSort } = useTableSort<
     UnallocatedLine,
@@ -126,25 +133,25 @@ export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Поиск: материал, описание, PI, название, SO"
-            aria-label="Поиск по списку готового"
+            placeholder={t("readyToShip.list.searchPlaceholder")}
+            aria-label={t("readyToShip.list.searchAria")}
             className="pl-8"
           />
         </div>
         <span className="text-xs text-muted-foreground">
           {query.trim()
-            ? `Найдено ${visible.length} из ${lines.length}`
-            : `Строк: ${lines.length}`}
+            ? t("readyToShip.list.found", { n: visible.length, total: lines.length })
+            : t("readyToShip.list.count", { n: lines.length })}
         </span>
       </div>
 
       {lines.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Всё распределено — в списке готового ничего не осталось.
+          {t("readyToShip.list.allDistributed")}
         </p>
       ) : visible.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          По запросу «{query}» ничего не найдено.
+          {t("readyToShip.list.noResults", { query })}
         </p>
       ) : (
         // A plain <table> inside our own scroll box, not the shadcn <Table>
@@ -154,15 +161,21 @@ export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps
           <table className="w-full text-sm" data-testid="ready-lines-table">
             <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_var(--color-border)]">
               <TableRow className="hover:bg-transparent">
-                <SortableHead {...headProps("piNumber")}>PI / SO</SortableHead>
-                <SortableHead {...headProps("material")}>Материал</SortableHead>
+                <SortableHead {...headProps("piNumber")}>
+                  {t("readyToShip.list.colPiSo")}
+                </SortableHead>
+                <SortableHead {...headProps("material")}>
+                  {t("readyToShip.list.colMaterial")}
+                </SortableHead>
                 <SortableHead
                   {...headProps("remaining")}
                   className="[&>button]:ml-auto"
                 >
-                  Остаток
+                  {t("readyToShip.list.colBalance")}
                 </SortableHead>
-                {canMove && <th className="w-px" aria-label="Действия" />}
+                {canMove && (
+                  <th className="w-px" aria-label={t("readyToShip.list.actionsAria")} />
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>

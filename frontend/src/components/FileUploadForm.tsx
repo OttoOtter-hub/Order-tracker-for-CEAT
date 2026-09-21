@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -18,6 +19,7 @@ export function FileUploadForm({
   accept,
   className,
 }: FileUploadFormProps) {
+  const { t } = useTranslation()
   const [file, setFile] = useState<File | null>(null)
 
   function handleSubmit(event: React.FormEvent) {
@@ -35,7 +37,7 @@ export function FileUploadForm({
         onChange={(e) => setFile(e.target.files?.[0] ?? null)}
       />
       <Button type="submit" disabled={!file || isSubmitting}>
-        {isSubmitting ? "Загрузка..." : submitLabel}
+        {isSubmitting ? t("common.uploading") : submitLabel}
       </Button>
     </form>
   )
