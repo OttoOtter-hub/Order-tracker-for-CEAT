@@ -208,6 +208,15 @@ export function ActualContainerDetailPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Файлы</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ContainerFiles containerId={container.id} files={files} canEdit={isOps} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Позиции</CardTitle>
         </CardHeader>
         <CardContent>
@@ -281,15 +290,6 @@ export function ActualContainerDetailPage() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Файлы</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ContainerFiles containerId={container.id} files={files} canEdit={isOps} />
         </CardContent>
       </Card>
     </div>
