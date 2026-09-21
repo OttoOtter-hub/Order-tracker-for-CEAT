@@ -2,6 +2,10 @@ import * as ExcelJS from "exceljs";
 import { ProformaInvoice } from "../../proforma-invoices/proforma-invoice.entity";
 import { toNumberOrNull } from "../../common/utils/numeric";
 import { formatDateForFilename } from "../../common/utils/format-date";
+import {
+  priorityLoadFactorCell,
+  priorityQtyCell,
+} from "../../proforma-invoices/utils/priority-export-cells";
 
 const ROW_HEADERS = [
   "PI Number",
@@ -16,6 +20,8 @@ const ROW_HEADERS = [
   "Loadability",
   "Current Week Dispatch Load Factor",
   "Current Week Dispatch Qty",
+  "Priority Qty",
+  "Priority Load Factor",
 ];
 
 /**
@@ -58,6 +64,8 @@ export function buildBackorderExportWorkbook(
         toNumberOrNull(item.loadability),
         toNumberOrNull(item.currentWeekDispatchLoadFactor),
         toNumberOrNull(item.currentWeekDispatchQty),
+        priorityQtyCell(item.priorityQty),
+        priorityLoadFactorCell(item.priorityQty, item.loadability),
       ]);
     }
   }

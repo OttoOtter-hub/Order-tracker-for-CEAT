@@ -47,6 +47,7 @@ import { formatDateTime, formatNumber } from "@/lib/format"
 import { openFile } from "@/lib/download"
 import { getErrorMessage } from "@/lib/errors"
 import { useTableSort } from "@/hooks/useTableSort"
+import { cn } from "@/lib/utils"
 import { sumByLoadabilityGroups } from "@/lib/sumByLoadability"
 
 const PRIORITY_SAVE_DEBOUNCE_MS = 500
@@ -214,10 +215,12 @@ export function PiDetailPage() {
   const livePriorityTotals = useMemo(() => {
     const items = pi?.lineItems ?? []
     let totalQty = 0
+    let lineCount = 0
     const forContainers: Array<{ value: number; loadability: number | null }> = []
     for (const item of items) {
       const value = priorityDrafts[item.id] ?? Number(item.priorityQty)
       totalQty += value
+      if (value > 0) lineCount++
       forContainers.push({
         value,
         loadability: item.loadability !== null ? Number(item.loadability) : null,
@@ -225,6 +228,7 @@ export function PiDetailPage() {
     }
     return {
       totalQty,
+      lineCount,
       totalContainers: sumByLoadabilityGroups(forContainers),
     }
   }, [pi?.lineItems, priorityDrafts])
@@ -312,6 +316,12 @@ export function PiDetailPage() {
         <div data-testid="pi-shipped">
           <span className="text-muted-foreground">Отправлено: </span>
           {formatNumber(pi.shippedQty)}
+        </div>
+        {/* Live from the drafts, so it follows an edit as you type; equals the
+            server's priorityLineItemsCount once the save has landed. */}
+        <div data-testid="pi-priority-lines">
+          <span className="text-muted-foreground">Приоритетных позиций: </span>
+          {livePriorityTotals.lineCount}
         </div>
       </div>
 
@@ -604,7 +614,16 @@ export function PiDetailPage() {
                   const draftValue =
                     priorityDrafts[item.id] ?? Number(item.priorityQty)
                   return (
-                    <TableRow key={item.id}>
+                    <TableRow
+                      key={item.id}
+                      data-priority={draftValue > 0}
+                      className={cn(
+                        // A line with a priority stays marked in read-only
+                        // view too, not only while priority mode is on.
+                        draftValue > 0 &&
+                          "bg-yellow-50 hover:bg-yellow-100/70 dark:bg-yellow-500/10 dark:hover:bg-yellow-500/15"
+                      )}
+                    >
                       <TableCell>{item.materialNum ?? "—"}</TableCell>
                       <TableCell className="whitespace-normal">
                         {item.materialDesc ?? "—"}

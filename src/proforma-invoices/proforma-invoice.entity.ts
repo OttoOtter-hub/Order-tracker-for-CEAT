@@ -7,7 +7,10 @@ import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.enti
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { PiCreatedFrom } from "./enums/pi-created-from.enum";
 import { PiStatus } from "./enums/pi-status.enum";
-import { computePriorityAggregates } from "./utils/compute-priority-aggregates";
+import {
+  computePriorityAggregates,
+  countPriorityLineItems,
+} from "./utils/compute-priority-aggregates";
 
 @Entity("proforma_invoices")
 export class ProformaInvoice extends BaseEntity {
@@ -189,5 +192,11 @@ export class ProformaInvoice extends BaseEntity {
   get priorityTotalContainers(): number {
     return computePriorityAggregates(this.lineItems ?? [])
       .priorityTotalContainers;
+  }
+
+  /** Line items with a priority (priorityQty > 0), live like the two above. */
+  @Expose()
+  get priorityLineItemsCount(): number {
+    return countPriorityLineItems(this.lineItems ?? []);
   }
 }

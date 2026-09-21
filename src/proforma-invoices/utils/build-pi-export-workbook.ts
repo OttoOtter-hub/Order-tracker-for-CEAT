@@ -2,6 +2,11 @@ import * as ExcelJS from "exceljs";
 import { ProformaInvoice } from "../proforma-invoice.entity";
 import { toNumberOrNull } from "../../common/utils/numeric";
 import { computeLineItemsTotals } from "./compute-line-items-totals";
+import {
+  PRIORITY_DASH,
+  priorityLoadFactorCell,
+  priorityQtyCell,
+} from "./priority-export-cells";
 
 const LINE_ITEM_HEADERS = [
   "Material Num",
@@ -14,6 +19,8 @@ const LINE_ITEM_HEADERS = [
   "Loadability",
   "Current Week Dispatch Load Factor",
   "Current Week Dispatch Qty",
+  "Priority Qty",
+  "Priority Load Factor",
 ];
 
 /**
@@ -28,7 +35,9 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
   const lineItems = pi.lineItems ?? [];
 
   const soNumbers = [
-    ...new Set(lineItems.map((li) => li.soNumber).filter((v): v is string => !!v)),
+    ...new Set(
+      lineItems.map((li) => li.soNumber).filter((v): v is string => !!v),
+    ),
   ];
 
   sheet.addRow(["PI number", pi.piNumber]);
@@ -42,7 +51,10 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
     "Current Week Plan Containers",
     toNumberOrNull(pi.currentWeekPlanContainers),
   ]);
-  sheet.addRow(["Current Week Plan Qty", toNumberOrNull(pi.currentWeekPlanQty)]);
+  sheet.addRow([
+    "Current Week Plan Qty",
+    toNumberOrNull(pi.currentWeekPlanQty),
+  ]);
   sheet.addRow([]);
 
   const headerRow = sheet.addRow(LINE_ITEM_HEADERS);
@@ -60,6 +72,8 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
       toNumberOrNull(item.loadability),
       toNumberOrNull(item.currentWeekDispatchLoadFactor),
       toNumberOrNull(item.currentWeekDispatchQty),
+      priorityQtyCell(item.priorityQty),
+      priorityLoadFactorCell(item.priorityQty, item.loadability),
     ]);
   }
 
@@ -75,6 +89,15 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
     null,
     totals.currentWeekDispatchLoadFactor,
     totals.currentWeekDispatchQty,
+    // Sum of the priorities; the load factor is not additive (like the plain
+    // Load Factor it would be summed per row), so it is a dash here.
+    priorityQtyCell(
+      lineItems.reduce(
+        (sum, item) => sum + (toNumberOrNull(item.priorityQty) ?? 0),
+        0,
+      ),
+    ),
+    PRIORITY_DASH,
   ]);
   totalsRow.font = { bold: true };
 

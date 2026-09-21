@@ -36,3 +36,12 @@ export function computePriorityAggregates(
 
   return { priorityTotalQty, priorityTotalContainers };
 }
+
+/**
+ * How many of a PI's line items carry a priority (priorityQty > 0). Computed
+ * on every read like the other priority aggregates, never stored.
+ */
+export function countPriorityLineItems(lineItems: PiLineItem[]): number {
+  return lineItems.filter((item) => (toNumberOrNull(item.priorityQty) ?? 0) > 0)
+    .length;
+}

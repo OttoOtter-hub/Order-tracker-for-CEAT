@@ -1,3 +1,4 @@
+import { instanceToPlain } from "class-transformer";
 import { ProformaInvoice } from "./proforma-invoice.entity";
 import { PiStatus } from "./enums/pi-status.enum";
 
@@ -41,6 +42,36 @@ describe("ProformaInvoice.status", () => {
         isArchivedShipped: true,
       }).status,
     ).toBe(PiStatus.ARCHIVED_SHIPPED);
+  });
+});
+
+describe("ProformaInvoice.priorityLineItemsCount", () => {
+  it("counts only the line items with a priority when just some have one", () => {
+    const pi = makePi({
+      lineItems: [
+        { priorityQty: "3.00" } as any,
+        { priorityQty: "0.00" } as any,
+        { priorityQty: "0" } as any,
+        { priorityQty: "12.50" } as any,
+        { priorityQty: null } as any,
+      ],
+    });
+    expect(pi.priorityLineItemsCount).toBe(2);
+  });
+
+  it("is 0 when nothing has a priority, and 0 rather than an error when lineItems is not loaded", () => {
+    expect(
+      makePi({ lineItems: [{ priorityQty: "0.00" } as any] })
+        .priorityLineItemsCount,
+    ).toBe(0);
+    expect(makePi().priorityLineItemsCount).toBe(0);
+  });
+
+  it("is part of the serialized card (a getter marked @Expose)", () => {
+    const pi = makePi({
+      lineItems: [{ priorityQty: "5" } as any, { priorityQty: "0" } as any],
+    });
+    expect(instanceToPlain(pi).priorityLineItemsCount).toBe(1);
   });
 });
 

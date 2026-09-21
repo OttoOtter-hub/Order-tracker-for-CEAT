@@ -37,7 +37,9 @@ function makePi(overrides: Partial<ProformaInvoice>): ProformaInvoice {
   });
 }
 
-async function readWorkbookRows(workbook: ExcelJS.Workbook): Promise<unknown[][]> {
+async function readWorkbookRows(
+  workbook: ExcelJS.Workbook,
+): Promise<unknown[][]> {
   const buffer = await workbook.xlsx.writeBuffer();
   const readBack = new ExcelJS.Workbook();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +77,63 @@ describe("buildBackorderExportWorkbook", () => {
     expect(dataRows).toHaveLength(2);
     expect(dataRows[0].slice(1, 4)).toEqual(["100037320", pi.status, "A"]);
     expect(dataRows[1].slice(1, 4)).toEqual(["100037320", pi.status, "B"]);
+  });
+
+  it("adds Priority Qty / Priority Load Factor after the existing columns, dashes where there is no priority", async () => {
+    const pi1 = makePi({
+      piNumber: "100037320",
+      lineItems: [
+        makeLineItem({
+          materialNum: "A",
+          loadability: "200",
+          priorityQty: "40.00",
+        }),
+        makeLineItem({
+          materialNum: "B",
+          loadability: "100",
+          priorityQty: "0.00",
+        }),
+        makeLineItem({
+          materialNum: "C",
+          loadability: null,
+          priorityQty: "25.00",
+        }),
+      ],
+    });
+    const pi2 = makePi({
+      piNumber: "100037321",
+      lineItems: [
+        makeLineItem({
+          materialNum: "D",
+          loadability: "3",
+          priorityQty: "1.00",
+        }),
+        makeLineItem({ materialNum: "E", loadability: "50", priorityQty: "0" }),
+      ],
+    });
+
+    const rows = await readWorkbookRows(
+      buildBackorderExportWorkbook(
+        [pi1, pi2],
+        new Date("2026-09-01T00:00:00Z"),
+        new Date("2026-09-03T00:00:00Z"),
+      ),
+    );
+
+    const headerRow = rows.find((r) => r[1] === "PI Number")!;
+    expect(headerRow.slice(1)).toHaveLength(14);
+    expect(headerRow.slice(12)).toEqual([
+      "Current Week Dispatch Qty",
+      "Priority Qty",
+      "Priority Load Factor",
+    ]);
+    const priorityOf = (material: string) =>
+      rows.find((r) => r[3] === material)!.slice(13);
+    expect(priorityOf("A")).toEqual([40, 0.2]);
+    expect(priorityOf("B")).toEqual(["—", "—"]);
+    expect(priorityOf("C")).toEqual([25, "—"]);
+    expect(priorityOf("D")).toEqual([1, 0.3333]);
+    expect(priorityOf("E")).toEqual(["—", "—"]);
   });
 
   it("falls back to a dash when there has never been an upload", async () => {

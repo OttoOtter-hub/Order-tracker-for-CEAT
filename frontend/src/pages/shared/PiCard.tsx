@@ -58,6 +58,10 @@ export function PiCard({ pi, onClick }: PiCardProps) {
             {formatNumber(pi.currentWeekPlanContainers)} конт. /{" "}
             {formatNumber(pi.currentWeekPlanQty)} шт.
           </div>
+          <div data-testid="pi-card-priority-lines">
+            <span className="text-muted-foreground">Приоритетных позиций: </span>
+            {pi.priorityLineItemsCount ?? 0}
+          </div>
         </div>
       </CardContent>
     </Card>

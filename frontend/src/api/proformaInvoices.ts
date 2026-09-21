@@ -66,6 +66,9 @@ export interface ProformaInvoice {
   // README) — real JS numbers, unlike the numeric-string columns above.
   priorityTotalQty: number
   priorityTotalContainers: number
+  // How many line items carry a priority (priorityQty > 0) — same live getter
+  // family as the two above.
+  priorityLineItemsCount: number
   lineItems?: PiLineItem[]
   additionalFiles?: PiAdditionalFile[]
 }

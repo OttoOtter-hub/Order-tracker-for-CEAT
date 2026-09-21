@@ -38,7 +38,9 @@ function makePi(overrides: Partial<ProformaInvoice>): ProformaInvoice {
   });
 }
 
-async function readWorkbookRows(workbook: ExcelJS.Workbook): Promise<unknown[][]> {
+async function readWorkbookRows(
+  workbook: ExcelJS.Workbook,
+): Promise<unknown[][]> {
   const buffer = await workbook.xlsx.writeBuffer();
   const readBack = new ExcelJS.Workbook();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,7 +81,10 @@ describe("buildPiExportWorkbook", () => {
 
     // header block
     expect(rows[0].slice(1)).toEqual(["PI number", "100037320"]);
-    expect(rows[1].slice(1)).toEqual(["Status", PiStatus.MISSING_SIGNED_DOCUMENT]);
+    expect(rows[1].slice(1)).toEqual([
+      "Status",
+      PiStatus.MISSING_SIGNED_DOCUMENT,
+    ]);
 
     // table header + data row + totals row are the last 3 rows
     const [headerRow, dataRow, totalsRow] = rows.slice(-3);
@@ -94,6 +99,8 @@ describe("buildPiExportWorkbook", () => {
       "Loadability",
       "Current Week Dispatch Load Factor",
       "Current Week Dispatch Qty",
+      "Priority Qty",
+      "Priority Load Factor",
     ]);
     expect(dataRow.slice(1)).toEqual([
       "114674",
@@ -106,6 +113,8 @@ describe("buildPiExportWorkbook", () => {
       212,
       0.0299,
       2,
+      "—", // no priority set -> dashes, not zeros
+      "—",
     ]);
     expect(totalsRow[1]).toBe("Всего");
     expect(totalsRow[4]).toBe(6); // balance
@@ -115,6 +124,104 @@ describe("buildPiExportWorkbook", () => {
     expect(totalsRow[8]).toBeUndefined(); // loadability — dashed, i.e. empty
     expect(totalsRow[9]).toBeCloseTo(0.0299); // cwdp load factor
     expect(totalsRow[10]).toBe(2); // cwdp qty
+    expect(totalsRow[11]).toBe("—"); // no priorities at all
+    expect(totalsRow[12]).toBe("—");
+  });
+
+  describe("priority columns", () => {
+    const withPriority = () =>
+      makePi({
+        totalQty: "300.00",
+        qtyPending: "300.00",
+        lineItems: [
+          makeLineItem({
+            materialNum: "A",
+            loadability: "200",
+            priorityQty: "40.00",
+          }),
+          makeLineItem({
+            materialNum: "B",
+            loadability: "100",
+            priorityQty: "0.00",
+          }),
+          makeLineItem({
+            materialNum: "C",
+            loadability: null,
+            priorityQty: "25.00",
+          }),
+          makeLineItem({
+            materialNum: "D",
+            loadability: "3",
+            priorityQty: "1.00",
+          }),
+          makeLineItem({
+            materialNum: "E",
+            loadability: "50",
+            priorityQty: "0",
+          }),
+          makeLineItem({
+            materialNum: "F",
+            loadability: "0",
+            priorityQty: "7.00",
+          }),
+        ],
+      });
+
+    it("appends the two columns after the existing ten, leaving those in place", async () => {
+      const rows = await readWorkbookRows(
+        buildPiExportWorkbook(withPriority()),
+      );
+      const headerRow = rows.find((r) => r[1] === "Material Num")!;
+
+      expect(headerRow.slice(1)).toHaveLength(12);
+      expect(headerRow.slice(1, 11)).toEqual([
+        "Material Num",
+        "Material Desc",
+        "SO Number",
+        "Balance To Be Delivered",
+        "Quantity",
+        "MT",
+        "Load Factor",
+        "Loadability",
+        "Current Week Dispatch Load Factor",
+        "Current Week Dispatch Qty",
+      ]);
+      expect(headerRow.slice(11)).toEqual([
+        "Priority Qty",
+        "Priority Load Factor",
+      ]);
+    });
+
+    it("writes priority qty and qty/loadability to 4 places on priority rows, dashes elsewhere", async () => {
+      const rows = await readWorkbookRows(
+        buildPiExportWorkbook(withPriority()),
+      );
+      const byMaterial = new Map(
+        rows
+          .filter(
+            (r) => typeof r[1] === "string" && /^[A-F]$/.test(r[1] as string),
+          )
+          .map((r) => [r[1] as string, r.slice(11)]),
+      );
+
+      expect(byMaterial.get("A")).toEqual([40, 0.2]);
+      expect(byMaterial.get("B")).toEqual(["—", "—"]); // priority 0
+      expect(byMaterial.get("C")).toEqual([25, "—"]); // no loadability
+      expect(byMaterial.get("D")).toEqual([1, 0.3333]); // rounded to 4 places
+      expect(byMaterial.get("E")).toEqual(["—", "—"]); // priority "0"
+      expect(byMaterial.get("F")).toEqual([7, "—"]); // loadability 0
+    });
+
+    it("totals row: the sum of Priority Qty, a dash for Priority Load Factor", async () => {
+      const rows = await readWorkbookRows(
+        buildPiExportWorkbook(withPriority()),
+      );
+      const totalsRow = rows[rows.length - 1];
+
+      expect(totalsRow[1]).toBe("Всего");
+      expect(totalsRow[11]).toBe(73); // 40 + 25 + 1 + 7
+      expect(totalsRow[12]).toBe("—");
+    });
   });
 
   it("sums MT/Load Factor across multiple line items in the totals row", async () => {
