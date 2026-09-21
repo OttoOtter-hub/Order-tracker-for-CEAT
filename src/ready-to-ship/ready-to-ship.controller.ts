@@ -5,6 +5,7 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  StreamableFile,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorator";
@@ -42,6 +43,28 @@ export class ReadyToShipController {
     customerId?: string,
   ) {
     return this.service.getView(user, customerId);
+  }
+
+  @ApiQuery({
+    name: "customerId",
+    required: false,
+    description:
+      "ops only (required for ops); the client always gets their own",
+  })
+  @Get("export-xlsx")
+  async exportXlsx(
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ): Promise<StreamableFile> {
+    const { buffer, fileName } = await this.service.exportXlsx(
+      user,
+      customerId,
+    );
+    return new StreamableFile(buffer, {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      disposition: `attachment; filename="${encodeURIComponent(fileName)}"`,
+    });
   }
 
   @ClientWriteAllowed()

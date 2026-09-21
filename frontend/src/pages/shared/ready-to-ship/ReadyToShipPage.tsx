@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import { Download } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useAuth } from "@/auth/AuthContext"
 import { useCustomersQuery } from "@/api/customers"
 import {
+  exportReadyToShipXlsx,
   useReadyToShipQuery,
   useUnlockContainerMutation,
   type ShippingContainer,
@@ -97,6 +99,7 @@ function ReadyToShipContent({
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
   const [unlockTarget, setUnlockTarget] = useState<ShippingContainer | null>(null)
   const [lastContainerId, setLastContainerId] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
 
   const view = query.data
 
@@ -164,19 +167,38 @@ function ReadyToShipContent({
               : "Состояние плана клиента (только просмотр). Подтверждённый контейнер можно разблокировать."}
           </p>
         </div>
-        <div
-          className="flex flex-wrap items-center gap-2 text-xs"
-          data-testid="ready-summary"
-        >
-          <Badge variant="secondary">
-            Строк к распределению: {view.unallocatedLines.length}
-          </Badge>
-          <Badge variant="secondary">
-            Остаток: {formatNumber(String(summary.remainingTotal))} шт.
-          </Badge>
-          <Badge variant="secondary">
-            Контейнеров: {summary.visibleContainers.length}
-          </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <div
+            className="flex flex-wrap items-center gap-2 text-xs"
+            data-testid="ready-summary"
+          >
+            <Badge variant="secondary">
+              Строк к распределению: {view.unallocatedLines.length}
+            </Badge>
+            <Badge variant="secondary">
+              Остаток: {formatNumber(String(summary.remainingTotal))} шт.
+            </Badge>
+            <Badge variant="secondary">
+              Контейнеров: {summary.visibleContainers.length}
+            </Badge>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isExporting}
+            data-testid="export-xlsx"
+            onClick={() => {
+              setIsExporting(true)
+              exportReadyToShipXlsx(customerId)
+                .catch((error) =>
+                  toast.error(getErrorMessage(error, "Не удалось выгрузить Excel"))
+                )
+                .finally(() => setIsExporting(false))
+            }}
+          >
+            <Download />
+            {isExporting ? "Выгрузка..." : "Выгрузить в Excel"}
+          </Button>
         </div>
       </div>
 

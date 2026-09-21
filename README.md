@@ -1164,6 +1164,41 @@ customer'ы/карточки/пользователи удалены сразу 
 Задеплоено 2026-09-18 — см. "Редеплой Фазы 8" в разделе "Продакшн-деплой
 v2". Фронтенда у этой фазы нет.
 
+## Выгрузка в Excel "Готово к отгрузке" (после Фазы 11, не задеплоено)
+
+`GET /ready-to-ship/export-xlsx` — обе роли; client получает свой список, ops
+обязан указать `?customerId=` (как и для `GET /ready-to-ship`: без него `400`,
+не-UUID — `400`, без токена — `401`). Строится из того же вида, что показывает экран
+(`ReadyToShipService.getView` → `buildReadyToShipExportWorkbook`), поэтому скоуп
+и числа совпадают с экраном. Имя файла — `ReadyToShip_{YYYY-MM-DD}.xlsx`.
+
+Один лист `Ready to ship`, шапка в первой строке (закреплена, есть автофильтр),
+плоский список:
+`Контейнер | SKU | Описание | Количество | Load Factor | Проформа (PI) | SO`.
+
+- **По строке на каждое размещение** (`ContainerLineAllocation`, включая ещё
+  неподтверждённые контейнеры): Контейнер — число N из метки `Контейнер N`
+  (числом, чтобы Excel сортировал 2 раньше 10; другая метка выводится как есть),
+  Количество = `allocated_qty`, Load Factor = `allocated_qty / loadability`, до 4 знаков.
+- **По строке на каждую позицию с нераспределённым остатком > 0**: Контейнер =
+  `OK to mix`, Количество = остаток, Load Factor = остаток / loadability. Позиция без
+  loadability (её нельзя разместить) тоже попадает сюда, Load Factor — пустая ячейка
+  (не текст, чтобы не ломать суммы).
+- **Порядок:** сначала строки с номером контейнера по возрастанию номера (внутри
+  контейнера — по PI, затем SKU), потом контейнеры с нечисловой меткой, `OK to mix`
+  в конце. Строка = материал одной позиции бэкордера, поэтому одна и та же позиция
+  может встретиться и в контейнере, и в `OK to mix` (размещённая часть и остаток).
+
+Проверено: 122 юнит-теста раздела (порядок, округление, пустой Load Factor, скоуп,
+ops без клиента) и живой прогон на реальном файле в локальной БД: 4 размещения +
+231 строка `OK to mix`, номера в порядке `1, 2, 3, 10`, Σ «Количество» = 2845 =
+Σ плановой отгрузки по позициям, у ops и client файлы идентичны.
+
+Frontend: кнопка "Выгрузить в Excel" в шапке страницы "Готово к отгрузке" (обе роли,
+ops передаёт выбранного клиента); при ошибке тост показывает текст ответа API —
+для этого `downloadFile`/`openFile` теперь разбирают JSON-тело неуспешного ответа
+(раньше на любой сбой было общее "Не удалось скачать файл").
+
 ## Фаза 9: доработки backend под фронтенд "Готово к отгрузке"
 
 Сам фронтенд — в [frontend/README.md](frontend/README.md). Под него на backend
@@ -2154,7 +2189,7 @@ npm run dev
 | Backorder export | `GET /backorder/export-xlsx` (обе роли, client скоуплен по `customer_id`) — см. "Экспорт в Excel" выше |
 | PiLineItem | `PATCH /pi-line-items/:id/priority` (client-only, owner-check) — см. "Приоритизация позиций" выше |
 | ActualContainer | `GET /actual-containers`, `GET /:id` (обе роли, скоуп по customer), `PATCH /:id/dates`, `POST /:id/reset-dates`, `POST /:id/files` (ops-only, multipart), `DELETE /actual-container-files/:id` (ops-only), `GET /actual-container-files/:id/download` (обе роли, owner-check); `GET /backorder-uploads/:id/snapshot-export` (ops-only) — см. "Фаза 10" выше |
-| Ready to ship | `GET /ready-to-ship` (обе роли), `POST /ready-to-ship/move`, `/remove`, `/undo-last`, `/undo-all`, `/confirm` (client-only), `POST /containers/:id/unlock` (ops-only), `POST`/`DELETE /container-allocations/:id/marking-file` (client-only), `GET /container-allocations/:id/marking-file/download` (обе роли) — см. "Готово к отгрузке" выше |
+| Ready to ship | `GET /ready-to-ship` (обе роли), `GET /ready-to-ship/export-xlsx` (обе роли, ops с `?customerId=`) — см. "Выгрузка в Excel" в разделе Фазы 9, `POST /ready-to-ship/move`, `/remove`, `/undo-last`, `/undo-all`, `/confirm` (client-only), `POST /containers/:id/unlock` (ops-only), `POST`/`DELETE /container-allocations/:id/marking-file` (client-only), `GET /container-allocations/:id/marking-file/download` (обе роли) — см. "Готово к отгрузке" выше |
 
 `PiLineItem` теперь имеет свой первый write-эндпоинт (`priority`, выше) —
 строки по-прежнему создаются/заменяются только через

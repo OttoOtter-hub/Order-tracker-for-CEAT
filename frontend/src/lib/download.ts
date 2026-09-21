@@ -1,5 +1,26 @@
+import { ApiError } from "@/api/client"
 import { resolveFileUrl } from "@/lib/fileUrl"
 import { getStoredToken } from "@/auth/storage"
+
+// A failed download carries the server's own explanation in its JSON body
+// (e.g. "customerId обязателен"); surface it instead of a generic message.
+async function downloadError(response: Response): Promise<ApiError> {
+  let message = "Не удалось скачать файл"
+  try {
+    const body = (await response.json()) as { message?: unknown }
+    if (typeof body.message === "string") {
+      message = body.message
+    } else if (
+      Array.isArray(body.message) &&
+      body.message.every((m) => typeof m === "string")
+    ) {
+      message = body.message.join("; ")
+    }
+  } catch {
+    // not JSON — keep the generic text
+  }
+  return new ApiError(message, response.status)
+}
 
 // GET /files/:id/download requires Authorization: Bearer <token> — a plain
 // window.open(url) navigation never sends that header, so it would 401.
@@ -20,7 +41,7 @@ export async function openFile(url: string): Promise<void> {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (!response.ok) {
-      throw new Error("Не удалось скачать файл")
+      throw await downloadError(response)
     }
     const blob = await response.blob()
     const objectUrl = URL.createObjectURL(blob)
@@ -54,7 +75,7 @@ export async function downloadFile(
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!response.ok) {
-    throw new Error("Не удалось скачать файл")
+    throw await downloadError(response)
   }
   const disposition = response.headers.get("content-disposition")
   const match = disposition?.match(/filename="?([^";]+)"?/)

@@ -7,6 +7,7 @@ import {
 import { DataSource, EntityManager, In } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
+import { formatDateForFilename } from "../common/utils/format-date";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
 import { toNumberOrNull } from "../common/utils/numeric";
 import { Customer } from "../customers/customer.entity";
@@ -23,6 +24,7 @@ import {
   UnallocatedLineView,
   UnlockedContainerView,
 } from "./ready-to-ship.types";
+import { buildReadyToShipExportWorkbook } from "./utils/build-ready-to-ship-export-workbook";
 import {
   computeTotalPossibleContainers,
   fillContribution,
@@ -74,6 +76,24 @@ export class ReadyToShipService {
     return this.loadView(
       this.resolveViewCustomerId(actor, requestedCustomerId),
     );
+  }
+
+  /**
+   * The whole picture as one flat sheet (see buildReadyToShipExportRows).
+   * Built from the same view the screen shows, so scoping is the view's:
+   * client -> own customer, ops must name one.
+   */
+  async exportXlsx(
+    actor: RequestUser,
+    requestedCustomerId?: string,
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const view = await this.getView(actor, requestedCustomerId);
+    const arrayBuffer =
+      await buildReadyToShipExportWorkbook(view).xlsx.writeBuffer();
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      fileName: `ReadyToShip_${formatDateForFilename(new Date())}.xlsx`,
+    };
   }
 
   /**

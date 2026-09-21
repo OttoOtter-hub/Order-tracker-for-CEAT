@@ -175,6 +175,18 @@ export function useDeleteMarkingMutation() {
   })
 }
 
+// One flat sheet: placed lines under their container number, the rest as
+// "OK to mix". ops names the customer (same as the view); the file name comes
+// from the server's Content-Disposition.
+export function exportReadyToShipXlsx(customerId?: string): Promise<void> {
+  return downloadFile(
+    customerId
+      ? `/ready-to-ship/export-xlsx?customerId=${encodeURIComponent(customerId)}`
+      : "/ready-to-ship/export-xlsx",
+    "ReadyToShip.xlsx"
+  )
+}
+
 export function downloadMarkingFile(allocationId: string): Promise<void> {
   return downloadFile(
     `/container-allocations/${allocationId}/marking-file/download`,
