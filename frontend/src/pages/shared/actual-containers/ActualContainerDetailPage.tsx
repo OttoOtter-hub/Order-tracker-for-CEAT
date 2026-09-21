@@ -136,12 +136,9 @@ export function ActualContainerDetailPage() {
           <CardTitle>Отправка</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Порт">{container.port ?? "—"}</Field>
             <Field label="Судно">{container.vesselName ?? "—"}</Field>
-            <Field label="Preshipment invoice">
-              {container.preshipmentInvoice ?? "—"}
-            </Field>
             <Field label="Commercial invoice">
               {container.commercialInvoiceNumber ?? "—"}
             </Field>

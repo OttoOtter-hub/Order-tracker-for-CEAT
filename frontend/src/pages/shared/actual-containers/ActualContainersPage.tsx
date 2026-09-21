@@ -27,7 +27,6 @@ type SortKey =
   | "vesselName"
   | "etd"
   | "eta"
-  | "preshipmentInvoice"
   | "commercialInvoiceNumber"
 
 const COLUMNS: { key: SortKey; label: string }[] = [
@@ -36,7 +35,6 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "vesselName", label: "Судно" },
   { key: "etd", label: "ETD" },
   { key: "eta", label: "ETA" },
-  { key: "preshipmentInvoice", label: "Preshipment invoice" },
   { key: "commercialInvoiceNumber", label: "Commercial invoice" },
 ]
 
@@ -51,7 +49,6 @@ function searchText(container: ActualContainer): string {
     container.containerNumber,
     container.port,
     container.vesselName,
-    container.preshipmentInvoice,
     container.commercialInvoiceNumber,
     container.blNumber,
   ]
@@ -225,9 +222,6 @@ export function ActualContainersPage() {
                           overridden={container.isEtaOverridden}
                           sourceValue={container.sourceEta}
                         />
-                      </TableCell>
-                      <TableCell className="tabular-nums">
-                        {container.preshipmentInvoice ?? "—"}
                       </TableCell>
                       <TableCell className="tabular-nums">
                         {container.commercialInvoiceNumber ?? "—"}

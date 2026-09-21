@@ -40,6 +40,7 @@ export interface ActualContainer {
   eta: string | null
   isEtdOverridden: boolean
   isEtaOverridden: boolean
+  // Still delivered by the API and stored, deliberately not shown in the UI.
   preshipmentInvoice: string | null
   commercialInvoiceNumber: string | null
   // "ETA-15 days" extras: present only for containers in that week's sample.
