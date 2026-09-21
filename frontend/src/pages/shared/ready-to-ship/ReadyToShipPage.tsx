@@ -106,13 +106,26 @@ function ReadyToShipContent({
       (c) => !c.isConfirmed && c.allocations.length > 0
     )
     const confirmed = view.containers.filter((c) => c.isConfirmed)
-    const free = view.containers.filter(
+    // The server keeps every slot it ever created (slots are only ever added,
+    // so a plan that shrank leaves surplus empty ones — 47 slots for a week
+    // that needs 40). Only as many empty slots are shown as the plan still
+    // needs: totalPossibleContainers (already rounded up) minus the containers
+    // that hold something. Containers with positions are never hidden, so the
+    // count can exceed the need only when the client has filled more than it.
+    const emptySlots = view.containers.filter(
       (c) => !c.isConfirmed && c.allocations.length === 0
     )
+    const free = emptySlots.slice(
+      0,
+      Math.max(0, view.totalPossibleContainers - working.length - confirmed.length)
+    )
+    const shown = new Set([...working, ...confirmed, ...free])
     return {
       working,
       confirmed,
       free,
+      // What the client can actually work with, in the server's order.
+      visibleContainers: view.containers.filter((c) => shown.has(c)),
       remainingTotal: view.unallocatedLines.reduce(
         (sum, line) => sum + line.remainingQty,
         0
@@ -162,8 +175,7 @@ function ReadyToShipContent({
             Остаток: {formatNumber(String(summary.remainingTotal))} шт.
           </Badge>
           <Badge variant="secondary">
-            Контейнеров: {view.containers.length} (нужно ≥{" "}
-            {view.totalPossibleContainers})
+            Контейнеров: {summary.visibleContainers.length}
           </Badge>
         </div>
       </div>
@@ -234,7 +246,7 @@ function ReadyToShipContent({
         <>
           <MoveDialog
             line={moveLine}
-            containers={view.containers}
+            containers={summary.visibleContainers}
             preferredContainerId={lastContainerId}
             customerId={customerId}
             onClose={() => setMoveLine(null)}
