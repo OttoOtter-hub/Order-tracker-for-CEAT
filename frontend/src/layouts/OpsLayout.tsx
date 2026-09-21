@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
-import { FileText, LogOut, Truck, Upload } from "lucide-react"
+import { FileText, LogOut, Ship, Truck, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/auth/AuthContext"
@@ -7,6 +7,7 @@ import { useAuth } from "@/auth/AuthContext"
 const NAV_ITEMS = [
   { to: "/ops/pi", label: "PI", icon: FileText },
   { to: "/ops/ready-to-ship", label: "Готово к отгрузке", icon: Truck },
+  { to: "/ops/actual-containers", label: "Готовые контейнеры", icon: Ship },
   { to: "/ops/backorder-upload", label: "Загрузка бэкордера", icon: Upload },
 ]
 

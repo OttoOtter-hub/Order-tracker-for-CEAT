@@ -31,6 +31,21 @@ export function formatDate(value: string | Date | null | undefined): string {
   }).format(date)
 }
 
+// A calendar day ("YYYY-MM-DD", what the API sends for `date` columns such as
+// ETD/ETA) has no time zone. Going through `new Date(...)` would read it as UTC
+// midnight and print the previous day anywhere west of Greenwich, so the parts
+// are formatted as they are.
+export function formatDay(value: string | null | undefined): string {
+  if (!value) {
+    return "—"
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!match) {
+    return value
+  }
+  return `${match[3]}.${match[2]}.${match[1]}`
+}
+
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) {
     return "—"

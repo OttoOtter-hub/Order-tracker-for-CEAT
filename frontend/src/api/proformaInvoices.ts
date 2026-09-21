@@ -57,6 +57,10 @@ export interface ProformaInvoice {
   containersPending: string | null
   currentWeekPlanContainers: string | null
   currentWeekPlanQty: string | null
+  // Σ quantity of every shipped container line with this PI number — the
+  // backend recomputes it from scratch on each backorder upload (numeric
+  // string like the columns above; "0.00" when nothing has shipped).
+  shippedQty: string
   // Computed on every read from lineItems' priorityQty (backend getters,
   // not stored columns — see ProformaInvoice.priorityTotalQty in the root
   // README) — real JS numbers, unlike the numeric-string columns above.

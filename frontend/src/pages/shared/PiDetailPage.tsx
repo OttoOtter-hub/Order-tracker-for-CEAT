@@ -295,6 +295,26 @@ export function PiDetailPage() {
         </Button>
       </div>
 
+      {/* Aggregates: the same "Всего / Ожидает" as on the list card, plus what has
+          already shipped (0 is shown as 0 — "nothing shipped yet" is information). */}
+      <div
+        className="flex flex-wrap gap-x-6 gap-y-1 text-sm"
+        data-testid="pi-aggregates"
+      >
+        <div>
+          <span className="text-muted-foreground">Всего: </span>
+          {formatNumber(pi.totalQty)}
+        </div>
+        <div>
+          <span className="text-muted-foreground">Ожидает: </span>
+          {formatNumber(pi.qtyPending)}
+        </div>
+        <div data-testid="pi-shipped">
+          <span className="text-muted-foreground">Отправлено: </span>
+          {formatNumber(pi.shippedQty)}
+        </div>
+      </div>
+
       {/* Files */}
       <Card>
         <CardHeader>

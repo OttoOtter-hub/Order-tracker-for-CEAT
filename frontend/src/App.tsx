@@ -8,6 +8,8 @@ import { PiListPage } from "@/pages/shared/PiListPage"
 import { PiDetailPage } from "@/pages/shared/PiDetailPage"
 import { BackorderUploadPage } from "@/pages/ops/BackorderUploadPage"
 import { ReadyToShipPage } from "@/pages/shared/ready-to-ship/ReadyToShipPage"
+import { ActualContainersPage } from "@/pages/shared/actual-containers/ActualContainersPage"
+import { ActualContainerDetailPage } from "@/pages/shared/actual-containers/ActualContainerDetailPage"
 
 function HomeRedirect() {
   const { user, isLoading } = useAuth()
@@ -38,6 +40,11 @@ function App() {
         <Route path="pi" element={<PiListPage />} />
         <Route path="pi/:id" element={<PiDetailPage />} />
         <Route path="ready-to-ship" element={<ReadyToShipPage />} />
+        <Route path="actual-containers" element={<ActualContainersPage />} />
+        <Route
+          path="actual-containers/:id"
+          element={<ActualContainerDetailPage />}
+        />
         <Route path="backorder-upload" element={<BackorderUploadPage />} />
       </Route>
 
@@ -53,6 +60,11 @@ function App() {
         <Route path="pi" element={<PiListPage />} />
         <Route path="pi/:id" element={<PiDetailPage />} />
         <Route path="ready-to-ship" element={<ReadyToShipPage />} />
+        <Route path="actual-containers" element={<ActualContainersPage />} />
+        <Route
+          path="actual-containers/:id"
+          element={<ActualContainerDetailPage />}
+        />
       </Route>
 
       <Route path="/" element={<HomeRedirect />} />

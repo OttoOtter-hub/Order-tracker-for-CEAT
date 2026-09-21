@@ -58,7 +58,16 @@ export async function downloadFile(
   }
   const disposition = response.headers.get("content-disposition")
   const match = disposition?.match(/filename="?([^";]+)"?/)
-  const filename = match?.[1] ?? fallbackFilename
+  // The backend percent-encodes the name ("packing%20list.pdf"), so a name
+  // with spaces or Cyrillic would otherwise be saved as-is, escapes included.
+  let filename = fallbackFilename
+  if (match?.[1]) {
+    try {
+      filename = decodeURIComponent(match[1])
+    } catch {
+      filename = match[1]
+    }
+  }
 
   const blob = await response.blob()
   const objectUrl = URL.createObjectURL(blob)
