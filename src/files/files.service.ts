@@ -12,6 +12,7 @@ import { extname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 import { Role } from "../common/enums/role.enum";
+import { decodeMultipartFilename } from "../common/utils/decode-multipart-filename";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.entity";
 import { ProformaInvoice } from "../proforma-invoices/proforma-invoice.entity";
@@ -53,12 +54,13 @@ export class FilesService {
     uploadedBy: string,
   ): Promise<StoredFile> {
     const id = randomUUID();
-    const storageKey = `${id}${extname(file.originalname)}`;
+    const originalName = decodeMultipartFilename(file.originalname);
+    const storageKey = `${id}${extname(originalName)}`;
     await fs.writeFile(join(this.uploadDir, storageKey), file.buffer);
 
     const stored = this.repo.create({
       id,
-      originalName: file.originalname,
+      originalName,
       mimeType: file.mimetype || "application/octet-stream",
       sizeBytes: String(file.size),
       storageKey,
