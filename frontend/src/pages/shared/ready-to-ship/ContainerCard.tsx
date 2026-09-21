@@ -24,6 +24,7 @@ import {
 } from "@/api/readyToShip"
 import { FILL_CARD, fillLevel, formatPercent } from "@/lib/fill"
 import { formatNumber, formatPiTitle } from "@/lib/format"
+import { useContainerName } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 
@@ -45,6 +46,7 @@ interface MarkingCellProps {
 // change deletes the file) and deletes; both roles can download.
 function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
   const { t } = useTranslation()
+  const containerName = useContainerName()
   const upload = useUploadMarkingMutation()
   const remove = useDeleteMarkingMutation()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -156,7 +158,7 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
             title={t("readyToShip.marking.deleteTitle")}
             description={t("readyToShip.marking.deleteDescription", {
               material: allocation.materialNum ?? "—",
-              container: container.label,
+              container: containerName(container.label),
             })}
             confirmLabel={t("common.delete")}
             destructive
@@ -192,6 +194,7 @@ export function ContainerCard({
   onUnlock,
 }: ContainerCardProps) {
   const { t } = useTranslation()
+  const containerName = useContainerName()
   const level = fillLevel(container.fillPercent)
   const isClient = mode === "client"
   const showCounter =
@@ -207,7 +210,9 @@ export function ContainerCard({
       <CardHeader className="gap-2">
         <div className="flex items-start justify-between gap-3">
           <div className="grid gap-1.5">
-            <CardTitle className="text-lg">{container.label}</CardTitle>
+            <CardTitle className="text-lg">
+              {containerName(container.label)}
+            </CardTitle>
             <div className="flex flex-wrap items-center gap-1.5">
               {container.isConfirmed ? (
                 <Badge variant="outline" className={GREEN_BADGE}>

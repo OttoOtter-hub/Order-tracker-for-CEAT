@@ -34,6 +34,7 @@ import {
 } from "@/pages/shared/ready-to-ship/RemoveDialog"
 import { ReadyLinesTable } from "@/pages/shared/ready-to-ship/ReadyLinesTable"
 import { formatNumber } from "@/lib/format"
+import { useContainerName } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
 
 // Used by /client/ready-to-ship (working tool) and /ops/ready-to-ship (the
@@ -98,6 +99,7 @@ function ReadyToShipContent({
   customerId?: string
 }) {
   const { t } = useTranslation()
+  const containerName = useContainerName()
   const isClient = mode === "client"
   const query = useReadyToShipQuery(customerId)
   const unlock = useUnlockContainerMutation()
@@ -273,7 +275,7 @@ function ReadyToShipContent({
               <CardContent className="flex flex-wrap gap-1.5">
                 {summary.free.map((container) => (
                   <Badge key={container.id} variant="outline">
-                    {container.label}
+                    {containerName(container.label)}
                   </Badge>
                 ))}
               </CardContent>
@@ -306,7 +308,9 @@ function ReadyToShipContent({
           onOpenChange={(open) => {
             if (!open) setUnlockTarget(null)
           }}
-          title={t("readyToShip.unlock.title", { label: unlockTarget?.label ?? "" })}
+          title={t("readyToShip.unlock.title", {
+            label: unlockTarget ? containerName(unlockTarget.label) : "",
+          })}
           description={t("readyToShip.unlock.description")}
           confirmLabel={t("readyToShip.unlock.confirm")}
           destructive
@@ -316,7 +320,9 @@ function ReadyToShipContent({
             unlock.mutate(unlockTarget.id, {
               onSuccess: () => {
                 toast.success(
-                  t("readyToShip.unlock.done", { label: unlockTarget.label })
+                  t("readyToShip.unlock.done", {
+                    label: containerName(unlockTarget.label),
+                  })
                 )
                 setUnlockTarget(null)
               },

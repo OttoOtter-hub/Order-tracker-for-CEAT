@@ -31,6 +31,7 @@ import {
 import { FILL_TEXT, fillLevel, formatPercent } from "@/lib/fill"
 import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
+import { useContainerName } from "@/lib/readyToShip"
 import { cn } from "@/lib/utils"
 
 interface MoveFormValues {
@@ -74,6 +75,7 @@ function MoveForm({
   onMoved,
 }: MoveDialogProps & { line: UnallocatedLine }) {
   const { t } = useTranslation()
+  const containerName = useContainerName()
   const move = useMoveMutation(customerId)
   // The backend only takes whole units; a fractional remainder (never seen in
   // practice) can only be moved down to the integer below it.
@@ -144,7 +146,9 @@ function MoveForm({
           toast.success(
             t("readyToShip.move.success", {
               qty: formatNumber(String(amount)),
-              label: target?.label ?? t("readyToShip.move.successFallbackLabel"),
+              label: target
+                ? containerName(target.label)
+                : t("readyToShip.move.successFallbackLabel"),
             })
           )
           onMoved(values.containerId)
@@ -261,7 +265,7 @@ function MoveForm({
                             className="size-4 shrink-0"
                           />
                           <span className="w-24 shrink-0 font-medium">
-                            {container.label}
+                            {containerName(container.label)}
                           </span>
                           {container.isConfirmed ? (
                             <span className="text-xs text-muted-foreground">
@@ -300,7 +304,7 @@ function MoveForm({
             <p className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               {t("readyToShip.move.overloadWarning", {
-                label: selected?.label,
+                label: selected ? containerName(selected.label) : "",
                 percent: formatPercent(selectedProjected),
               })}
             </p>

@@ -27,6 +27,7 @@ import {
 } from "@/api/readyToShip"
 import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
+import { useContainerName } from "@/lib/readyToShip"
 
 export interface RemoveTarget {
   allocation: ContainerAllocation
@@ -67,6 +68,7 @@ function RemoveForm({
   onClose,
 }: RemoveDialogProps & { target: RemoveTarget }) {
   const { t } = useTranslation()
+  const containerName = useContainerName()
   const { allocation, containerLabel } = target
   const remove = useRemoveMutation(customerId)
   const max = Math.floor(allocation.allocatedQty)
@@ -127,7 +129,9 @@ function RemoveForm({
     <>
       <DialogHeader>
         <DialogTitle>
-          {t("readyToShip.remove.title", { container: containerLabel })}
+          {t("readyToShip.remove.title", {
+            container: containerName(containerLabel),
+          })}
         </DialogTitle>
         <DialogDescription>
           <span className="font-medium text-foreground">

@@ -155,6 +155,7 @@
     "noCustomers": "No customers.",
     "customer": "Customer",
     "loadFailed": "Could not load the section",
+    "containerLabel": "Container {{n}}",
     "title": "Ready to ship",
     "descriptionClient": "Distribute the weekly plan across containers, confirm it and attach the marking.",
     "descriptionOps": "The client's plan (view only). A confirmed container can be unlocked.",

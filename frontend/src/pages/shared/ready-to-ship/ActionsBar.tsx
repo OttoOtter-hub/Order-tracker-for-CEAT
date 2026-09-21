@@ -10,6 +10,7 @@ import {
   type ReadyToShipView,
 } from "@/api/readyToShip"
 import { formatPercent } from "@/lib/fill"
+import { useContainerName } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
 
 // Client-only panel, shown while there is anything not yet confirmed: either
@@ -18,6 +19,7 @@ import { getErrorMessage } from "@/lib/errors"
 // can still be undone).
 export function ActionsBar({ view }: { view: ReadyToShipView }) {
   const { t } = useTranslation()
+  const containerName = useContainerName()
   const undoLast = useUndoLastMutation()
   const undoAll = useUndoAllMutation()
   const confirm = useConfirmMutation()
@@ -39,7 +41,7 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
   if (overfilled.length > 0) {
     confirmBlockedReason = t("readyToShip.actions.blockedOver", {
       list: overfilled
-        .map((c) => `${c.label} (${formatPercent(c.fillPercent)})`)
+        .map((c) => `${containerName(c.label)} (${formatPercent(c.fillPercent)})`)
         .join(", "),
     })
   } else if (!view.canConfirm) {
