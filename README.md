@@ -1972,6 +1972,31 @@ dist.bak-20260918-relink-pairing` → `mv dist.new dist` → `start`. Перед
   `client_max_body_size` не задан (по умолчанию 1 МБ): реальный файл — 117 КБ,
   запас есть; если файл когда-нибудь перерастёт 1 МБ, загрузка упрётся в `413`.
 
+### Зачистка бизнес-данных на проде для повторного теста (2026-09-21)
+
+По просьбе пользователя очищены 12 таблиц: `marking_files`, `allocation_actions`,
+`container_line_allocations`, `shipping_containers`, `actual_container_files`,
+`actual_container_line_items`, `actual_containers`, `pi_additional_files`,
+`pi_line_items`, `proforma_invoices`, `backorder_upload_snapshots`,
+`backorder_uploads`. Остались: `customers` (1), `users` (2), `stored_files` (2 — записи
+о файлах и сами файлы на диске не трогались), `migrations`, схема.
+
+- **Бэкап до очистки:** `pg_dump -Fc` этих 12 таблиц (схема + данные) —
+  `/opt/ceat-backend/backups/pre-wipe-20260921-131416.dump` на VPS (root, 600),
+  SHA-256 `89f7b211…f890e5`. В дампе было: `shipping_containers` 42, `pi_line_items`
+  538, `proforma_invoices` 28, `backorder_uploads` 5, остальное 0.
+  Восстановление — `pg_restore` из этого файла (данные в пустые таблицы).
+- **Очистка:** одна транзакция из `DELETE` строго от дочерних таблиц к родительским;
+  перед началом скрипт сверил счётчики с теми, на которых снят дамп (иначе отказ),
+  перед `COMMIT` проверил, что `customers`/`users` не изменились (иначе откат).
+  Результат: 0 во всех 12 таблицах.
+- Для дампа на VPS установлен `postgresql-client-18` из официального репозитория
+  PostgreSQL (`/etc/apt/sources.list.d/pgdg.list`; версия клиента должна быть не
+  ниже версии сервера БД, 18.6, а в Ubuntu 24.04 клиент — 16).
+- Следствие: карточки PI появятся снова при следующей загрузке бэкордера
+  (`createdFrom = BACKORDER_ROW`), слоты контейнеров клиента — при первом заходе в
+  "Готово к отгрузке"; PI-файлы и подписанные документы, если они были, — только из дампа.
+
 ### Что не тронуто / известные пробелы
 
 - HTTPS/домен — см. "2." выше, отложено по решению пользователя.
