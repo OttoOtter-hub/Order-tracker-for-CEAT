@@ -20,6 +20,7 @@ import { useTableSort } from "@/hooks/useTableSort"
 import { formatDay } from "@/lib/format"
 import { formatStatusValue } from "@/lib/actualContainers"
 import { getErrorMessage } from "@/lib/errors"
+import { cn } from "@/lib/utils"
 
 type SortKey =
   | "containerNumber"
@@ -117,7 +118,8 @@ export function ActualContainersPage() {
           <h1 className="text-xl font-semibold">Готовые контейнеры</h1>
           <p className="text-sm text-muted-foreground">
             Контейнеры, которые CEAT уже отгрузил, по данным еженедельного файла.
-            Дата, изменённая вручную, выделена и помечена карандашом.
+            Дата, изменённая вручную, выделена и помечена карандашом. Зелёным
+            выделены контейнеры, к которым приложен файл.
           </p>
         </div>
         <div className="relative w-full max-w-xs">
@@ -191,7 +193,13 @@ export function ActualContainersPage() {
                     <TableRow
                       key={container.id}
                       data-container-number={container.containerNumber}
-                      className="cursor-pointer"
+                      data-has-files={container.filesCount > 0}
+                      className={cn(
+                        "cursor-pointer",
+                        // A file is attached: light green, nothing more to it.
+                        container.filesCount > 0 &&
+                          "bg-green-50 hover:bg-green-100/70 dark:bg-green-500/10 dark:hover:bg-green-500/15"
+                      )}
                       onClick={() =>
                         navigate(`${basePath}/actual-containers/${container.id}`)
                       }

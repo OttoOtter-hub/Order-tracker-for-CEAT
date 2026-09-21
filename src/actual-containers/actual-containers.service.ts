@@ -47,7 +47,15 @@ export class ActualContainersService {
     if (!where) {
       return [];
     }
-    const containers = await this.containerRepo.find({ where });
+    const containers = await this.containerRepo.find({
+      where,
+      relations: ["files"],
+    });
+    // The list needs only "is there a file", so the rows themselves stay home.
+    for (const container of containers) {
+      container.filesCount = container.files?.length ?? 0;
+      delete (container as { files?: unknown }).files;
+    }
     return containers.sort(byEffectiveEtdDesc);
   }
 
@@ -71,6 +79,7 @@ export class ActualContainersService {
     container.files.sort(
       (a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt),
     );
+    container.filesCount = container.files.length;
     return container;
   }
 

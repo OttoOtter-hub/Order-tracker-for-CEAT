@@ -87,6 +87,10 @@ export class ActualContainer extends BaseEntity {
   @OneToMany(() => ActualContainerFile, (file) => file.actualContainer)
   files: ActualContainerFile[];
 
+  // Not a column: the service fills it in on every read (the list carries only
+  // this number, not the files themselves; the detail has both).
+  filesCount?: number;
+
   /** What to show: CEAT's manual date if set, otherwise the file's. */
   @Expose()
   get etd(): string | null {

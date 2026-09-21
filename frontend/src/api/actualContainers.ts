@@ -50,6 +50,9 @@ export interface ActualContainer {
   documentsReleaseStatus: string | null
   telexReleaseDate: string | null
   paymentReceiptStatus: string | null
+  // How many files are attached — in the list and the detail alike (the list
+  // has no `files` array, only this number).
+  filesCount: number
   // Detail only.
   lineItems?: ActualContainerLineItem[]
   files?: ActualContainerFile[]
@@ -138,8 +141,11 @@ export function useAddContainerFileMutation(id: string) {
         formData
       )
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: detailKey(id) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: detailKey(id) })
+      // The list's green highlight depends on whether any file exists.
+      queryClient.invalidateQueries({ queryKey: LIST_KEY, exact: true })
+    },
   })
 }
 
@@ -148,8 +154,10 @@ export function useDeleteContainerFileMutation(containerId: string) {
   return useMutation({
     mutationFn: (fileId: string) =>
       apiClient.delete<void>(`/actual-container-files/${fileId}`),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: detailKey(containerId) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: detailKey(containerId) })
+      queryClient.invalidateQueries({ queryKey: LIST_KEY, exact: true })
+    },
   })
 }
 

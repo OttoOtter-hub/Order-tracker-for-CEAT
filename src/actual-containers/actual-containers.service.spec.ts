@@ -50,6 +50,20 @@ function setup() {
   // Stand-in for the relations the real repo joins: lineItems, files, files.uploadedBy.
   const withRelations = {
     ...containerRepo,
+    find: async (options: {
+      where: Record<string, any>;
+      relations?: string[];
+    }) =>
+      (await containerRepo.find({ where: options.where })).map((row) => ({
+        ...row,
+        ...(options.relations?.includes("files")
+          ? {
+              files: fileRepo.rows.filter(
+                (f) => f.actualContainer.id === row.id,
+              ),
+            }
+          : {}),
+      })),
     findOne: async (options: { where: Record<string, any> }) => {
       const row = await containerRepo.findOne({ where: options.where });
       return row
@@ -300,6 +314,62 @@ describe("ActualContainersService", () => {
       size: 3,
       buffer: Buffer.from("abc"),
     };
+
+    it("the list carries filesCount per container — 0 without files, N with — and not the files themselves", async () => {
+      const { service, fileRepo } = setup();
+      await service.addFile("ct-1", upload as any, undefined, ops);
+      await service.addFile("ct-1", upload as any, "second", ops);
+      expect(fileRepo.rows).toHaveLength(2);
+
+      const list = await service.findAll(ops);
+      const byNumber = Object.fromEntries(
+        list.map((c) => [c.containerNumber, c]),
+      );
+
+      expect(byNumber.AAAA1111111.filesCount).toBe(2);
+      expect(byNumber.BBBB2222222.filesCount).toBe(0);
+      expect(list.every((c) => c.files === undefined)).toBe(true);
+    });
+
+    it("the count follows a removal, back to 0 (so the row stops being highlighted)", async () => {
+      const { service, fileRepo } = setup();
+      await service.addFile("ct-1", upload as any, undefined, ops);
+      expect((await service.findAll(client))[0].filesCount).toBe(1);
+
+      await service.removeFile(fileRepo.rows[0].id!);
+
+      expect(
+        (await service.findAll(ops)).every((c) => c.filesCount === 0),
+      ).toBe(true);
+    });
+
+    it("counts a client's files only for their own customer's containers", async () => {
+      const { service } = setup();
+      await service.addFile("ct-1", upload as any, undefined, ops);
+
+      expect(
+        (await service.findAll(client)).map((c) => [
+          c.containerNumber,
+          c.filesCount,
+        ]),
+      ).toEqual([["AAAA1111111", 1]]);
+      expect(
+        (await service.findAll(otherClient)).map((c) => [
+          c.containerNumber,
+          c.filesCount,
+        ]),
+      ).toEqual([["BBBB2222222", 0]]);
+    });
+
+    it("the detail has both the files and the count", async () => {
+      const { service } = setup();
+      await service.addFile("ct-1", upload as any, undefined, ops);
+
+      const detail = await service.findOne("ct-1", ops);
+
+      expect(detail.files).toHaveLength(1);
+      expect(detail.filesCount).toBe(1);
+    });
 
     it("adds a file to a container with its name, uploader and trimmed description", async () => {
       const { service, fileRepo, filesService } = setup();
