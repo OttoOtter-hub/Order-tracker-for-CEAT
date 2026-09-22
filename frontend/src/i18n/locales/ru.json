@@ -302,7 +302,7 @@
     "arrival": {
       "expected": "Ожидается прибытие",
       "arrived": "Прибыло",
-      "arrivedAuto": "Прибыло (авто)",
+      "arrivedAuto": "Прибыло (default)",
       "confirmedTooltip": "Подтвердил(а) {{email}} · {{date}}",
       "confirm": "Подтвердить прибытие",
       "confirmed": "Прибытие подтверждено",

@@ -300,7 +300,7 @@
     "arrival": {
       "expected": "Arrival expected",
       "arrived": "Arrived",
-      "arrivedAuto": "Arrived (auto)",
+      "arrivedAuto": "Arrived (default)",
       "confirmedTooltip": "Confirmed by {{email}} · {{date}}",
       "confirm": "Confirm arrival",
       "confirmed": "Arrival confirmed",
