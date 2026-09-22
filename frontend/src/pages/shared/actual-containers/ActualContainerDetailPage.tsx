@@ -19,6 +19,7 @@ import {
   type ActualContainerLineItem,
 } from "@/api/actualContainers"
 import { usePiListQuery } from "@/api/proformaInvoices"
+import { ArrivalMarker } from "@/pages/shared/actual-containers/ArrivalMarker"
 import { ContainerDatesEditor } from "@/pages/shared/actual-containers/ContainerDatesEditor"
 import { ContainerFiles } from "@/pages/shared/actual-containers/ContainerFiles"
 import { DateCell } from "@/pages/shared/actual-containers/DateCell"
@@ -168,6 +169,11 @@ export function ActualContainerDetailPage() {
               key={`${container.overrideEtd}|${container.overrideEta}|${container.sourceEtd}|${container.sourceEta}`}
               container={container}
             />
+          )}
+          {container.arrivalStatus && (
+            <Field label={t("shipped.detail.arrival")}>
+              <ArrivalMarker container={container} canConfirm={!isOps} />
+            </Field>
           )}
         </CardContent>
       </Card>

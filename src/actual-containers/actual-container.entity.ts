@@ -1,10 +1,28 @@
-import { Expose } from "class-transformer";
+import { Exclude, Expose } from "class-transformer";
 import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from "typeorm";
 import { BackorderUpload } from "../backorder-uploads/backorder-upload.entity";
 import { BaseEntity } from "../common/entities/base.entity";
 import { Customer } from "../customers/customer.entity";
+import { User } from "../users/user.entity";
 import { ActualContainerFile } from "./actual-container-file.entity";
 import { ActualContainerLineItem } from "./actual-container-line-item.entity";
+
+export type ArrivalStatus = "expected" | "arrived" | null;
+
+// A container counts as "arrived" on its own, without anyone confirming it,
+// once this many days have passed since its effective ETA.
+const AUTO_ARRIVED_AFTER_DAYS = 7;
+// The "expected" marker starts showing this many days before the effective ETA.
+const EXPECTED_FROM_DAYS_BEFORE = 10;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Both are "YYYY-MM-DD" (or a full ISO string for "today"); UTC-midnight math, no timezone drift. */
+function daysBetween(fromIsoDate: string, toIsoDate: string): number {
+  const from = Date.parse(fromIsoDate);
+  const to = Date.parse(toIsoDate.slice(0, 10));
+  return Math.round((to - from) / MS_PER_DAY);
+}
 
 /**
  * A container CEAT has actually shipped (or is shipping), known from the
@@ -77,6 +95,19 @@ export class ActualContainer extends BaseEntity {
   @Column({ name: "payment_receipt_status", type: "varchar", nullable: true })
   paymentReceiptStatus: string | null;
 
+  // Set only by POST /:id/confirm-arrival (client). Never touched by an
+  // upload or by the automatic ("7+ days after ETA") side of arrivalStatus
+  // below — that one is computed, not stored.
+  @Column({ name: "arrival_confirmed_at", type: "timestamptz", nullable: true })
+  arrivalConfirmedAt: Date | null;
+
+  // Raw relation, kept out of JSON — the API exposes only the confirmer's
+  // email, via the arrivalConfirmedBy getter below.
+  @Exclude({ toPlainOnly: true })
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: "arrival_confirmed_by" })
+  arrivalConfirmedByUser: User | null;
+
   @ManyToOne(() => BackorderUpload, { nullable: true })
   @JoinColumn({ name: "last_seen_in_upload_id" })
   lastSeenInUpload: BackorderUpload | null;
@@ -110,5 +141,35 @@ export class ActualContainer extends BaseEntity {
   @Expose()
   get isEtaOverridden(): boolean {
     return this.overrideEta !== null && this.overrideEta !== undefined;
+  }
+
+  /**
+   * Computed fresh on every read from today's date — never stored, so it
+   * can never drift from `arrival_confirmed_at` or go stale between uploads.
+   *   - null: no ETA, or more than 10 days still remain until it.
+   *   - "expected": ETA is 0–10 days away, or passed less than 7 days ago,
+   *     and nobody has confirmed arrival yet.
+   *   - "arrived": arrival was confirmed manually, OR 7+ days have passed
+   *     since the ETA (arrived on its own, without confirmation).
+   */
+  @Expose()
+  get arrivalStatus(): ArrivalStatus {
+    if (this.arrivalConfirmedAt) {
+      return "arrived";
+    }
+    if (!this.eta) {
+      return null;
+    }
+    const daysSinceEta = daysBetween(this.eta, new Date().toISOString());
+    if (daysSinceEta >= AUTO_ARRIVED_AFTER_DAYS) {
+      return "arrived";
+    }
+    return daysSinceEta >= -EXPECTED_FROM_DAYS_BEFORE ? "expected" : null;
+  }
+
+  /** The confirming client's email, only when arrival was confirmed manually. */
+  @Expose()
+  get arrivalConfirmedBy(): string | null {
+    return this.arrivalConfirmedByUser?.email ?? null;
   }
 }

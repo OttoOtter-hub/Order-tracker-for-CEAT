@@ -2,7 +2,6 @@ import { useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { Search } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,10 +15,9 @@ import {
 import { SortableHead } from "@/components/SortableHead"
 import { useAuth } from "@/auth/AuthContext"
 import { useActualContainersQuery, type ActualContainer } from "@/api/actualContainers"
+import { ArrivalMarker } from "@/pages/shared/actual-containers/ArrivalMarker"
 import { DateCell } from "@/pages/shared/actual-containers/DateCell"
 import { useTableSort } from "@/hooks/useTableSort"
-import { formatDay } from "@/lib/format"
-import { formatStatusValue } from "@/lib/actualContainers"
 import { getErrorMessage } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 
@@ -31,12 +29,17 @@ type SortKey =
   | "eta"
   | "commercialInvoiceNumber"
 
-const COLUMNS: { key: SortKey; labelKey: string }[] = [
+// Rendered either side of the (unsortable) "Arrival" column, which sits right
+// after ETA — the two groups keep the header row a single hand-written block
+// instead of one COLUMNS.map() that the Arrival header would have to interrupt.
+const COLUMNS_THROUGH_ETA: { key: SortKey; labelKey: string }[] = [
   { key: "containerNumber", labelKey: "shipped.columns.container" },
   { key: "port", labelKey: "shipped.columns.port" },
   { key: "vesselName", labelKey: "shipped.columns.vessel" },
   { key: "etd", labelKey: "shipped.columns.etd" },
   { key: "eta", labelKey: "shipped.columns.eta" },
+]
+const COLUMNS_AFTER_ETA: { key: SortKey; labelKey: string }[] = [
   { key: "commercialInvoiceNumber", labelKey: "shipped.columns.commercialInvoice" },
 ]
 
@@ -59,45 +62,6 @@ function searchText(container: ActualContainer): string {
     .toLowerCase()
 }
 
-// Only what the "ETA-15 days" sheet actually filled in — a container outside
-// that week's sample shows nothing here rather than a row of dashes.
-function Eta15Badges({ container }: { container: ActualContainer }) {
-  const { t } = useTranslation()
-  const badges: { label: string; title: string }[] = []
-  if (container.blNumber) {
-    badges.push({
-      label: t("shipped.badges.bl", { value: container.blNumber }),
-      title: t("shipped.badges.blTitle"),
-    })
-  }
-  if (container.telexReleaseDate) {
-    badges.push({
-      label: t("shipped.badges.telex", { date: formatDay(container.telexReleaseDate) }),
-      title: t("shipped.badges.telexTitle"),
-    })
-  }
-  if (container.paymentReceiptStatus) {
-    badges.push({
-      label: t("shipped.badges.payment", {
-        value: formatStatusValue(container.paymentReceiptStatus),
-      }),
-      title: t("shipped.badges.paymentTitle"),
-    })
-  }
-  if (badges.length === 0) {
-    return null
-  }
-  return (
-    <div className="flex flex-wrap gap-1" data-testid="eta15-badges">
-      {badges.map((badge) => (
-        <Badge key={badge.label} variant="secondary" title={badge.title}>
-          {badge.label}
-        </Badge>
-      ))}
-    </div>
-  )
-}
-
 // Used by /ops/actual-containers and /client/actual-containers — the same
 // read-only picture; the API scopes a client to their own customer.
 export function ActualContainersPage() {
@@ -106,7 +70,8 @@ export function ActualContainersPage() {
   const navigate = useNavigate()
   const { data, isLoading, isError, error, refetch } = useActualContainersQuery()
   const [query, setQuery] = useState("")
-  const basePath = user?.role === "ops" ? "/ops" : "/client"
+  const isClient = user?.role === "client"
+  const basePath = isClient ? "/client" : "/ops"
 
   // "Nearest first": ETA ascending, containers without an ETA last.
   const { sorted, sortKey, direction, toggleSort } = useTableSort<
@@ -182,7 +147,7 @@ export function ActualContainersPage() {
               <Table data-testid="actual-containers-table">
                 <TableHeader>
                   <TableRow>
-                    {COLUMNS.map((col) => (
+                    {COLUMNS_THROUGH_ETA.map((col) => (
                       <SortableHead
                         key={col.key}
                         active={sortKey === col.key}
@@ -192,7 +157,17 @@ export function ActualContainersPage() {
                         {t(col.labelKey)}
                       </SortableHead>
                     ))}
-                    <TableHead>{t("shipped.columns.eta15")}</TableHead>
+                    <TableHead>{t("shipped.columns.arrival")}</TableHead>
+                    {COLUMNS_AFTER_ETA.map((col) => (
+                      <SortableHead
+                        key={col.key}
+                        active={sortKey === col.key}
+                        direction={direction}
+                        onClick={() => toggleSort(col.key)}
+                      >
+                        {t(col.labelKey)}
+                      </SortableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -238,11 +213,11 @@ export function ActualContainersPage() {
                           sourceValue={container.sourceEta}
                         />
                       </TableCell>
+                      <TableCell className="whitespace-normal">
+                        <ArrivalMarker container={container} canConfirm={isClient} />
+                      </TableCell>
                       <TableCell className="tabular-nums">
                         {container.commercialInvoiceNumber ?? "—"}
-                      </TableCell>
-                      <TableCell className="whitespace-normal">
-                        <Eta15Badges container={container} />
                       </TableCell>
                     </TableRow>
                   ))}

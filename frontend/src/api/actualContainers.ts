@@ -53,6 +53,17 @@ export interface ActualContainer {
   // How many files are attached — in the list and the detail alike (the list
   // has no `files` array, only this number).
   filesCount: number
+  // Computed fresh on every response from today's date and the effective ETA
+  // — never stored as such, so it can never go stale between page loads.
+  // null: no marker. "expected": ETA is near or just passed, not confirmed
+  // yet. "arrived": confirmed (manually or automatically, 7+ days post-ETA).
+  arrivalStatus: "expected" | "arrived" | null
+  // The confirming client's email — only when arrival was confirmed by hand,
+  // as opposed to the automatic 7-day rule (null either way otherwise).
+  arrivalConfirmedBy: string | null
+  // When it was confirmed by hand; null for an automatic "arrived" (and
+  // whenever arrivalConfirmedBy is null too).
+  arrivalConfirmedAt: string | null
   // Detail only.
   lineItems?: ActualContainerLineItem[]
   files?: ActualContainerFile[]
@@ -123,6 +134,18 @@ export function useResetContainerDatesMutation(id: string) {
   return useMutation({
     mutationFn: () =>
       apiClient.post<ActualContainer>(`/actual-containers/${id}/reset-dates`),
+    onSuccess: writeCache,
+  })
+}
+
+// POST /actual-containers/:id/confirm-arrival — client-only, once (a second
+// call 400s). Refreshes both the detail (arrivalStatus flips to "arrived")
+// and the list (same marker shown there).
+export function useConfirmArrivalMutation(id: string) {
+  const writeCache = useContainerCacheWriter(id)
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<ActualContainer>(`/actual-containers/${id}/confirm-arrival`),
     onSuccess: writeCache,
   })
 }

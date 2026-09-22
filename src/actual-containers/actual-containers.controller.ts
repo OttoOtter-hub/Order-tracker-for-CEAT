@@ -15,6 +15,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from "@nestjs/swagger";
+import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorator";
 import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Roles } from "../common/auth/roles.decorator";
@@ -66,6 +67,21 @@ export class ActualContainersController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.service.resetDates(id, user);
+  }
+
+  /**
+   * @ClientWriteAllowed() gets a client actor past RolesGuard for this
+   * non-GET method; ops also reaches the handler ("ops always allowed") but
+   * ActualContainersService.confirmArrival explicitly rejects any non-client
+   * actor — see that method's doc comment.
+   */
+  @ClientWriteAllowed()
+  @Post(":id/confirm-arrival")
+  confirmArrival(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.confirmArrival(id, user);
   }
 
   @Roles(Role.OPS)

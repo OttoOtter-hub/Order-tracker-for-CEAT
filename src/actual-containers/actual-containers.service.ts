@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -49,7 +50,7 @@ export class ActualContainersService {
     }
     const containers = await this.containerRepo.find({
       where,
-      relations: ["files"],
+      relations: ["files", "arrivalConfirmedByUser"],
     });
     // The list needs only "is there a file", so the rows themselves stay home.
     for (const container of containers) {
@@ -64,7 +65,12 @@ export class ActualContainersService {
     const container = where
       ? await this.containerRepo.findOne({
           where: { ...where, id },
-          relations: ["lineItems", "files", "files.uploadedBy"],
+          relations: [
+            "lineItems",
+            "files",
+            "files.uploadedBy",
+            "arrivalConfirmedByUser",
+          ],
         })
       : null;
     if (!container) {
@@ -118,6 +124,36 @@ export class ActualContainersService {
       { id: container.id },
       { overrideEtd: null, overrideEta: null },
     );
+    return this.findOne(id, actor);
+  }
+
+  /**
+   * client-only (the controller's @ClientWriteAllowed() lets client past
+   * RolesGuard for this POST; ops also reaches the handler — "ops always
+   * allowed" — so it's rejected explicitly here, same pattern as
+   * ProformaInvoicesService.resetPriority). Owner-check via findOne, which
+   * 404s a foreign or unknown id for a client the same way every other
+   * client-facing read/write on this service does.
+   */
+  async confirmArrival(
+    id: string,
+    actor: RequestUser,
+  ): Promise<ActualContainer> {
+    if (actor.role !== Role.CLIENT) {
+      throw new ForbiddenException("Подтвердить прибытие может только клиент");
+    }
+    const container = await this.findOne(id, actor);
+    if (container.arrivalConfirmedAt) {
+      throw new BadRequestException("прибытие уже подтверждено");
+    }
+    // A relation write (arrivalConfirmedByUser), so .save() on the loaded
+    // entity — same pattern as every other "*By" actor field in this
+    // codebase (e.g. ProformaInvoicesService.uploadPi's piFileUploadedBy) —
+    // rather than .update(), which the rest of this service uses only for
+    // plain columns (updateDates/resetDates).
+    container.arrivalConfirmedAt = new Date();
+    container.arrivalConfirmedByUser = { id: actor.id } as User;
+    await this.containerRepo.save(container);
     return this.findOne(id, actor);
   }
 

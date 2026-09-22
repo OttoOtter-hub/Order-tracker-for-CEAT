@@ -296,16 +296,17 @@
       "vessel": "Судно",
       "etd": "ETD",
       "eta": "ETA",
-      "commercialInvoice": "Commercial invoice",
-      "eta15": "ETA-15"
+      "arrival": "Прибытие",
+      "commercialInvoice": "Commercial invoice"
     },
-    "badges": {
-      "bl": "B/L {{value}}",
-      "blTitle": "Коносамент (B/L)",
-      "telex": "Telex {{date}}",
-      "telexTitle": "Дата telex release",
-      "payment": "Оплата: {{value}}",
-      "paymentTitle": "Статус получения оплаты"
+    "arrival": {
+      "expected": "Ожидается прибытие",
+      "arrived": "Прибыло",
+      "arrivedAuto": "Прибыло (авто)",
+      "confirmedTooltip": "Подтвердил(а) {{email}} · {{date}}",
+      "confirm": "Подтвердить прибытие",
+      "confirmed": "Прибытие подтверждено",
+      "confirmFailed": "Не удалось подтвердить прибытие"
     },
     "overrideHint": "Дата изменена вручную (в файле: {{date}})",
     "overrideHintNoSource": "Дата изменена вручную (в файле даты нет)",
@@ -318,6 +319,7 @@
       "commercialInvoice": "Commercial invoice",
       "etd": "ETD",
       "eta": "ETA",
+      "arrival": "Прибытие",
       "eta15": {
         "title": "Документы и оплата (ETA-15)",
         "bl": "B/L",

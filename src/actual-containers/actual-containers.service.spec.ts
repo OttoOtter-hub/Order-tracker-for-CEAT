@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { Role } from "../common/enums/role.enum";
@@ -304,6 +308,63 @@ describe("ActualContainersService", () => {
         ).toBeGreaterThan(0);
         expect(await check({ overrideEtd: "next week" })).toBeGreaterThan(0);
       });
+    });
+  });
+
+  describe("confirmArrival", () => {
+    it("the owning client confirms once: sets arrivalConfirmedAt and arrivalConfirmedByUser", async () => {
+      // The fake repo hands back plain objects, not real ActualContainer
+      // instances, so arrivalStatus (a getter on the class) isn't
+      // exercisable here — that boundary logic has its own dedicated spec,
+      // actual-container.entity.spec.ts. This checks what the service
+      // actually writes and returns: the two stored fields.
+      const { service, containerRepo } = setup();
+
+      const result = await service.confirmArrival("ct-1", client);
+
+      expect(result.arrivalConfirmedAt).toBeInstanceOf(Date);
+      expect(result.arrivalConfirmedByUser).toEqual({ id: client.id });
+      expect(containerRepo.rows[0].arrivalConfirmedAt).toBeInstanceOf(Date);
+      expect(containerRepo.rows[0].arrivalConfirmedByUser).toEqual({
+        id: client.id,
+      });
+    });
+
+    it("400s a second confirmation, without touching the first one's timestamp", async () => {
+      const { service, containerRepo } = setup();
+      await service.confirmArrival("ct-1", client);
+      const firstConfirmedAt = containerRepo.rows[0].arrivalConfirmedAt;
+
+      await expect(service.confirmArrival("ct-1", client)).rejects.toThrow(
+        new BadRequestException("прибытие уже подтверждено"),
+      );
+      expect(containerRepo.rows[0].arrivalConfirmedAt).toBe(firstConfirmedAt);
+    });
+
+    it("404s another customer's client (owner-check), leaving the container unconfirmed", async () => {
+      const { service, containerRepo } = setup();
+
+      await expect(
+        service.confirmArrival("ct-1", otherClient),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(containerRepo.rows[0].arrivalConfirmedAt).toBeUndefined();
+    });
+
+    it("rejects ops outright — confirming arrival is a client-only action", async () => {
+      const { service, containerRepo } = setup();
+
+      await expect(service.confirmArrival("ct-1", ops)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(containerRepo.rows[0].arrivalConfirmedAt).toBeUndefined();
+    });
+
+    it("404s an unknown container", async () => {
+      const { service } = setup();
+
+      await expect(
+        service.confirmArrival("missing", client),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
