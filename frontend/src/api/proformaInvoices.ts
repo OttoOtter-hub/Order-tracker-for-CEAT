@@ -23,6 +23,19 @@ export interface PiLineItem {
   priorityQty: string
 }
 
+// Plan-vs-actual per material within this one PI card (Phase 12), quantities
+// only. Backend (ProformaInvoicesService.buildReconciliation) already groups
+// across SO rows sharing a material and does the confirmed-only filtering —
+// the frontend just renders these numbers, real JS numbers unlike the
+// numeric-string PiLineItem columns.
+export interface ReconciliationRow {
+  materialNum: string
+  materialDesc: string | null
+  plannedQty: number
+  shippedQty: number
+  delta: number
+}
+
 export interface PiAdditionalFile {
   id: string
   createdAt: string
@@ -72,6 +85,10 @@ export interface ProformaInvoice {
   // How many line items carry a priority (priorityQty > 0) — same live getter
   // family as the two above.
   priorityLineItemsCount: number
+  // Detail only (GET /proforma-invoices/:id and every write response on this
+  // card) — the list endpoint doesn't compute it, to avoid two extra queries
+  // per card on every GET /proforma-invoices.
+  reconciliation?: ReconciliationRow[]
   lineItems?: PiLineItem[]
   additionalFiles?: PiAdditionalFile[]
 }

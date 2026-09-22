@@ -149,6 +149,16 @@
       "resetDone": "Приоритет сброшен",
       "resetFailed": "Не удалось сбросить приоритет",
       "saveFailed": "Не удалось сохранить приоритет"
+    },
+    "reconciliation": {
+      "title": "Сверка: план vs факт",
+      "columns": {
+        "sku": "SKU",
+        "description": "Описание",
+        "planned": "Запланировано",
+        "shipped": "Отгружено",
+        "delta": "Разница"
+      }
     }
   },
   "readyToShip": {

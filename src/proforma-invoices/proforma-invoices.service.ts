@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { In, Repository } from "typeorm";
+import { ActualContainerLineItem } from "../actual-containers/actual-container-line-item.entity";
+import { ContainerLineAllocation } from "../ready-to-ship/container-line-allocation.entity";
 import { CustomersService } from "../customers/customers.service";
 import { FilesService } from "../files/files.service";
 import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.entity";
@@ -19,6 +21,10 @@ import { PiCreatedFrom } from "./enums/pi-created-from.enum";
 import { extractPiNumber } from "./utils/extract-pi-number";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
 import { buildPiExportWorkbook } from "./utils/build-pi-export-workbook";
+import {
+  computeReconciliation,
+  ReconciliationRow,
+} from "./utils/compute-reconciliation";
 import { formatDateForFilename } from "../common/utils/format-date";
 
 @Injectable()
@@ -30,6 +36,10 @@ export class ProformaInvoicesService {
     private readonly additionalFilesRepo: Repository<PiAdditionalFile>,
     @InjectRepository(PiLineItem)
     private readonly lineItemsRepo: Repository<PiLineItem>,
+    @InjectRepository(ContainerLineAllocation)
+    private readonly allocationsRepo: Repository<ContainerLineAllocation>,
+    @InjectRepository(ActualContainerLineItem)
+    private readonly actualLineItemsRepo: Repository<ActualContainerLineItem>,
     private readonly filesService: FilesService,
     private readonly customersService: CustomersService,
   ) {}
@@ -62,7 +72,35 @@ export class ProformaInvoicesService {
     if (!pi) {
       throw new NotFoundException(`ProformaInvoice ${id} not found`);
     }
+    pi.reconciliation = await this.buildReconciliation(pi);
     return pi;
+  }
+
+  /**
+   * Phase 12: plan-vs-actual per material for this one card (see
+   * computeReconciliation for the grouping/filtering rules). Two read-only
+   * queries, run for every findOne() — including every write on this service,
+   * since they all reload through it — not for findAll()'s list, which stays
+   * at its original query count.
+   */
+  private async buildReconciliation(
+    pi: ProformaInvoice,
+  ): Promise<ReconciliationRow[]> {
+    const lineItems = pi.lineItems ?? [];
+    const lineItemIds = lineItems.map((item) => item.id);
+    const [allocations, actualLines] = await Promise.all([
+      lineItemIds.length
+        ? this.allocationsRepo.find({
+            where: { piLineItem: { id: In(lineItemIds) } },
+            relations: ["piLineItem", "container"],
+          })
+        : Promise.resolve([]),
+      this.actualLineItemsRepo.find({
+        where: { piNumber: pi.piNumber },
+        select: { materialNum: true, quantity: true },
+      }),
+    ]);
+    return computeReconciliation(lineItems, allocations, actualLines);
   }
 
   /**

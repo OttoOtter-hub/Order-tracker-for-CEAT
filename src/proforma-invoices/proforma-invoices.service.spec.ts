@@ -14,6 +14,8 @@ describe("ProformaInvoicesService", () => {
   let repo: ReturnType<typeof makeFakeRepo>;
   let additionalFilesRepo: ReturnType<typeof makeFakeRepo>;
   let lineItemsRepo: ReturnType<typeof makeFakeRepo>;
+  let allocationsRepo: ReturnType<typeof makeFakeRepo>;
+  let actualLineItemsRepo: ReturnType<typeof makeFakeRepo>;
   let filesService: { save: jest.Mock };
   let customersService: { findFirst: jest.Mock };
   let service: ProformaInvoicesService;
@@ -42,6 +44,8 @@ describe("ProformaInvoicesService", () => {
     repo = makeFakeRepo();
     additionalFilesRepo = makeFakeRepo();
     lineItemsRepo = makeFakeRepo();
+    allocationsRepo = makeFakeRepo();
+    actualLineItemsRepo = makeFakeRepo();
     fileCounter = 1;
     filesService = {
       save: jest.fn(async () => {
@@ -66,6 +70,8 @@ describe("ProformaInvoicesService", () => {
       repo as any,
       additionalFilesRepo as any,
       lineItemsRepo as any,
+      allocationsRepo as any,
+      actualLineItemsRepo as any,
       filesService as any,
       customersService as any,
     );
@@ -266,6 +272,72 @@ describe("ProformaInvoicesService", () => {
 
       const { fileName } = await service.exportXlsx("pi-1", clientActor);
       expect(fileName).toContain("100037320");
+    });
+  });
+
+  describe("findOne — reconciliation (Phase 12)", () => {
+    it("attaches plan-vs-actual per material, confirmed-only, grouped across SO rows", async () => {
+      const li1 = {
+        id: "li-1",
+        materialNum: "M1",
+        materialDesc: "Tyre A",
+        soNumber: "SO1",
+      };
+      const li2 = {
+        id: "li-2",
+        materialNum: "M1",
+        materialDesc: "Tyre A",
+        soNumber: "SO2",
+      };
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        customer: { id: "cust-1" },
+        lineItems: [li1, li2],
+      });
+      allocationsRepo.seed({
+        id: "a-1",
+        piLineItem: li1,
+        container: { id: "c-1", isConfirmed: true },
+        allocatedQty: "10",
+      });
+      allocationsRepo.seed({
+        id: "a-2",
+        piLineItem: li2,
+        container: { id: "c-2", isConfirmed: false }, // draft — must not count
+        allocatedQty: "999",
+      });
+      actualLineItemsRepo.seed({
+        id: "al-1",
+        piNumber: "100037320",
+        materialNum: "M1",
+        quantity: "7",
+      });
+
+      const pi = await service.findOne("pi-1");
+
+      expect(pi.reconciliation).toEqual([
+        {
+          materialNum: "M1",
+          materialDesc: "Tyre A",
+          plannedQty: 10,
+          shippedQty: 7,
+          delta: -3,
+        },
+      ]);
+    });
+
+    it("is an empty array for a card with no line items, not undefined", async () => {
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        customer: { id: "cust-1" },
+        lineItems: [],
+      });
+
+      const pi = await service.findOne("pi-1");
+
+      expect(pi.reconciliation).toEqual([]);
     });
   });
 

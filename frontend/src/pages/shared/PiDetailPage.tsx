@@ -22,6 +22,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
@@ -236,6 +237,20 @@ export function PiDetailPage() {
       totalContainers: sumByLoadabilityGroups(forContainers),
     }
   }, [pi?.lineItems, priorityDrafts])
+
+  // Only the materials with something to actually compare — a card can carry
+  // well over a hundred materials on its line items with most never
+  // allocated or shipped; a wall of 0/0/0 rows isn't a useful comparison.
+  // The backend still computes every material's row (see
+  // ProformaInvoicesService.buildReconciliation) — this is a display filter,
+  // not a business rule.
+  const activeReconciliation = useMemo(
+    () =>
+      (pi?.reconciliation ?? []).filter(
+        (row) => row.plannedQty > 0 || row.shippedQty > 0
+      ),
+    [pi?.reconciliation]
+  )
 
   const editModeActive = isClient && isPriorityMode && !pi?.isArchivedShipped
   // The name is the client's to set, but only until the PI is signed.
@@ -687,6 +702,63 @@ export function PiDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Reconciliation (Phase 12): plan vs actual per material, quantities
+          only — no pricing, no alerts on the delta, purely informational.
+          Only materials with any planned or shipped quantity are listed (see
+          activeReconciliation above); the whole block is hidden, not just an
+          empty table, when there's nothing to show. */}
+      {activeReconciliation.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("piDetail.reconciliation.title")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("piDetail.reconciliation.columns.sku")}</TableHead>
+                  <TableHead>
+                    {t("piDetail.reconciliation.columns.description")}
+                  </TableHead>
+                  <TableHead>
+                    {t("piDetail.reconciliation.columns.planned")}
+                  </TableHead>
+                  <TableHead>
+                    {t("piDetail.reconciliation.columns.shipped")}
+                  </TableHead>
+                  <TableHead>
+                    {t("piDetail.reconciliation.columns.delta")}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {activeReconciliation.map((row) => (
+                  <TableRow key={row.materialNum}>
+                    <TableCell>{row.materialNum}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      {row.materialDesc ?? "—"}
+                    </TableCell>
+                    <TableCell>{formatNumber(String(row.plannedQty))}</TableCell>
+                    <TableCell>{formatNumber(String(row.shippedQty))}</TableCell>
+                    <TableCell
+                      className={cn(
+                        "font-medium",
+                        // Not a warning — a plain, calm signal either way:
+                        // green for "more shipped than planned", the
+                        // ordinary text color otherwise. Never red/amber.
+                        row.delta > 0 && "text-green-600 dark:text-green-400"
+                      )}
+                    >
+                      {formatNumber(String(row.delta))}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

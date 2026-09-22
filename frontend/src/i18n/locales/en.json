@@ -149,6 +149,16 @@
       "resetDone": "Priority reset",
       "resetFailed": "Could not reset the priority",
       "saveFailed": "Could not save the priority"
+    },
+    "reconciliation": {
+      "title": "Reconciliation: planned vs shipped",
+      "columns": {
+        "sku": "SKU",
+        "description": "Description",
+        "planned": "Planned",
+        "shipped": "Shipped",
+        "delta": "Difference"
+      }
     }
   },
   "readyToShip": {

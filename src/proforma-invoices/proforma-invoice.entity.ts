@@ -11,6 +11,7 @@ import {
   computePriorityAggregates,
   countPriorityLineItems,
 } from "./utils/compute-priority-aggregates";
+import type { ReconciliationRow } from "./utils/compute-reconciliation";
 
 @Entity("proforma_invoices")
 export class ProformaInvoice extends BaseEntity {
@@ -159,6 +160,16 @@ export class ProformaInvoice extends BaseEntity {
 
   @OneToMany(() => PiLineItem, (item) => item.pi)
   lineItems: PiLineItem[];
+
+  /**
+   * Plan-vs-actual per material (Phase 12), quantities only. Not a column and
+   * not always populated — ProformaInvoicesService.findOne (GET /:id and
+   * every write on this service, which reloads through it) fills it in; the
+   * list endpoint (findAll) deliberately doesn't, to avoid two extra queries
+   * per card on every GET /proforma-invoices. Undefined, not an empty array,
+   * when nobody has computed it — see utils/compute-reconciliation.
+   */
+  reconciliation?: ReconciliationRow[];
 
   /**
    * Derived, never stored: the card's lifecycle stage is fully determined
