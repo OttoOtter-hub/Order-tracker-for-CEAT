@@ -6,6 +6,7 @@ import { Customer } from "../customers/customer.entity";
 import { User } from "../users/user.entity";
 import { ActualContainerFile } from "./actual-container-file.entity";
 import { ActualContainerLineItem } from "./actual-container-line-item.entity";
+import { daysBetween } from "./utils/days-between";
 
 export type ArrivalStatus = "expected" | "arrived" | null;
 
@@ -14,15 +15,6 @@ export type ArrivalStatus = "expected" | "arrived" | null;
 const AUTO_ARRIVED_AFTER_DAYS = 7;
 // The "expected" marker starts showing this many days before the effective ETA.
 const EXPECTED_FROM_DAYS_BEFORE = 10;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/** Both are "YYYY-MM-DD" (or a full ISO string for "today"); UTC-midnight math, no timezone drift. */
-function daysBetween(fromIsoDate: string, toIsoDate: string): number {
-  const from = Date.parse(fromIsoDate);
-  const to = Date.parse(toIsoDate.slice(0, 10));
-  return Math.round((to - from) / MS_PER_DAY);
-}
 
 /**
  * A container CEAT has actually shipped (or is shipping), known from the
@@ -107,6 +99,19 @@ export class ActualContainer extends BaseEntity {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: "arrival_confirmed_by" })
   arrivalConfirmedByUser: User | null;
+
+  // Set once, the first time ArrivalNotificationsService's daily cron sees
+  // this container's arrivalStatus as "expected" — never reset afterwards,
+  // so it doubles as "has this container ever been notified" and the cron
+  // never re-sends on later runs while the status stays "expected". Internal
+  // bookkeeping, not part of the API response.
+  @Exclude({ toPlainOnly: true })
+  @Column({
+    name: "arrival_notification_sent_at",
+    type: "timestamptz",
+    nullable: true,
+  })
+  arrivalNotificationSentAt: Date | null;
 
   @ManyToOne(() => BackorderUpload, { nullable: true })
   @JoinColumn({ name: "last_seen_in_upload_id" })

@@ -90,6 +90,7 @@ export function makeHarness() {
       stream: `stream-of-${id}`,
     })),
   };
+  const eventEmitter = { emit: jest.fn() };
 
   return {
     containers,
@@ -99,7 +100,8 @@ export function makeHarness() {
     lines,
     dataSource,
     filesService,
-    service: new ReadyToShipService(dataSource as any),
+    eventEmitter,
+    service: new ReadyToShipService(dataSource as any, eventEmitter as any),
     markingService: new MarkingFilesService(
       dataSource as any,
       filesService as any,

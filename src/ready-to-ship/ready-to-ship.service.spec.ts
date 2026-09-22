@@ -870,5 +870,21 @@ describe("ReadyToShipService", () => {
         h.service.unlock(containerId(0), opsActor),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    it("Phase 13: emits container.reopened-for-client with the container's label and customer id", async () => {
+      await h.service.unlock(containerId(0), opsActor);
+
+      expect(h.eventEmitter.emit).toHaveBeenCalledWith(
+        "container.reopened-for-client",
+        { label: "Контейнер 1", customerId: "cust-1" },
+      );
+    });
+
+    it("Phase 13: does not emit when unlock fails (unconfirmed / unknown container)", async () => {
+      await expect(h.service.unlock("nope", opsActor)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+    });
   });
 });

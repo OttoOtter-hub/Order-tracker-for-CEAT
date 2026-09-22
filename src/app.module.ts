@@ -1,6 +1,8 @@
 import { ClassSerializerInterceptor, Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { EventEmitterModule } from "@nestjs/event-emitter";
+import { ScheduleModule } from "@nestjs/schedule";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
 import { AuthModule } from "./auth/auth.module";
@@ -17,10 +19,16 @@ import { BackorderUploadsModule } from "./backorder-uploads/backorder-uploads.mo
 import { FilesModule } from "./files/files.module";
 import { ReadyToShipModule } from "./ready-to-ship/ready-to-ship.module";
 import { ActualContainersModule } from "./actual-containers/actual-containers.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Both global (EventEmitterModule and ScheduleModule are @Global()
+    // internally): EventEmitter2 and SchedulerRegistry are injectable
+    // anywhere below without importing these two per-module.
+    EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -54,6 +62,7 @@ import { ActualContainersModule } from "./actual-containers/actual-containers.mo
     FilesModule,
     ReadyToShipModule,
     ActualContainersModule,
+    NotificationsModule,
   ],
   providers: [
     // Order matters: JwtAuthGuard authenticates (populates request.user),

@@ -25,7 +25,15 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
     if (!relations?.length) {
       return row;
     }
-    const hydrated: Record<string, any> = { ...row };
+    // Object.assign onto a fresh object sharing row's prototype (not a
+    // plain {...row} spread) — a seeded row is often a real entity instance
+    // (e.g. ActualContainer, for its arrivalStatus getter); a plain spread
+    // would silently drop such getters, since they live on the prototype,
+    // not as own properties.
+    const hydrated: Record<string, any> = Object.assign(
+      Object.create(Object.getPrototypeOf(row) as object),
+      row,
+    );
     for (const path of relations) {
       const property = path.split(".")[0];
       const target = relationRepos[property];
@@ -61,9 +69,18 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
     }
     const idx = rows.findIndex((r) => r.id === entity.id);
     if (idx >= 0) {
-      rows[idx] = { ...rows[idx], ...entity };
+      rows[idx] = Object.assign(
+        Object.create(Object.getPrototypeOf(rows[idx]) as object),
+        rows[idx],
+        entity,
+      );
     } else {
-      rows.push({ ...entity });
+      rows.push(
+        Object.assign(
+          Object.create(Object.getPrototypeOf(entity) as object),
+          entity,
+        ),
+      );
     }
     return rows.find((r) => r.id === entity.id)!;
   }

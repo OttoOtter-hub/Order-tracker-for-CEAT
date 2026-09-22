@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { In, Repository } from "typeorm";
 import { ActualContainerLineItem } from "../actual-containers/actual-container-line-item.entity";
 import { ContainerLineAllocation } from "../ready-to-ship/container-line-allocation.entity";
@@ -26,6 +27,7 @@ import {
   ReconciliationRow,
 } from "./utils/compute-reconciliation";
 import { formatDateForFilename } from "../common/utils/format-date";
+import { NotificationEvent } from "../notifications/notification-events";
 
 @Injectable()
 export class ProformaInvoicesService {
@@ -42,6 +44,7 @@ export class ProformaInvoicesService {
     private readonly actualLineItemsRepo: Repository<ActualContainerLineItem>,
     private readonly filesService: FilesService,
     private readonly customersService: CustomersService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   findAll(): Promise<ProformaInvoice[]> {
@@ -163,6 +166,11 @@ export class ProformaInvoicesService {
       existing.piFileUploadedAt = new Date();
       existing.piFileUploadedBy = { id: actor.id } as User;
       const saved = await this.repo.save(existing);
+      this.emitPiReadyToSign(
+        saved.piNumber,
+        saved.label ?? null,
+        existing.customer.id,
+      );
       return this.findOne(saved.id);
     }
 
@@ -180,6 +188,7 @@ export class ProformaInvoicesService {
     });
     try {
       const saved = await this.repo.save(pi);
+      this.emitPiReadyToSign(saved.piNumber, saved.label ?? null, customer.id);
       return this.findOne(saved.id);
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -189,6 +198,23 @@ export class ProformaInvoicesService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Event 1 (Phase 13): fires right after uploadPi sets pi_file_url —
+   * signed_file_url is never set by this method, so the resulting status is
+   * always MISSING_SIGNED_DOCUMENT, unconditionally.
+   */
+  private emitPiReadyToSign(
+    piNumber: string,
+    label: string | null,
+    customerId: string,
+  ): void {
+    this.eventEmitter.emit(NotificationEvent.PI_READY_TO_SIGN, {
+      piNumber,
+      label,
+      customerId,
+    });
   }
 
   /** Client uploads their signed copy — always overwrites, no approval. */
@@ -246,6 +272,11 @@ export class ProformaInvoicesService {
     pi.pendingReplacementProposedBy = { id: actor.id } as User;
     pi.pendingReplacementProposedAt = new Date();
     const saved = await this.repo.save(pi);
+    this.eventEmitter.emit(NotificationEvent.PI_REPLACEMENT_PROPOSED, {
+      piNumber: saved.piNumber,
+      label: saved.label ?? null,
+      customerId: pi.customer.id,
+    });
     return this.findOne(saved.id);
   }
 

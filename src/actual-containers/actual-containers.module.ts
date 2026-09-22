@@ -11,6 +11,7 @@ import {
   ActualContainersController,
 } from "./actual-containers.controller";
 import { ActualContainersService } from "./actual-containers.service";
+import { ArrivalNotificationsService } from "./arrival-notifications.service";
 
 @Module({
   imports: [
@@ -23,7 +24,11 @@ import { ActualContainersService } from "./actual-containers.service";
     FilesModule,
   ],
   controllers: [ActualContainersController, ActualContainerFilesController],
-  providers: [ActualContainersService, ActualContainersImportService],
+  providers: [
+    ActualContainersService,
+    ActualContainersImportService,
+    ArrivalNotificationsService,
+  ],
   exports: [ActualContainersImportService],
 })
 export class ActualContainersModule {}

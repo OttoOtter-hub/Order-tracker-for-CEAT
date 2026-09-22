@@ -18,6 +18,7 @@ describe("ProformaInvoicesService", () => {
   let actualLineItemsRepo: ReturnType<typeof makeFakeRepo>;
   let filesService: { save: jest.Mock };
   let customersService: { findFirst: jest.Mock };
+  let eventEmitter: { emit: jest.Mock };
   let service: ProformaInvoicesService;
   let fileCounter: number;
 
@@ -66,6 +67,7 @@ describe("ProformaInvoicesService", () => {
         name: "MTK ROSBERG LLC",
       })),
     };
+    eventEmitter = { emit: jest.fn() };
     service = new ProformaInvoicesService(
       repo as any,
       additionalFilesRepo as any,
@@ -74,6 +76,7 @@ describe("ProformaInvoicesService", () => {
       actualLineItemsRepo as any,
       filesService as any,
       customersService as any,
+      eventEmitter as any,
     );
   });
 
@@ -230,6 +233,58 @@ describe("ProformaInvoicesService", () => {
         new BadRequestException(
           "нет активного предложения замены для этого PI",
         ),
+      );
+    });
+  });
+
+  describe("Phase 13 — notification events", () => {
+    it("uploadPi (new card) emits pi.ready-to-sign with the customer id", async () => {
+      await service.uploadPi(file("100037320.pdf"), opsActor);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith("pi.ready-to-sign", {
+        piNumber: "100037320",
+        label: null,
+        customerId: "cust-1",
+      });
+    });
+
+    it("uploadPi (fills a backorder_row card) emits pi.ready-to-sign", async () => {
+      repo.seed({
+        id: "pi-backorder",
+        piNumber: "100037320",
+        piFileUrl: null,
+        label: "Орел",
+        createdFrom: PiCreatedFrom.BACKORDER_ROW,
+        customer: { id: "cust-1" },
+      });
+
+      await service.uploadPi(file("100037320.pdf"), opsActor);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith("pi.ready-to-sign", {
+        piNumber: "100037320",
+        label: "Орел",
+        customerId: "cust-1",
+      });
+    });
+
+    it("proposeReplacement emits pi.replacement-proposed with the customer id", async () => {
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        customer: { id: "cust-1" },
+        piFileUrl: "/files/original/download",
+        pendingReplacementFileUrl: null,
+      });
+
+      await service.proposeReplacement("pi-1", file("repl.pdf"), opsActor);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        "pi.replacement-proposed",
+        {
+          piNumber: "100037320",
+          label: null,
+          customerId: "cust-1",
+        },
       );
     });
   });

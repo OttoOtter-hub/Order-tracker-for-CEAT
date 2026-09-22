@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { DataSource, EntityManager, In } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
@@ -31,6 +32,7 @@ import {
   isOverfilled,
   toFillPercent,
 } from "./utils/compute-container-fill";
+import { NotificationEvent } from "../notifications/notification-events";
 
 interface ActiveLine {
   item: PiLineItem;
@@ -67,7 +69,10 @@ function allocationKey(containerId: string, piLineItemId: string): string {
  */
 @Injectable()
 export class ReadyToShipService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   async getView(
     actor: RequestUser,
@@ -493,6 +498,14 @@ export class ReadyToShipService {
     container.confirmedAt = null;
     container.confirmedBy = null;
     await containerRepo.save(container);
+
+    // Event 3 (Phase 13): no "proposed_to_client" status exists here — this
+    // is the one ops action that puts a container back in front of the
+    // client for review (see notification-events.ts for the reasoning).
+    this.eventEmitter.emit(NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT, {
+      label: container.label,
+      customerId: container.customer.id,
+    });
 
     return {
       id: container.id,
