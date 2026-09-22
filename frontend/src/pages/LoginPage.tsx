@@ -20,6 +20,7 @@ import {
   FormMessage,
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
+import { LanguageSwitcher } from "@/components/LanguageSwitcher"
 import { ApiError } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
 
@@ -58,8 +59,13 @@ export function LoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>CEAT Order Tracking</CardTitle>
-          <CardDescription>{t("login.description")}</CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>CEAT Order Tracking</CardTitle>
+              <CardDescription>{t("login.description")}</CardDescription>
+            </div>
+            <LanguageSwitcher />
+          </div>
         </CardHeader>
         <CardContent>
           <Form {...form}>
