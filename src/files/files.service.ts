@@ -12,6 +12,7 @@ import { extname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 import { Role } from "../common/enums/role.enum";
+import { apiError } from "../common/errors/api-error";
 import { decodeMultipartFilename } from "../common/utils/decode-multipart-filename";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.entity";
@@ -75,7 +76,9 @@ export class FilesService {
   ): Promise<DownloadableFile> {
     const file = await this.repo.findOne({ where: { id } });
     if (!file) {
-      throw new NotFoundException(`File ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `File ${id} not found`),
+      );
     }
     if (actor.role !== Role.OPS) {
       await this.assertClientCanAccess(id, actor);
@@ -91,7 +94,9 @@ export class FilesService {
   async openStoredFile(id: string): Promise<DownloadableFile> {
     const file = await this.repo.findOne({ where: { id } });
     if (!file) {
-      throw new NotFoundException(`File ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `File ${id} not found`),
+      );
     }
     return this.openFromDisk(file);
   }
@@ -99,7 +104,9 @@ export class FilesService {
   private openFromDisk(file: StoredFile): DownloadableFile {
     const fullPath = join(this.uploadDir, file.storageKey);
     if (!existsSync(fullPath)) {
-      throw new NotFoundException(`File ${file.id} not found on disk`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `File ${file.id} not found on disk`),
+      );
     }
     return { file, stream: createReadStream(fullPath) };
   }
@@ -118,7 +125,9 @@ export class FilesService {
   ): Promise<void> {
     const url = `/files/${fileId}/download`;
     if (!actor.customerId) {
-      throw new NotFoundException(`File ${fileId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `File ${fileId} not found`),
+      );
     }
 
     const piMatches = await this.piRepo.count({
@@ -139,6 +148,8 @@ export class FilesService {
       return;
     }
 
-    throw new NotFoundException(`File ${fileId} not found`);
+    throw new NotFoundException(
+      apiError("NOT_FOUND", `File ${fileId} not found`),
+    );
   }
 }

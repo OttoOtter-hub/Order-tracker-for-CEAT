@@ -8,6 +8,7 @@ import {
   Repository,
 } from "typeorm";
 import { ActualContainersImportService } from "../actual-containers/actual-containers-import.service";
+import { apiError } from "../common/errors/api-error";
 import { CustomersService } from "../customers/customers.service";
 import { FilesService } from "../files/files.service";
 import { RequestUser } from "../common/auth/request-user.interface";
@@ -306,7 +307,9 @@ export class BackorderUploadsService {
   ): Promise<{ buffer: Buffer; fileName: string }> {
     const upload = await this.repo.findOne({ where: { id: uploadId } });
     if (!upload) {
-      throw new NotFoundException(`BackorderUpload ${uploadId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `BackorderUpload ${uploadId} not found`),
+      );
     }
     const stored = await this.dataSource.manager
       .getRepository(BackorderUploadSnapshot)

@@ -7,6 +7,7 @@ import {
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { DataSource, EntityManager, In } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
+import { apiError } from "../common/errors/api-error";
 import { Role } from "../common/enums/role.enum";
 import { formatDateForFilename } from "../common/utils/format-date";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
@@ -115,7 +116,10 @@ export class ReadyToShipService {
     const customerId = this.requireClient(actor);
     if (!Number.isInteger(dto.qty) || dto.qty <= 0) {
       throw new BadRequestException(
-        "количество указывается в целых штуках и должно быть больше нуля",
+        apiError(
+          "QTY_NOT_POSITIVE_INTEGER",
+          "количество указывается в целых штуках и должно быть больше нуля",
+        ),
       );
     }
 
@@ -128,7 +132,9 @@ export class ReadyToShipService {
         relations: ["pi", "pi.customer"],
       });
       if (!line || line.pi.customer.id !== customerId) {
-        throw new NotFoundException(`PiLineItem ${dto.piLineItemId} not found`);
+        throw new NotFoundException(
+          apiError("NOT_FOUND", `PiLineItem ${dto.piLineItemId} not found`),
+        );
       }
       const container = await this.findOwnedContainer(
         em,
@@ -137,13 +143,19 @@ export class ReadyToShipService {
       );
       if (line.pi.isArchivedShipped) {
         throw new BadRequestException(
-          "строка не входит в список готового к отгрузке",
+          apiError(
+            "LINE_NOT_READY_TO_SHIP",
+            "строка не входит в список готового к отгрузке",
+          ),
         );
       }
       const loadability = toNumberOrNull(line.loadability);
       if (!loadability || loadability <= 0) {
         throw new BadRequestException(
-          "у строки не задана loadability — распределить её по контейнерам нельзя",
+          apiError(
+            "LINE_NO_LOADABILITY",
+            "у строки не задана loadability — распределить её по контейнерам нельзя",
+          ),
         );
       }
 
@@ -168,7 +180,11 @@ export class ReadyToShipService {
         (toNumberOrNull(line.currentWeekDispatchQty) ?? 0) - allocatedElsewhere;
       if (dto.qty > remaining) {
         throw new BadRequestException(
-          `нельзя переместить ${dto.qty}: нераспределённый остаток строки — ${Math.max(0, remaining)}`,
+          apiError(
+            "MOVE_EXCEEDS_REMAINING",
+            `нельзя переместить ${dto.qty}: нераспределённый остаток строки — ${Math.max(0, remaining)}`,
+            { qty: dto.qty, remaining: Math.max(0, remaining) },
+          ),
         );
       }
 
@@ -181,7 +197,10 @@ export class ReadyToShipService {
         // itself, not the container as a whole.
         if (existing.isLocked) {
           throw new BadRequestException(
-            "позиция заблокирована — состав можно менять только после разблокировки CEAT",
+            apiError(
+              "ALLOCATION_LOCKED",
+              "позиция заблокирована — состав можно менять только после разблокировки CEAT",
+            ),
           );
         }
         await this.setAllocatedQty(
@@ -201,7 +220,10 @@ export class ReadyToShipService {
           containerAllocations.every((a) => a.isLocked);
         if (isContainerFullyLocked) {
           throw new BadRequestException(
-            "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+            apiError(
+              "CONTAINER_LOCKED",
+              "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+            ),
           );
         }
         await allocationRepo.save(
@@ -243,7 +265,10 @@ export class ReadyToShipService {
     const customerId = this.requireClient(actor);
     if (!Number.isInteger(dto.qty) || dto.qty <= 0) {
       throw new BadRequestException(
-        "количество указывается в целых штуках и должно быть больше нуля",
+        apiError(
+          "QTY_NOT_POSITIVE_INTEGER",
+          "количество указывается в целых штуках и должно быть больше нуля",
+        ),
       );
     }
 
@@ -255,12 +280,18 @@ export class ReadyToShipService {
       });
       if (!found || found.container.customer.id !== customerId) {
         throw new NotFoundException(
-          `ContainerLineAllocation ${dto.allocationId} not found`,
+          apiError(
+            "NOT_FOUND",
+            `ContainerLineAllocation ${dto.allocationId} not found`,
+          ),
         );
       }
       if (found.isLocked) {
         throw new BadRequestException(
-          "позиция заблокирована — состав можно менять только после разблокировки CEAT",
+          apiError(
+            "ALLOCATION_LOCKED",
+            "позиция заблокирована — состав можно менять только после разблокировки CEAT",
+          ),
         );
       }
 
@@ -273,7 +304,11 @@ export class ReadyToShipService {
       const current = toNumberOrNull(allocation?.allocatedQty) ?? 0;
       if (!allocation || dto.qty > current) {
         throw new BadRequestException(
-          `нельзя убрать ${dto.qty}: в контейнере ${current}`,
+          apiError(
+            "REMOVE_EXCEEDS_ALLOCATED",
+            `нельзя убрать ${dto.qty}: в контейнере ${current}`,
+            { qty: dto.qty, current },
+          ),
         );
       }
 
@@ -320,7 +355,9 @@ export class ReadyToShipService {
         (a) => !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
       );
       if (!last) {
-        throw new NotFoundException("нет действий для отмены");
+        throw new NotFoundException(
+          apiError("NOTHING_TO_UNDO", "нет действий для отмены"),
+        );
       }
 
       const delta = toNumberOrNull(last.deltaQty) ?? 0;
@@ -501,7 +538,10 @@ export class ReadyToShipService {
 
       if (toConfirm.length === 0) {
         throw new BadRequestException(
-          "нет контейнеров с незафиксированными позициями для подтверждения",
+          apiError(
+            "NOTHING_TO_CONFIRM",
+            "нет контейнеров с незафиксированными позициями для подтверждения",
+          ),
         );
       }
 
@@ -516,15 +556,22 @@ export class ReadyToShipService {
         isOverfilled(fillByContainer.get(c.id) ?? 0),
       );
       if (overfilled.length > 0) {
+        const percentOf = (c: ShippingContainer) =>
+          toFillPercent(fillByContainer.get(c.id) ?? 0);
         throw new BadRequestException({
-          statusCode: 400,
-          error: "Bad Request",
-          message: `перегружены контейнеры: ${overfilled
-            .map(
-              (c) =>
-                `${c.label} (${toFillPercent(fillByContainer.get(c.id) ?? 0)}%)`,
-            )
-            .join(", ")}`,
+          ...apiError(
+            "CONTAINER_OVERFILLED",
+            `перегружены контейнеры: ${overfilled
+              .map((c) => `${c.label} (${percentOf(c)}%)`)
+              .join(", ")}`,
+            // Slot labels are stored in Russian ("Контейнер N"), so the
+            // translatable param carries only numbers: "#1 (105%), #3 (112%)".
+            {
+              containers: overfilled
+                .map((c) => `#${labelNumber(c.label)} (${percentOf(c)}%)`)
+                .join(", "),
+            },
+          ),
           overfilledContainers: overfilled.map((c) => ({
             id: c.id,
             label: c.label,
@@ -564,7 +611,10 @@ export class ReadyToShipService {
   ): Promise<UnlockedContainerView> {
     if (actor.role !== Role.OPS) {
       throw new ForbiddenException(
-        "Разблокировка контейнера доступна только CEAT",
+        apiError(
+          "OPS_ONLY_ACTION",
+          "Разблокировка контейнера доступна только CEAT",
+        ),
       );
     }
 
@@ -578,7 +628,9 @@ export class ReadyToShipService {
       relations: ["customer"],
     });
     if (!container) {
-      throw new NotFoundException(`ShippingContainer ${containerId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ShippingContainer ${containerId} not found`),
+      );
     }
     const allocations = await allocationRepo.find({
       where: { container: { id: containerId } },
@@ -586,7 +638,10 @@ export class ReadyToShipService {
     const locked = allocations.filter((a) => a.isLocked);
     if (locked.length === 0) {
       throw new BadRequestException(
-        "контейнер не подтверждён — разблокировать нечего",
+        apiError(
+          "CONTAINER_NOT_LOCKED",
+          "контейнер не подтверждён — разблокировать нечего",
+        ),
       );
     }
 
@@ -627,7 +682,10 @@ export class ReadyToShipService {
   ): Promise<UnlockedAllocationView> {
     if (actor.role !== Role.OPS) {
       throw new ForbiddenException(
-        "Разблокировка позиции доступна только CEAT",
+        apiError(
+          "OPS_ONLY_ACTION",
+          "Разблокировка позиции доступна только CEAT",
+        ),
       );
     }
 
@@ -640,12 +698,18 @@ export class ReadyToShipService {
     });
     if (!allocation) {
       throw new NotFoundException(
-        `ContainerLineAllocation ${allocationId} not found`,
+        apiError(
+          "NOT_FOUND",
+          `ContainerLineAllocation ${allocationId} not found`,
+        ),
       );
     }
     if (!allocation.isLocked) {
       throw new BadRequestException(
-        "позиция не заблокирована — разблокировать нечего",
+        apiError(
+          "ALLOCATION_NOT_LOCKED",
+          "позиция не заблокирована — разблокировать нечего",
+        ),
       );
     }
 
@@ -671,7 +735,9 @@ export class ReadyToShipService {
 
   private requireClient(actor: RequestUser): string {
     if (actor.role !== Role.CLIENT || !actor.customerId) {
-      throw new ForbiddenException("Действие доступно только клиенту");
+      throw new ForbiddenException(
+        apiError("CLIENT_ONLY_ACTION", "Действие доступно только клиенту"),
+      );
     }
     return actor.customerId;
   }
@@ -682,15 +748,24 @@ export class ReadyToShipService {
   ): string {
     if (actor.role === Role.CLIENT) {
       if (!actor.customerId) {
-        throw new ForbiddenException("Пользователь не привязан к клиенту");
+        throw new ForbiddenException(
+          apiError(
+            "USER_NOT_LINKED_TO_CUSTOMER",
+            "Пользователь не привязан к клиенту",
+          ),
+        );
       }
       if (requested && requested !== actor.customerId) {
-        throw new NotFoundException("Customer not found");
+        throw new NotFoundException(
+          apiError("NOT_FOUND", "Customer not found"),
+        );
       }
       return actor.customerId;
     }
     if (!requested) {
-      throw new BadRequestException("customerId обязателен");
+      throw new BadRequestException(
+        apiError("CUSTOMER_ID_REQUIRED", "customerId обязателен"),
+      );
     }
     return requested;
   }
@@ -705,7 +780,9 @@ export class ReadyToShipService {
       relations: ["customer"],
     });
     if (!container || container.customer.id !== customerId) {
-      throw new NotFoundException(`ShippingContainer ${containerId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ShippingContainer ${containerId} not found`),
+      );
     }
     return container;
   }
@@ -787,7 +864,11 @@ export class ReadyToShipService {
       (toNumberOrNull(line?.currentWeekDispatchQty) ?? 0) - placed;
     if (qty > remaining) {
       throw new BadRequestException(
-        `нельзя отменить удаление: ${qty} шт. этой строки уже размещены в другом контейнере (свободно ${Math.max(0, remaining)})`,
+        apiError(
+          "UNDO_REMOVE_CONFLICT",
+          `нельзя отменить удаление: ${qty} шт. этой строки уже размещены в другом контейнере (свободно ${Math.max(0, remaining)})`,
+          { qty, remaining: Math.max(0, remaining) },
+        ),
       );
     }
 

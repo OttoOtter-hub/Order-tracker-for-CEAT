@@ -21,6 +21,7 @@ import { RequestUser } from "../common/auth/request-user.interface";
 import { Roles } from "../common/auth/roles.decorator";
 import { MAX_FILE_SIZE_BYTES } from "../common/constants/file-upload";
 import { Role } from "../common/enums/role.enum";
+import { apiError } from "../common/errors/api-error";
 import { ActualContainersService } from "./actual-containers.service";
 import { AddContainerFileDto } from "./dto/add-container-file.dto";
 import { UpdateContainerDatesDto } from "./dto/update-container-dates.dto";
@@ -115,7 +116,9 @@ export class ActualContainersController {
     @CurrentUser() user: RequestUser,
   ) {
     if (!file) {
-      throw new BadRequestException("file is required");
+      throw new BadRequestException(
+        apiError("FILE_REQUIRED", "file is required"),
+      );
     }
     return this.service.addFile(id, file, dto.description, user);
   }

@@ -8,6 +8,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
+import { apiError } from "../common/errors/api-error";
 import { toNumberOrNull } from "../common/utils/numeric";
 import { PiLineItem } from "./pi-line-item.entity";
 
@@ -38,7 +39,7 @@ export class PiLineItemsService {
   ): Promise<PiLineItem> {
     if (actor.role !== Role.CLIENT) {
       throw new ForbiddenException(
-        "Приоритизация доступна только клиенту",
+        apiError("CLIENT_ONLY_ACTION", "Приоритизация доступна только клиенту"),
       );
     }
 
@@ -47,7 +48,9 @@ export class PiLineItemsService {
       relations: ["pi", "pi.customer"],
     });
     if (!item || item.pi.customer.id !== actor.customerId) {
-      throw new NotFoundException(`PiLineItem ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `PiLineItem ${id} not found`),
+      );
     }
 
     // Repeats the DTO's @IsInt() check — real HTTP callers already get
@@ -57,13 +60,22 @@ export class PiLineItemsService {
     // UpdatePriorityDto's comment). Tires ship in whole units; 0.02 of one
     // isn't a real priority.
     if (!Number.isInteger(priorityQty)) {
-      throw new BadRequestException("приоритет указывается в целых штуках");
+      throw new BadRequestException(
+        apiError(
+          "PRIORITY_QTY_NOT_INTEGER",
+          "приоритет указывается в целых штуках",
+        ),
+      );
     }
 
     const maxQty = toNumberOrNull(item.balanceToBeDelivered) ?? 0;
     if (priorityQty > maxQty) {
       throw new BadRequestException(
-        `priorityQty must be between 0 and ${maxQty} (this row's balance to be delivered)`,
+        apiError(
+          "PRIORITY_QTY_OUT_OF_RANGE",
+          `priorityQty must be between 0 and ${maxQty} (this row's balance to be delivered)`,
+          { max: maxQty },
+        ),
       );
     }
 

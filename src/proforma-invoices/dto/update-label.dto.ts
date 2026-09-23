@@ -1,6 +1,7 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Transform } from "class-transformer";
 import { IsString, MaxLength, ValidateIf } from "class-validator";
+import { errorContext } from "../../common/errors/api-error";
 
 export const PI_LABEL_MAX_LENGTH = 30;
 
@@ -20,9 +21,13 @@ export class UpdateLabelDto {
     typeof value === "string" ? value.trim() : value,
   )
   @ValidateIf((_object, value) => value !== null)
-  @IsString({ message: "название должно быть строкой или null" })
+  @IsString({
+    message: "название должно быть строкой или null",
+    context: errorContext("PI_LABEL_NOT_STRING"),
+  })
   @MaxLength(PI_LABEL_MAX_LENGTH, {
     message: `название — не более ${PI_LABEL_MAX_LENGTH} символов`,
+    context: errorContext("PI_LABEL_TOO_LONG", { max: PI_LABEL_MAX_LENGTH }),
   })
   label: string | null;
 }

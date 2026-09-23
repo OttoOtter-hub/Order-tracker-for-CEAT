@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   NotFoundException,
 } from "@nestjs/common";
 import {
@@ -12,6 +13,19 @@ import {
   seedLine,
   useControlledClock,
 } from "./testing/ready-to-ship-harness";
+
+// The body an HttpException would send (before ApiExceptionFilter adds
+// statusCode) — where a throw site's error code and params live.
+async function rejectionBody(promise: Promise<unknown>): Promise<unknown> {
+  const error = await promise.then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  if (!(error instanceof HttpException)) {
+    throw new Error("expected the promise to reject with an HttpException");
+  }
+  return error.getResponse();
+}
 
 describe("ReadyToShipService", () => {
   let h: Harness;
@@ -366,6 +380,11 @@ describe("ReadyToShipService", () => {
       await expect(move("li-A", 1, 51)).rejects.toBeInstanceOf(
         BadRequestException,
       );
+      expect(await rejectionBody(move("li-A", 1, 51))).toEqual({
+        code: "MOVE_EXCEEDS_REMAINING",
+        message: expect.any(String),
+        params: { qty: 51, remaining: 50 },
+      });
       expect(h.allocations.rows).toHaveLength(1);
 
       await expect(move("li-A", 1, 50)).resolves.toBeDefined();
@@ -423,6 +442,15 @@ describe("ReadyToShipService", () => {
           clientActor,
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
+      // Someone else's and non-existent read the same, code included.
+      for (const dto of [
+        { piLineItemId: "li-other", containerId: containerId(0), qty: 1 },
+        { piLineItemId: "li-A", containerId: "c-other", qty: 1 },
+      ]) {
+        expect(
+          await rejectionBody(h.service.move(dto, clientActor)),
+        ).toMatchObject({ code: "NOT_FOUND" });
+      }
       expect(h.allocations.rows).toHaveLength(0);
     });
 
@@ -616,6 +644,9 @@ describe("ReadyToShipService", () => {
       await h.service.confirm(clientActor);
 
       await expect(removeQty(10)).rejects.toBeInstanceOf(BadRequestException);
+      expect(await rejectionBody(removeQty(10))).toMatchObject({
+        code: "ALLOCATION_LOCKED",
+      });
       expect(h.allocations.rows[0].allocatedQty).toBe("100");
     });
 
@@ -777,6 +808,9 @@ describe("ReadyToShipService", () => {
         expect.objectContaining({ label: "Контейнер 1", fillPercent: 150 }),
       ]);
       expect(body.message).toContain("Контейнер 1 (150%)");
+      // The translatable param holds numbers only, not the Russian label.
+      expect(body.code).toBe("CONTAINER_OVERFILLED");
+      expect(body.params).toEqual({ containers: "#1 (150%)" });
       expect(h.allocations.rows.every((a) => !a.isLocked)).toBe(true);
     });
 

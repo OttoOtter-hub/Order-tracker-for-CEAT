@@ -18,6 +18,7 @@ import {
   ApiTags,
 } from "@nestjs/swagger";
 import { Roles } from "../common/auth/roles.decorator";
+import { apiError } from "../common/errors/api-error";
 import { Role } from "../common/enums/role.enum";
 import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
@@ -71,7 +72,9 @@ export class BackorderUploadsController {
     @CurrentUser() user: RequestUser,
   ) {
     if (!file) {
-      throw new BadRequestException("file is required");
+      throw new BadRequestException(
+        apiError("FILE_REQUIRED", "file is required"),
+      );
     }
     return this.service.upload(file, user);
   }

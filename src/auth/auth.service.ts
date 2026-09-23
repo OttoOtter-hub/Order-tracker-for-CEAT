@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
+import { apiError } from "../common/errors/api-error";
 import { UsersService } from "../users/users.service";
 import { User } from "../users/user.entity";
 
@@ -14,11 +15,15 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<User> {
     const user = await this.usersService.findByEmail(email);
     if (!user) {
-      throw new UnauthorizedException("Invalid credentials");
+      throw new UnauthorizedException(
+        apiError("INVALID_CREDENTIALS", "Invalid credentials"),
+      );
     }
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatches) {
-      throw new UnauthorizedException("Invalid credentials");
+      throw new UnauthorizedException(
+        apiError("INVALID_CREDENTIALS", "Invalid credentials"),
+      );
     }
     return user;
   }

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { EntityManager, In } from "typeorm";
 import { BackorderUpload } from "../backorder-uploads/backorder-upload.entity";
+import { apiError } from "../common/errors/api-error";
 import { ParsedActualContainersData } from "../backorder-uploads/utils/parse-actual-containers";
 import { Customer } from "../customers/customer.entity";
 import { CustomersService } from "../customers/customers.service";
@@ -283,7 +284,10 @@ export class ActualContainersImportService {
       const customer = (code ? byCode.get(code) : undefined) ?? first;
       if (!customer) {
         throw new NotFoundException(
-          "No customer exists yet — create one before uploading a backorder file",
+          apiError(
+            "NO_CUSTOMER_EXISTS",
+            "No customer exists yet — create one before uploading a backorder file",
+          ),
         );
       }
       return customer;

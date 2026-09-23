@@ -9,6 +9,7 @@ import { Reflector } from "@nestjs/core";
 import { Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { Role } from "../enums/role.enum";
+import { apiError } from "../errors/api-error";
 import { getByPath } from "../utils/get-by-path";
 import { SCOPE_BY_CUSTOMER_KEY } from "./scope-by-customer.decorator";
 import { RequestUser } from "./request-user.interface";
@@ -50,7 +51,7 @@ export class CustomerScopeInterceptor implements NestInterceptor {
         }
         if (data && typeof data === "object") {
           if (getByPath(data, path) !== user.customerId) {
-            throw new NotFoundException();
+            throw new NotFoundException(apiError("NOT_FOUND", "Not Found"));
           }
         }
         return data;

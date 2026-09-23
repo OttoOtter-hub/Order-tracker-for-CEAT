@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { useAuth } from "@/auth/AuthContext"
 import { usePiListQuery } from "@/api/proformaInvoices"
 import { exportBackorderXlsx } from "@/api/backorderUploads"
+import { getErrorMessage } from "@/lib/errors"
 import { PiCard } from "@/pages/shared/PiCard"
 import { UploadPiDialog } from "@/pages/shared/UploadPiDialog"
 import { Label } from "@/components/ui/label"
@@ -49,7 +50,9 @@ export function PiListPage() {
             onClick={() => {
               setIsExporting(true)
               exportBackorderXlsx()
-                .catch(() => toast.error(t("piList.exportFailed")))
+                .catch((error) =>
+                  toast.error(getErrorMessage(error, t("piList.exportFailed")))
+                )
                 .finally(() => setIsExporting(false))
             }}
           >

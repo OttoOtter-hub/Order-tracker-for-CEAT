@@ -1,19 +1,44 @@
-import { toast } from "sonner"
 import i18n from "@/i18n"
 import { clearStoredSession, getStoredToken } from "@/auth/storage"
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000"
 
+export type ApiErrorParams = Record<string, string | number>
+
+/**
+ * `message` is the server's own text; `code`/`params` (the backend's error
+ * shape: { code, message, params? }) are what lib/errors.ts translates.
+ */
 export class ApiError extends Error {
   readonly status: number
   readonly body?: unknown
+  readonly code?: string
+  readonly params?: ApiErrorParams
 
   constructor(message: string, status: number, body?: unknown) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.body = body
+    if (body && typeof body === "object") {
+      const { code, params } = body as { code?: unknown; params?: unknown }
+      if (typeof code === "string") {
+        this.code = code
+      }
+      if (params && typeof params === "object" && !Array.isArray(params)) {
+        this.params = params as ApiErrorParams
+      }
+    }
   }
+}
+
+/** The one place a failed response's JSON body becomes an ApiError. */
+export function apiErrorFromBody(
+  parsedBody: unknown,
+  status: number,
+  fallbackMessage: string
+): ApiError {
+  return new ApiError(extractErrorMessage(parsedBody, fallbackMessage), status, parsedBody)
 }
 
 type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown }
@@ -79,11 +104,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new ApiError("Unauthorized", 401)
   }
 
-  if (response.status === 403) {
-    toast.error(i18n.t("common.forbidden"))
-    throw new ApiError("Forbidden", 403)
-  }
-
+  // 403 goes the same way as every other error: the caller's onError shows
+  // getErrorMessage(error), which translates the code (CLIENT_ONLY_ACTION,
+  // OPS_ONLY_ACTION, …). No toast here, or the user would get two.
   if (!response.ok) {
     let parsedBody: unknown
     try {
@@ -91,11 +114,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       parsedBody = undefined
     }
-    const message = extractErrorMessage(
-      parsedBody,
-      response.statusText || "Request failed"
-    )
-    throw new ApiError(message, response.status, parsedBody)
+    const fallback =
+      response.status === 403
+        ? i18n.t("common.forbidden")
+        : response.statusText || "Request failed"
+    throw apiErrorFromBody(parsedBody, response.status, fallback)
   }
 
   if (response.status === 204) {

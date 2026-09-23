@@ -1,4 +1,5 @@
 import { IsInt, Min } from "class-validator";
+import { errorContext } from "../../common/errors/api-error";
 
 export class UpdatePriorityDto {
   // Whole units only — priority counts tires, never a fraction of one.
@@ -10,7 +11,10 @@ export class UpdatePriorityDto {
   // PiLineItemsService.updatePriority) — this project's service specs
   // instantiate the service directly, bypassing this DTO/ValidationPipe
   // entirely, so the decorator alone isn't unit-testable.
-  @IsInt({ message: "приоритет указывается в целых штуках" })
+  @IsInt({
+    message: "приоритет указывается в целых штуках",
+    context: errorContext("PRIORITY_QTY_NOT_INTEGER"),
+  })
   @Min(0)
   priorityQty: number;
 }

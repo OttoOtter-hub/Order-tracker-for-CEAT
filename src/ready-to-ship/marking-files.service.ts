@@ -7,6 +7,7 @@ import {
 import { DataSource } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
+import { apiError } from "../common/errors/api-error";
 import { DownloadableFile, FilesService } from "../files/files.service";
 import { User } from "../users/user.entity";
 import { ContainerLineAllocation } from "./container-line-allocation.entity";
@@ -37,7 +38,10 @@ export class MarkingFilesService {
     const allocation = await this.findAllocationForActor(allocationId, actor);
     if (!allocation.isLocked) {
       throw new BadRequestException(
-        "маркировку можно загружать только для подтверждённой позиции",
+        apiError(
+          "MARKING_REQUIRES_LOCKED_ALLOCATION",
+          "маркировку можно загружать только для подтверждённой позиции",
+        ),
       );
     }
 
@@ -67,7 +71,9 @@ export class MarkingFilesService {
       where: { allocation: { id: allocation.id } },
     });
     if (!existing) {
-      throw new NotFoundException("у этой позиции нет файла маркировки");
+      throw new NotFoundException(
+        apiError("NO_MARKING_FILE", "у этой позиции нет файла маркировки"),
+      );
     }
     await repo.delete({ id: existing.id });
   }
@@ -84,14 +90,18 @@ export class MarkingFilesService {
       ? STORED_FILE_URL.exec(marking.fileUrl)?.[1]
       : undefined;
     if (!marking || !fileId) {
-      throw new NotFoundException("у этой позиции нет файла маркировки");
+      throw new NotFoundException(
+        apiError("NO_MARKING_FILE", "у этой позиции нет файла маркировки"),
+      );
     }
     return this.filesService.openStoredFile(fileId);
   }
 
   private requireClient(actor: RequestUser): void {
     if (actor.role !== Role.CLIENT) {
-      throw new ForbiddenException("Действие доступно только клиенту");
+      throw new ForbiddenException(
+        apiError("CLIENT_ONLY_ACTION", "Действие доступно только клиенту"),
+      );
     }
   }
 
@@ -111,7 +121,10 @@ export class MarkingFilesService {
         allocation.container.customer.id !== actor.customerId)
     ) {
       throw new NotFoundException(
-        `ContainerLineAllocation ${allocationId} not found`,
+        apiError(
+          "NOT_FOUND",
+          `ContainerLineAllocation ${allocationId} not found`,
+        ),
       );
     }
     return allocation;

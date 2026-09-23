@@ -62,7 +62,9 @@ function DownloadButton({ url, label }: { url: string; label?: string }) {
       variant="outline"
       size="sm"
       onClick={() =>
-        openFile(url).catch(() => toast.error(t("common.downloadFailed")))
+        openFile(url).catch((error) =>
+          toast.error(getErrorMessage(error, t("common.downloadFailed")))
+        )
       }
     >
       {label ?? t("common.download")}
@@ -321,8 +323,8 @@ export function PiDetailPage() {
           onClick={() => {
             setIsExporting(true)
             exportPiXlsx(pi.id)
-              .catch(() =>
-                toast.error(t("piDetail.exportFailed"))
+              .catch((error) =>
+                toast.error(getErrorMessage(error, t("piDetail.exportFailed")))
               )
               .finally(() => setIsExporting(false))
           }}

@@ -8,6 +8,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { FindOptionsWhere, Repository } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
+import { apiError } from "../common/errors/api-error";
 import { DownloadableFile, FilesService } from "../files/files.service";
 import { User } from "../users/user.entity";
 import { ActualContainer } from "./actual-container.entity";
@@ -74,7 +75,9 @@ export class ActualContainersService {
         })
       : null;
     if (!container) {
-      throw new NotFoundException(`ActualContainer ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ActualContainer ${id} not found`),
+      );
     }
     container.lineItems.sort(
       (a, b) =>
@@ -97,7 +100,10 @@ export class ActualContainersService {
   ): Promise<ActualContainer> {
     if (dto.overrideEtd === undefined && dto.overrideEta === undefined) {
       throw new BadRequestException(
-        "provide overrideEtd and/or overrideEta (a date, or null to clear it)",
+        apiError(
+          "DATE_OVERRIDE_EMPTY",
+          "provide overrideEtd and/or overrideEta (a date, or null to clear it)",
+        ),
       );
     }
     const container = await this.findOne(id, actor);
@@ -140,11 +146,18 @@ export class ActualContainersService {
     actor: RequestUser,
   ): Promise<ActualContainer> {
     if (actor.role !== Role.CLIENT) {
-      throw new ForbiddenException("Подтвердить прибытие может только клиент");
+      throw new ForbiddenException(
+        apiError(
+          "CLIENT_ONLY_ACTION",
+          "Подтвердить прибытие может только клиент",
+        ),
+      );
     }
     const container = await this.findOne(id, actor);
     if (container.arrivalConfirmedAt) {
-      throw new BadRequestException("прибытие уже подтверждено");
+      throw new BadRequestException(
+        apiError("ARRIVAL_ALREADY_CONFIRMED", "прибытие уже подтверждено"),
+      );
     }
     // A relation write (arrivalConfirmedByUser), so .save() on the loaded
     // entity — same pattern as every other "*By" actor field in this
@@ -172,12 +185,17 @@ export class ActualContainersService {
   ): Promise<ActualContainer> {
     if (actor.role !== Role.OPS) {
       throw new ForbiddenException(
-        "Отменить подтверждение прибытия может только CEAT",
+        apiError(
+          "OPS_ONLY_ACTION",
+          "Отменить подтверждение прибытия может только CEAT",
+        ),
       );
     }
     const container = await this.findOne(id, actor);
     if (!container.arrivalConfirmedAt) {
-      throw new BadRequestException("прибытие не было подтверждено");
+      throw new BadRequestException(
+        apiError("ARRIVAL_NOT_CONFIRMED", "прибытие не было подтверждено"),
+      );
     }
     container.arrivalConfirmedAt = null;
     container.arrivalConfirmedByUser = null;
@@ -209,7 +227,9 @@ export class ActualContainersService {
   async removeFile(fileId: string): Promise<void> {
     const existing = await this.fileRepo.findOne({ where: { id: fileId } });
     if (!existing) {
-      throw new NotFoundException(`ActualContainerFile ${fileId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ActualContainerFile ${fileId} not found`),
+      );
     }
     await this.fileRepo.delete({ id: fileId });
   }
@@ -227,11 +247,15 @@ export class ActualContainersService {
       (actor.role === Role.CLIENT &&
         file.actualContainer.customer.id !== actor.customerId)
     ) {
-      throw new NotFoundException(`ActualContainerFile ${fileId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ActualContainerFile ${fileId} not found`),
+      );
     }
     const storedFileId = STORED_FILE_URL.exec(file.fileUrl)?.[1];
     if (!storedFileId) {
-      throw new NotFoundException(`ActualContainerFile ${fileId} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ActualContainerFile ${fileId} not found`),
+      );
     }
     return this.filesService.openStoredFile(storedFileId);
   }

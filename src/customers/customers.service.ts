@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
+import { apiError } from "../common/errors/api-error";
 import { Customer } from "./customer.entity";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -19,7 +20,9 @@ export class CustomersService {
   async findOne(id: string): Promise<Customer> {
     const customer = await this.repo.findOne({ where: { id } });
     if (!customer) {
-      throw new NotFoundException(`Customer ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `Customer ${id} not found`),
+      );
     }
     return customer;
   }
@@ -37,7 +40,10 @@ export class CustomersService {
     });
     if (!customer) {
       throw new NotFoundException(
-        "No customer exists yet — create one before uploading a PI",
+        apiError(
+          "NO_CUSTOMER_EXISTS",
+          "No customer exists yet — create one before uploading a PI",
+        ),
       );
     }
     return customer;

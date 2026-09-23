@@ -1,6 +1,6 @@
 import { ClassSerializerInterceptor, Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { ScheduleModule } from "@nestjs/schedule";
 import { TypeOrmModule } from "@nestjs/typeorm";
@@ -10,6 +10,7 @@ import { UsersModule } from "./users/users.module";
 import { JwtAuthGuard } from "./common/auth/jwt-auth.guard";
 import { RolesGuard } from "./common/auth/roles.guard";
 import { CustomerScopeInterceptor } from "./common/auth/customer-scope.interceptor";
+import { ApiExceptionFilter } from "./common/errors/api-exception.filter";
 
 import { CustomersModule } from "./customers/customers.module";
 import { ProformaInvoicesModule } from "./proforma-invoices/proforma-invoices.module";
@@ -73,6 +74,8 @@ import { NotificationsModule } from "./notifications/notifications.module";
     // filtered the raw entities, so it is registered first (outermost).
     { provide: APP_INTERCEPTOR, useClass: ClassSerializerInterceptor },
     { provide: APP_INTERCEPTOR, useClass: CustomerScopeInterceptor },
+    // Every error leaves as { statusCode, code, message, params? }.
+    { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],
 })
 export class AppModule {}

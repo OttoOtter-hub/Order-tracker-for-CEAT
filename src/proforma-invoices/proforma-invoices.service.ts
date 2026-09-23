@@ -15,6 +15,7 @@ import { FilesService } from "../files/files.service";
 import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.entity";
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { Role } from "../common/enums/role.enum";
+import { apiError } from "../common/errors/api-error";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { User } from "../users/user.entity";
 import { ProformaInvoice } from "./proforma-invoice.entity";
@@ -73,7 +74,9 @@ export class ProformaInvoicesService {
       ],
     });
     if (!pi) {
-      throw new NotFoundException(`ProformaInvoice ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ProformaInvoice ${id} not found`),
+      );
     }
     pi.reconciliation = await this.buildReconciliation(pi);
     return pi;
@@ -120,7 +123,9 @@ export class ProformaInvoicesService {
   ): Promise<ProformaInvoice> {
     const pi = await this.findOne(id);
     if (actor.role === Role.CLIENT && pi.customer.id !== actor.customerId) {
-      throw new NotFoundException(`ProformaInvoice ${id} not found`);
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `ProformaInvoice ${id} not found`),
+      );
     }
     return pi;
   }
@@ -145,7 +150,10 @@ export class ProformaInvoicesService {
     const piNumber = extractPiNumber(file.originalname);
     if (!piNumber) {
       throw new BadRequestException(
-        "не удалось распознать номер PI из имени файла",
+        apiError(
+          "PI_NUMBER_NOT_IN_FILENAME",
+          "не удалось распознать номер PI из имени файла",
+        ),
       );
     }
 
@@ -155,7 +163,11 @@ export class ProformaInvoicesService {
     });
     if (existing?.piFileUrl) {
       throw new ConflictException(
-        "проформа с этим номером уже загружена, используйте предложение замены",
+        apiError(
+          "PI_ALREADY_EXISTS",
+          "проформа с этим номером уже загружена, используйте предложение замены",
+          { piNumber },
+        ),
       );
     }
 
@@ -193,7 +205,11 @@ export class ProformaInvoicesService {
     } catch (err) {
       if (isUniqueViolation(err)) {
         throw new ConflictException(
-          "проформа с этим номером уже загружена, используйте предложение замены",
+          apiError(
+            "PI_ALREADY_EXISTS",
+            "проформа с этим номером уже загружена, используйте предложение замены",
+            { piNumber },
+          ),
         );
       }
       throw err;
@@ -264,7 +280,10 @@ export class ProformaInvoicesService {
     const pi = await this.findOne(id);
     if (pi.pendingReplacementFileUrl) {
       throw new ConflictException(
-        "уже есть предложение замены, ожидающее решения клиента",
+        apiError(
+          "REPLACEMENT_ALREADY_PENDING",
+          "уже есть предложение замены, ожидающее решения клиента",
+        ),
       );
     }
     const fileUrl = await this.storeUploadedFile(file, actor.id);
@@ -296,7 +315,10 @@ export class ProformaInvoicesService {
     const pi = await this.findOwnedByActor(id, actor);
     if (!pi.pendingReplacementFileUrl) {
       throw new BadRequestException(
-        "нет активного предложения замены для этого PI",
+        apiError(
+          "NO_PENDING_REPLACEMENT",
+          "нет активного предложения замены для этого PI",
+        ),
       );
     }
     if (approved) {
@@ -351,12 +373,17 @@ export class ProformaInvoicesService {
     actor: RequestUser,
   ): Promise<ProformaInvoice> {
     if (actor.role !== Role.CLIENT) {
-      throw new ForbiddenException("Название может задавать только клиент");
+      throw new ForbiddenException(
+        apiError("CLIENT_ONLY_ACTION", "Название может задавать только клиент"),
+      );
     }
     const pi = await this.findOwnedByActor(id, actor);
     if (pi.signedFileUrl) {
       throw new BadRequestException(
-        "название можно менять только до подписания проформы",
+        apiError(
+          "PI_LABEL_LOCKED_AFTER_SIGNING",
+          "название можно менять только до подписания проформы",
+        ),
       );
     }
     const trimmed = label === null ? "" : label.trim();
@@ -383,7 +410,12 @@ export class ProformaInvoicesService {
     actor: RequestUser,
   ): Promise<ProformaInvoice> {
     if (actor.role !== Role.CLIENT) {
-      throw new ForbiddenException("Сброс приоритета доступен только клиенту");
+      throw new ForbiddenException(
+        apiError(
+          "CLIENT_ONLY_ACTION",
+          "Сброс приоритета доступен только клиенту",
+        ),
+      );
     }
     const pi = await this.findOwnedByActor(id, actor);
     await this.lineItemsRepo.update(

@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Role } from "../enums/role.enum";
+import { apiError } from "../errors/api-error";
 import { IS_PUBLIC_KEY } from "./public.decorator";
 import { ROLES_KEY } from "./roles.decorator";
 import { CLIENT_WRITE_ALLOWED_KEY } from "./client-write-allowed.decorator";
@@ -37,7 +38,7 @@ export class RolesGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user: RequestUser | undefined = request.user;
     if (!user) {
-      throw new UnauthorizedException();
+      throw new UnauthorizedException(apiError("UNAUTHORIZED", "Unauthorized"));
     }
     if (user.role === Role.OPS) {
       return true;
@@ -49,7 +50,10 @@ export class RolesGuard implements CanActivate {
     ]);
     if (allowedRoles && !allowedRoles.includes(Role.CLIENT)) {
       throw new ForbiddenException(
-        "This resource is only available to CEAT ops users",
+        apiError(
+          "OPS_ONLY_ACTION",
+          "This resource is only available to CEAT ops users",
+        ),
       );
     }
 
@@ -59,7 +63,9 @@ export class RolesGuard implements CanActivate {
         [context.getHandler()],
       );
       if (!writeAllowed) {
-        throw new ForbiddenException("Client users have read-only access");
+        throw new ForbiddenException(
+          apiError("CLIENT_READ_ONLY", "Client users have read-only access"),
+        );
       }
     }
 

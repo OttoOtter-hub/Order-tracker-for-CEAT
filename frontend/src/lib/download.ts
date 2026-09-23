@@ -1,26 +1,19 @@
-import { ApiError } from "@/api/client"
+import { ApiError, apiErrorFromBody } from "@/api/client"
 import i18n from "@/i18n"
 import { resolveFileUrl } from "@/lib/fileUrl"
 import { getStoredToken } from "@/auth/storage"
 
-// A failed download carries the server's own explanation in its JSON body
-// (e.g. "customerId обязателен"); surface it instead of a generic message.
+// A failed download carries the server's own explanation (code + message) in
+// its JSON body; parse it the same way as any other API error, so
+// getErrorMessage can translate it.
 async function downloadError(response: Response): Promise<ApiError> {
-  let message = i18n.t("common.downloadFailed")
+  let body: unknown
   try {
-    const body = (await response.json()) as { message?: unknown }
-    if (typeof body.message === "string") {
-      message = body.message
-    } else if (
-      Array.isArray(body.message) &&
-      body.message.every((m) => typeof m === "string")
-    ) {
-      message = body.message.join("; ")
-    }
+    body = await response.json()
   } catch {
-    // not JSON — keep the generic text
+    // not JSON — the generic text below
   }
-  return new ApiError(message, response.status)
+  return apiErrorFromBody(body, response.status, i18n.t("common.downloadFailed"))
 }
 
 // GET /files/:id/download requires Authorization: Bearer <token> — a plain

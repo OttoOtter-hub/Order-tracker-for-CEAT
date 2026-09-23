@@ -1,5 +1,6 @@
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
+import { validationExceptionFactory } from "../../common/errors/api-exception.filter";
 import { PI_LABEL_MAX_LENGTH, UpdateLabelDto } from "./update-label.dto";
 
 async function run(body: unknown) {
@@ -37,6 +38,12 @@ describe("UpdateLabelDto", () => {
     expect(Object.values(errors[0].constraints ?? {})).toContain(
       "название — не более 30 символов",
     );
+    // What validationExceptionFactory turns into the API error code.
+    expect(validationExceptionFactory(errors).getResponse()).toEqual({
+      code: "PI_LABEL_TOO_LONG",
+      message: "название — не более 30 символов",
+      params: { max: PI_LABEL_MAX_LENGTH },
+    });
   });
 
   it("does not count the spaces around the text against the limit", async () => {

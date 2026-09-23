@@ -17,6 +17,7 @@ import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorato
 import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { MAX_FILE_SIZE_BYTES } from "../common/constants/file-upload";
+import { apiError } from "../common/errors/api-error";
 import { MarkingFilesService } from "./marking-files.service";
 import { ReadyToShipService } from "./ready-to-ship.service";
 
@@ -66,7 +67,9 @@ export class ContainerAllocationsController {
     @CurrentUser() user: RequestUser,
   ) {
     if (!file) {
-      throw new BadRequestException("file is required");
+      throw new BadRequestException(
+        apiError("FILE_REQUIRED", "file is required"),
+      );
     }
     return this.markingFiles.upload(id, file, user);
   }

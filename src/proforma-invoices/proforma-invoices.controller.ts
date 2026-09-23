@@ -17,6 +17,7 @@ import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorato
 import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { MAX_FILE_SIZE_BYTES } from "../common/constants/file-upload";
+import { apiError } from "../common/errors/api-error";
 import { ProformaInvoicesService } from "./proforma-invoices.service";
 import { AddAdditionalFileDto } from "./dto/add-additional-file.dto";
 import { ReplacementDecisionDto } from "./dto/replacement-decision.dto";
@@ -34,7 +35,9 @@ function requireFile(
   file: Express.Multer.File | undefined,
 ): Express.Multer.File {
   if (!file) {
-    throw new BadRequestException("file is required");
+    throw new BadRequestException(
+      apiError("FILE_REQUIRED", "file is required"),
+    );
   }
   return file;
 }
