@@ -116,6 +116,11 @@
       "notUploadedByCeat": "Проформа ещё не загружена CEAT.",
       "signed": "Подписанный файл",
       "uploadSigned": "Загрузить подписанный файл",
+      "replaceSigned": "Заменить подписанный файл",
+      "replaceSignedTitle": "Замена подписанного файла",
+      "replaceSignedHint": "Текущий подписанный файл останется доступен в истории файлов.",
+      "replaceSignedSubmit": "Заменить",
+      "signedReplaced": "Подписанный файл заменён",
       "notSignedYet": "Клиент ещё не загрузил подписанный файл.",
       "additional": "Доп. файлы",
       "noAdditional": "Нет доп. файлов."

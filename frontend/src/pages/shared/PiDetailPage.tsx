@@ -14,6 +14,7 @@ import { Separator } from "@/components/ui/separator"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -126,6 +127,7 @@ export function PiDetailPage() {
   const { data: pi, isLoading } = usePiDetailQuery(id)
 
   const [proposeOpen, setProposeOpen] = useState(false)
+  const [replaceSignedOpen, setReplaceSignedOpen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isPriorityMode, setIsPriorityMode] = useState(false)
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, number>>({})
@@ -447,6 +449,43 @@ export function PiDetailPage() {
                   {pi.signedFileUploadedBy &&
                     ` · ${pi.signedFileUploadedBy.email}`}
                 </span>
+                {/* The client's own action, no CEAT approval (same upload-signed
+                    as before signing); the backend moves the previous signed
+                    file into the file history first (Phase 19). */}
+                {!isOps && (
+                  <Dialog open={replaceSignedOpen} onOpenChange={setReplaceSignedOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        {t("piDetail.files.replaceSigned")}
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>{t("piDetail.files.replaceSignedTitle")}</DialogTitle>
+                        <DialogDescription>
+                          {t("piDetail.files.replaceSignedHint")}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <FileUploadForm
+                        accept=".pdf,application/pdf"
+                        submitLabel={t("piDetail.files.replaceSignedSubmit")}
+                        isSubmitting={uploadSigned.isPending}
+                        onSubmit={(file) =>
+                          uploadSigned.mutate(file, {
+                            onSuccess: () => {
+                              setReplaceSignedOpen(false)
+                              toast.success(t("piDetail.files.signedReplaced"))
+                            },
+                            onError: (error) =>
+                              toast.error(
+                                getErrorMessage(error, t("common.uploadFailed"))
+                              ),
+                          })
+                        }
+                      />
+                    </DialogContent>
+                  </Dialog>
+                )}
               </div>
             ) : !isOps ? (
               <FileUploadForm

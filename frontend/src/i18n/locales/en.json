@@ -116,6 +116,11 @@
       "notUploadedByCeat": "The proforma has not been uploaded by CEAT yet.",
       "signed": "Signed file",
       "uploadSigned": "Upload signed file",
+      "replaceSigned": "Replace signed file",
+      "replaceSignedTitle": "Replace the signed file",
+      "replaceSignedHint": "The current signed file will stay available in the file history.",
+      "replaceSignedSubmit": "Replace",
+      "signedReplaced": "Signed file replaced",
       "notSignedYet": "The client has not uploaded the signed file yet.",
       "additional": "Additional files",
       "noAdditional": "No additional files."
