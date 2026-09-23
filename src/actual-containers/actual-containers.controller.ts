@@ -85,6 +85,15 @@ export class ActualContainersController {
   }
 
   @Roles(Role.OPS)
+  @Post(":id/revoke-arrival-confirmation")
+  revokeArrivalConfirmation(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.revokeArrivalConfirmation(id, user);
+  }
+
+  @Roles(Role.OPS)
   @ApiConsumes("multipart/form-data")
   @ApiBody({
     schema: {

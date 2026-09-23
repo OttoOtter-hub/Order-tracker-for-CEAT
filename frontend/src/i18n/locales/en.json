@@ -329,7 +329,12 @@
       "confirmedTooltip": "Confirmed by {{email}} · {{date}}",
       "confirm": "Confirm arrival",
       "confirmed": "Arrival confirmed",
-      "confirmFailed": "Could not confirm arrival"
+      "confirmFailed": "Could not confirm arrival",
+      "revoke": "Revoke arrival confirmation",
+      "revokeTitle": "Revoke the arrival confirmation of {{container}}?",
+      "revokeDescription": "Use this if the client confirmed arrival by mistake. The marker goes back to “Arrival expected” — unless 7 or more days have already passed since the ETA, in which case it stays “Arrived (default)” by the automatic rule.",
+      "revoked": "Arrival confirmation revoked",
+      "revokeFailed": "Could not revoke the arrival confirmation"
     },
     "overrideHint": "Date changed manually (in the file: {{date}})",
     "overrideHintNoSource": "Date changed manually (no date in the file)",

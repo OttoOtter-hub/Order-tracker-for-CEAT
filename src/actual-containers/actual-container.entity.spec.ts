@@ -66,6 +66,36 @@ describe("ActualContainer.arrivalStatus", () => {
     expect(noEtaAtAll.arrivalStatus).toBe("arrived");
   });
 
+  describe("after a revoked manual confirmation (Phase 17)", () => {
+    // What revokeArrivalConfirmation leaves behind: both fields back to null.
+    function revoked(sourceEta: string): ActualContainer {
+      const container = makeContainer({
+        sourceEta,
+        arrivalConfirmedAt: new Date(),
+        arrivalConfirmedByUser: { email: "client@x.com" } as any,
+      });
+      expect(container.arrivalStatus).toBe("arrived");
+      container.arrivalConfirmedAt = null;
+      container.arrivalConfirmedByUser = null;
+      return container;
+    }
+
+    it("goes back to expected while the 7-day mark hasn't passed", () => {
+      expect(revoked(isoDate(3)).arrivalStatus).toBe("expected");
+      expect(revoked(isoDate(-6)).arrivalStatus).toBe("expected");
+    });
+
+    it("stays arrived (automatic, no confirmer) once 7+ days have passed", () => {
+      const container = revoked(isoDate(-7));
+      expect(container.arrivalStatus).toBe("arrived");
+      expect(container.arrivalConfirmedBy).toBeNull();
+    });
+
+    it("drops back to no marker at all when the ETA is still far off", () => {
+      expect(revoked(isoDate(30)).arrivalStatus).toBeNull();
+    });
+  });
+
   it("the override ETA is the effective one, not the file's", () => {
     const container = makeContainer({
       sourceEta: isoDate(20), // would be null (too far out) on its own

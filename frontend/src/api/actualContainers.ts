@@ -150,6 +150,20 @@ export function useConfirmArrivalMutation(id: string) {
   })
 }
 
+// POST /actual-containers/:id/revoke-arrival-confirmation — ops-only undo of
+// a mistaken manual confirmation. arrivalStatus then recomputes from the
+// date: "expected" again before the 7-day mark, still "arrived" after it.
+export function useRevokeArrivalConfirmationMutation(id: string) {
+  const writeCache = useContainerCacheWriter(id)
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<ActualContainer>(
+        `/actual-containers/${id}/revoke-arrival-confirmation`
+      ),
+    onSuccess: writeCache,
+  })
+}
+
 export function useAddContainerFileMutation(id: string) {
   const queryClient = useQueryClient()
   return useMutation({

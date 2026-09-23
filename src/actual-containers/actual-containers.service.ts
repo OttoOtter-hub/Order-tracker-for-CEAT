@@ -157,6 +157,34 @@ export class ActualContainersService {
     return this.findOne(id, actor);
   }
 
+  /**
+   * Ops-only undo of a client's mistaken confirm-arrival. arrival_confirmed_at
+   * is only ever written by confirmArrival — the automatic "arrived 7+ days
+   * after ETA" is computed, never stored — so "is it set" is exactly "was
+   * there a manual confirmation". An auto-arrived container therefore 400s
+   * here like any unconfirmed one: there is nothing stored to clear. After a
+   * revoke, arrivalStatus simply recomputes from the date — back to
+   * "expected" before the 7-day mark, still "arrived" (automatic) past it.
+   */
+  async revokeArrivalConfirmation(
+    id: string,
+    actor: RequestUser,
+  ): Promise<ActualContainer> {
+    if (actor.role !== Role.OPS) {
+      throw new ForbiddenException(
+        "Отменить подтверждение прибытия может только CEAT",
+      );
+    }
+    const container = await this.findOne(id, actor);
+    if (!container.arrivalConfirmedAt) {
+      throw new BadRequestException("прибытие не было подтверждено");
+    }
+    container.arrivalConfirmedAt = null;
+    container.arrivalConfirmedByUser = null;
+    await this.containerRepo.save(container);
+    return this.findOne(id, actor);
+  }
+
   async addFile(
     id: string,
     file: Express.Multer.File,

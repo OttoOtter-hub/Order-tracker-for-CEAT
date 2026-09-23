@@ -368,6 +368,58 @@ describe("ActualContainersService", () => {
     });
   });
 
+  describe("revokeArrivalConfirmation", () => {
+    it("clears a manual confirmation back to null (both fields)", async () => {
+      const { service, containerRepo } = setup();
+      await service.confirmArrival("ct-1", client);
+
+      const result = await service.revokeArrivalConfirmation("ct-1", ops);
+
+      expect(result.arrivalConfirmedAt).toBeNull();
+      expect(result.arrivalConfirmedByUser).toBeNull();
+      expect(containerRepo.rows[0].arrivalConfirmedAt).toBeNull();
+      expect(containerRepo.rows[0].arrivalConfirmedByUser).toBeNull();
+    });
+
+    it("400s when there is no manual confirmation to revoke", async () => {
+      const { service } = setup();
+
+      await expect(
+        service.revokeArrivalConfirmation("ct-1", ops),
+      ).rejects.toThrow(
+        new BadRequestException("прибытие не было подтверждено"),
+      );
+    });
+
+    it("400s a second revoke", async () => {
+      const { service } = setup();
+      await service.confirmArrival("ct-1", client);
+      await service.revokeArrivalConfirmation("ct-1", ops);
+
+      await expect(
+        service.revokeArrivalConfirmation("ct-1", ops),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("403s a client, leaving the confirmation in place", async () => {
+      const { service, containerRepo } = setup();
+      await service.confirmArrival("ct-1", client);
+
+      await expect(
+        service.revokeArrivalConfirmation("ct-1", client),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(containerRepo.rows[0].arrivalConfirmedAt).toBeInstanceOf(Date);
+    });
+
+    it("404s an unknown container", async () => {
+      const { service } = setup();
+
+      await expect(
+        service.revokeArrivalConfirmation("missing", ops),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe("files", () => {
     const upload = {
       originalname: "packing list.pdf",

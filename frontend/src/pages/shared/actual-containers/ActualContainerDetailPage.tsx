@@ -172,7 +172,11 @@ export function ActualContainerDetailPage() {
           )}
           {container.arrivalStatus && (
             <Field label={t("shipped.detail.arrival")}>
-              <ArrivalMarker container={container} canConfirm={!isOps} />
+              <ArrivalMarker
+                container={container}
+                canConfirm={!isOps}
+                canRevoke={isOps}
+              />
             </Field>
           )}
         </CardContent>
