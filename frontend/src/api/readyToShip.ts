@@ -35,6 +35,10 @@ export interface ContainerAllocation {
   materialDesc: string | null
   loadability: number | null
   allocatedQty: number
+  // Phase 16: locked/unlocked lives per position now, not on the whole
+  // container — a client-editable line inside an otherwise-confirmed
+  // container is exactly one with isLocked: false.
+  isLocked: boolean
   fillContribution: number
   markingFile: MarkingFileRef | null
 }
@@ -42,7 +46,11 @@ export interface ContainerAllocation {
 export interface ShippingContainer {
   id: string
   label: string
+  // Derived (see backend ReadyToShipService.loadView): true only once every
+  // position on this container is locked.
   isConfirmed: boolean
+  // Derived: a mix — some positions locked, at least one not.
+  isPartiallyUnlocked: boolean
   confirmedAt: string | null
   confirmedById: string | null
   fillPercent: number
@@ -143,6 +151,20 @@ export function useUnlockContainerMutation() {
     mutationFn: (containerId: string) =>
       apiClient.post<{ id: string; label: string }>(
         `/containers/${containerId}/unlock`
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [READY_TO_SHIP_KEY] }),
+  })
+}
+
+// Phase 16: the finer-grained sibling — frees one position without touching
+// the rest of its container.
+export function useUnlockAllocationMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (allocationId: string) =>
+      apiClient.post<{ id: string; containerLabel: string }>(
+        `/container-allocations/${allocationId}/unlock`
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: [READY_TO_SHIP_KEY] }),

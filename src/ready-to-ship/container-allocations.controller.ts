@@ -18,6 +18,7 @@ import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { MAX_FILE_SIZE_BYTES } from "../common/constants/file-upload";
 import { MarkingFilesService } from "./marking-files.service";
+import { ReadyToShipService } from "./ready-to-ship.service";
 
 /**
  * Not @ScopeByCustomer'd — responses here are a small ack object or a file
@@ -28,7 +29,24 @@ import { MarkingFilesService } from "./marking-files.service";
 @ApiTags("ready-to-ship")
 @Controller("container-allocations")
 export class ContainerAllocationsController {
-  constructor(private readonly markingFiles: MarkingFilesService) {}
+  constructor(
+    private readonly markingFiles: MarkingFilesService,
+    private readonly readyToShip: ReadyToShipService,
+  ) {}
+
+  /**
+   * Ops-only (default RolesGuard behaviour for a non-GET handler with no
+   * @ClientWriteAllowed) — Phase 16's finer-grained sibling of
+   * POST /containers/:id/unlock, freeing one position without touching the
+   * rest of its container.
+   */
+  @Post(":id/unlock")
+  unlockAllocation(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.readyToShip.unlockAllocation(id, user);
+  }
 
   @ClientWriteAllowed()
   @ApiConsumes("multipart/form-data")

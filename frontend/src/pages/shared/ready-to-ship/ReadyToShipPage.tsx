@@ -18,6 +18,7 @@ import { useCustomersQuery } from "@/api/customers"
 import {
   exportReadyToShipXlsx,
   useReadyToShipQuery,
+  useUnlockAllocationMutation,
   useUnlockContainerMutation,
   type ShippingContainer,
   type UnallocatedLine,
@@ -26,6 +27,7 @@ import { ActionsBar } from "@/pages/shared/ready-to-ship/ActionsBar"
 import {
   ContainerCard,
   type ReadyToShipMode,
+  type UnlockAllocationTarget,
 } from "@/pages/shared/ready-to-ship/ContainerCard"
 import { MoveDialog } from "@/pages/shared/ready-to-ship/MoveDialog"
 import {
@@ -103,10 +105,13 @@ function ReadyToShipContent({
   const isClient = mode === "client"
   const query = useReadyToShipQuery(customerId)
   const unlock = useUnlockContainerMutation()
+  const unlockAllocation = useUnlockAllocationMutation()
 
   const [moveLine, setMoveLine] = useState<UnallocatedLine | null>(null)
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
   const [unlockTarget, setUnlockTarget] = useState<ShippingContainer | null>(null)
+  const [unlockAllocationTarget, setUnlockAllocationTarget] =
+    useState<UnlockAllocationTarget | null>(null)
   const [lastContainerId, setLastContainerId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
 
@@ -262,6 +267,7 @@ function ReadyToShipContent({
               mode={mode}
               onRemove={setRemoveTarget}
               onUnlock={setUnlockTarget}
+              onUnlockAllocation={setUnlockAllocationTarget}
             />
           ))}
 
@@ -331,6 +337,44 @@ function ReadyToShipContent({
                   getErrorMessage(error, t("readyToShip.unlock.failed"))
                 )
                 setUnlockTarget(null)
+              },
+            })
+          }}
+        />
+      )}
+
+      {!isClient && (
+        <ConfirmDialog
+          open={unlockAllocationTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setUnlockAllocationTarget(null)
+          }}
+          title={t("readyToShip.unlockLine.title", {
+            material: unlockAllocationTarget?.allocation.materialNum ?? "—",
+            container: unlockAllocationTarget
+              ? containerName(unlockAllocationTarget.containerLabel)
+              : "",
+          })}
+          description={t("readyToShip.unlockLine.description")}
+          confirmLabel={t("readyToShip.unlockLine.confirm")}
+          destructive
+          isPending={unlockAllocation.isPending}
+          onConfirm={() => {
+            if (!unlockAllocationTarget) return
+            unlockAllocation.mutate(unlockAllocationTarget.allocation.id, {
+              onSuccess: () => {
+                toast.success(
+                  t("readyToShip.unlockLine.done", {
+                    material: unlockAllocationTarget.allocation.materialNum ?? "—",
+                  })
+                )
+                setUnlockAllocationTarget(null)
+              },
+              onError: (error) => {
+                toast.error(
+                  getErrorMessage(error, t("readyToShip.unlockLine.failed"))
+                )
+                setUnlockAllocationTarget(null)
               },
             })
           }}

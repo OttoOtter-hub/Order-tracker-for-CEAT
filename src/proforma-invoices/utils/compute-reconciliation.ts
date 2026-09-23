@@ -6,7 +6,7 @@ import { PiLineItem } from "../../pi-line-items/pi-line-item.entity";
 export interface ReconciliationRow {
   materialNum: string;
   materialDesc: string | null;
-  /** Σ allocatedQty over this material's allocations sitting in a *confirmed* container. */
+  /** Σ allocatedQty over this material's *locked* allocations (Phase 16: per-position, not per-container). */
   plannedQty: number;
   /** Σ quantity over this PI's ActualContainerLineItem rows for this material. */
   shippedQty: number;
@@ -24,10 +24,11 @@ function round2(value: number): number {
  * same material can appear on several SO rows of the same PI and those belong
  * together for this comparison.
  *
- * - plannedQty only counts allocations sitting in a *confirmed* container
- *   (`allocation.container.isConfirmed`) — a draft is not a plan yet, so this
- *   function itself does that filtering (not the caller), which is what makes
- *   the rule unit-testable without a database.
+ * - plannedQty only counts *locked* allocations (`allocation.isLocked` —
+ *   Phase 16 moved locking from the whole container down to each position) —
+ *   an unlocked one is not a plan yet, so this function itself does that
+ *   filtering (not the caller), which is what makes the rule unit-testable
+ *   without a database.
  * - shippedQty is matched the same way PI.shippedQty already is (by piNumber,
  *   see ActualContainersImportService.recomputeShippedQty), just split by
  *   material instead of summed once — `actualLines` should already be
@@ -63,7 +64,7 @@ export function computeReconciliation(
 
   const plannedByMaterial = new Map<string, number>();
   for (const allocation of allocations) {
-    if (!allocation.container?.isConfirmed || !allocation.piLineItem) {
+    if (!allocation.isLocked || !allocation.piLineItem) {
       continue;
     }
     const material = materialByLineItemId.get(allocation.piLineItem.id);

@@ -353,13 +353,13 @@ describe("ProformaInvoicesService", () => {
       allocationsRepo.seed({
         id: "a-1",
         piLineItem: li1,
-        container: { id: "c-1", isConfirmed: true },
+        isLocked: true,
         allocatedQty: "10",
       });
       allocationsRepo.seed({
         id: "a-2",
         piLineItem: li2,
-        container: { id: "c-2", isConfirmed: false }, // draft — must not count
+        isLocked: false, // unlocked — must not count
         allocatedQty: "999",
       });
       actualLineItemsRepo.seed({

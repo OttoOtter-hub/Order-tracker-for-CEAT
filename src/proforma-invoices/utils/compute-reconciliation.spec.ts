@@ -1,6 +1,5 @@
 import { ActualContainerLineItem } from "../../actual-containers/actual-container-line-item.entity";
 import { ContainerLineAllocation } from "../../ready-to-ship/container-line-allocation.entity";
-import { ShippingContainer } from "../../ready-to-ship/shipping-container.entity";
 import { PiLineItem } from "../../pi-line-items/pi-line-item.entity";
 import { computeReconciliation } from "./compute-reconciliation";
 
@@ -13,19 +12,15 @@ function lineItem(overrides: Partial<PiLineItem>): PiLineItem {
   });
 }
 
-function container(isConfirmed: boolean): ShippingContainer {
-  return Object.assign(new ShippingContainer(), { isConfirmed });
-}
-
 function allocation(
   piLineItem: PiLineItem,
   allocatedQty: string,
-  isConfirmed: boolean,
+  isLocked: boolean,
 ): ContainerLineAllocation {
   return Object.assign(new ContainerLineAllocation(), {
     piLineItem,
-    container: container(isConfirmed),
     allocatedQty,
+    isLocked,
   });
 }
 
@@ -90,14 +85,14 @@ describe("computeReconciliation", () => {
     });
   });
 
-  it("only counts allocations sitting in a confirmed container — drafts are ignored", () => {
+  it("only counts locked allocations — unlocked ones are ignored", () => {
     const item = lineItem({ id: "li-1", materialNum: "M1" });
 
     const rows = computeReconciliation(
       [item],
       [
-        allocation(item, "10", true), // confirmed -> counts
-        allocation(item, "999", false), // draft -> must not count
+        allocation(item, "10", true), // locked -> counts
+        allocation(item, "999", false), // unlocked -> must not count
       ],
       [],
     );

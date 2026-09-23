@@ -13,7 +13,6 @@ describe("AllocationRelinkService", () => {
       id: "c-1",
       customer: { id: "cust-1" },
       label: "Контейнер 1",
-      isConfirmed: true,
     } as any);
   });
 

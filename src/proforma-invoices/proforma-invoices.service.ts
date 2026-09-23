@@ -95,7 +95,7 @@ export class ProformaInvoicesService {
       lineItemIds.length
         ? this.allocationsRepo.find({
             where: { piLineItem: { id: In(lineItemIds) } },
-            relations: ["piLineItem", "container"],
+            relations: ["piLineItem"],
           })
         : Promise.resolve([]),
       this.actualLineItemsRepo.find({

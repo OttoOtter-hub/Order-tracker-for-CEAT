@@ -24,6 +24,8 @@ export interface AllocationView {
   materialDesc: string | null;
   loadability: number | null;
   allocatedQty: number;
+  /** Phase 16: locked/unlocked lives per position now, not on the whole container. */
+  isLocked: boolean;
   fillContribution: number;
   markingFile: { id: string; uploadedAt: Date } | null;
 }
@@ -31,7 +33,10 @@ export interface AllocationView {
 export interface ContainerView {
   id: string;
   label: string;
+  /** Derived: at least one position, and every one of them locked. */
   isConfirmed: boolean;
+  /** Derived: a mix — some positions locked, at least one not. */
+  isPartiallyUnlocked: boolean;
   confirmedAt: Date | null;
   confirmedById: string | null;
   fillPercent: number;
@@ -61,4 +66,13 @@ export interface UnlockedContainerView {
   label: string;
   customerId: string;
   isConfirmed: boolean;
+}
+
+/** Response of the Phase 16 single-position unlock (POST /container-allocations/:id/unlock). */
+export interface UnlockedAllocationView {
+  id: string;
+  containerId: string;
+  containerLabel: string;
+  customerId: string;
+  isLocked: boolean;
 }

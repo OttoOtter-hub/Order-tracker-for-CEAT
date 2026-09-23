@@ -54,7 +54,10 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
 
   const hasFile = allocation.markingFile !== null
   const isClient = mode === "client"
-  const canUpload = isClient && container.isConfirmed
+  // Phase 16: locked is a per-position thing now — a line can be uploadable
+  // even while the rest of its container is still confirmed, or not,
+  // depending on which one line ops reopened.
+  const canUpload = isClient && allocation.isLocked
 
   function handleFile(file: File | undefined) {
     if (!file) return
@@ -83,7 +86,7 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
           variant="outline"
           className={GREEN_BADGE}
           title={
-            container.isConfirmed
+            allocation.isLocked
               ? undefined
               : t("readyToShip.marking.validUntilChanged")
           }
@@ -180,11 +183,17 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
   )
 }
 
+export interface UnlockAllocationTarget {
+  allocation: ContainerAllocation
+  containerLabel: string
+}
+
 interface ContainerCardProps {
   container: ShippingContainer
   mode: ReadyToShipMode
   onRemove: (target: RemoveTarget) => void
   onUnlock: (container: ShippingContainer) => void
+  onUnlockAllocation: (target: UnlockAllocationTarget) => void
 }
 
 export function ContainerCard({
@@ -192,19 +201,26 @@ export function ContainerCard({
   mode,
   onRemove,
   onUnlock,
+  onUnlockAllocation,
 }: ContainerCardProps) {
   const { t } = useTranslation()
   const containerName = useContainerName()
   const level = fillLevel(container.fillPercent)
   const isClient = mode === "client"
+  const isOps = mode === "ops"
   const showCounter =
     container.markingFilesTotal > 0 &&
     (container.isConfirmed || container.markingFilesUploaded > 0)
+  // The blunt whole-container unlock only makes sense while at least one
+  // position is still locked — offer it for "fully confirmed" and
+  // "partially unlocked" alike, next to the finer-grained per-line one below.
+  const hasAnyLockedPosition = container.isConfirmed || container.isPartiallyUnlocked
 
   return (
     <Card
       data-container-label={container.label}
       data-confirmed={container.isConfirmed}
+      data-partially-unlocked={container.isPartiallyUnlocked}
       className={cn("gap-3", FILL_CARD[level])}
     >
       <CardHeader className="gap-2">
@@ -218,6 +234,10 @@ export function ContainerCard({
                 <Badge variant="outline" className={GREEN_BADGE}>
                   {t("readyToShip.card.confirmed")}
                 </Badge>
+              ) : container.isPartiallyUnlocked ? (
+                <Badge variant="outline" className={AMBER_BADGE}>
+                  {t("readyToShip.card.partiallyUnlocked")}
+                </Badge>
               ) : (
                 <Badge variant="secondary">{t("readyToShip.card.draft")}</Badge>
               )}
@@ -229,7 +249,7 @@ export function ContainerCard({
           <FillMeter percent={container.fillPercent} large className="w-44 shrink-0" />
         </div>
 
-        {(showCounter || (mode === "ops" && container.isConfirmed)) && (
+        {(showCounter || (isOps && hasAnyLockedPosition)) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             {showCounter ? (
               <span
@@ -244,7 +264,7 @@ export function ContainerCard({
             ) : (
               <span />
             )}
-            {mode === "ops" && container.isConfirmed && (
+            {isOps && hasAnyLockedPosition && (
               <Button
                 type="button"
                 size="sm"
@@ -267,12 +287,13 @@ export function ContainerCard({
       <CardContent>
         <ul className="divide-y">
           {container.allocations.map((allocation) => {
-            const showMarking = container.isConfirmed || allocation.markingFile !== null
+            const showMarking = allocation.isLocked || allocation.markingFile !== null
             return (
               <li
                 key={allocation.id}
                 className="grid gap-2 py-2 first:pt-0 last:pb-0"
                 data-allocation-id={allocation.id}
+                data-locked={allocation.isLocked}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -301,7 +322,7 @@ export function ContainerCard({
                     >
                       {formatPercent(allocation.fillContribution * 100)}
                     </div>
-                    {isClient && !container.isConfirmed && (
+                    {isClient && !allocation.isLocked && (
                       <Button
                         type="button"
                         size="xs"
@@ -311,6 +332,21 @@ export function ContainerCard({
                         }
                       >
                         {t("readyToShip.card.remove")}
+                      </Button>
+                    )}
+                    {isOps && allocation.isLocked && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        onClick={() =>
+                          onUnlockAllocation({
+                            allocation,
+                            containerLabel: container.label,
+                          })
+                        }
+                      >
+                        <LockOpen /> {t("readyToShip.card.unlockLine")}
                       </Button>
                     )}
                   </div>

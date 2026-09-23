@@ -226,11 +226,13 @@
     },
     "card": {
       "confirmed": "Confirmed",
+      "partiallyUnlocked": "Partially unlocked",
       "draft": "Draft",
       "overfilled": "Overfilled",
       "markingCounter_one": "Marking: {{count}} of {{total}} files",
       "markingCounter_other": "Marking: {{count}} of {{total}} files",
       "unlock": "Unlock",
+      "unlockLine": "Unlock this line",
       "overfilledWarning": "Filled over 100% — the plan cannot be confirmed until the container is unloaded.",
       "pi": "PI {{title}}",
       "piSo": " · SO {{so}}",
@@ -291,6 +293,13 @@
       "description": "After unlocking, the client will be able to change the contents of this container; marking files on changed lines will be deleted.",
       "confirm": "Unlock",
       "done": "“{{label}}” unlocked",
+      "failed": "Could not unlock"
+    },
+    "unlockLine": {
+      "title": "Unlock {{material}} in “{{container}}”?",
+      "description": "After unlocking, the client will be able to change just this one line — the rest of the container stays confirmed. Its marking file will be deleted if the quantity changes.",
+      "confirm": "Unlock",
+      "done": "{{material}} unlocked",
       "failed": "Could not unlock"
     }
   },

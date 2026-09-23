@@ -27,7 +27,7 @@ export class MarkingFilesService {
     private readonly filesService: FilesService,
   ) {}
 
-  /** Replaces any existing file for the allocation. Only for confirmed containers. */
+  /** Replaces any existing file for the allocation. Only once that position is locked. */
   async upload(
     allocationId: string,
     file: Express.Multer.File,
@@ -35,9 +35,9 @@ export class MarkingFilesService {
   ): Promise<{ id: string; allocationId: string; uploadedAt: Date }> {
     this.requireClient(actor);
     const allocation = await this.findAllocationForActor(allocationId, actor);
-    if (!allocation.container.isConfirmed) {
+    if (!allocation.isLocked) {
       throw new BadRequestException(
-        "маркировку можно загружать только для подтверждённого контейнера",
+        "маркировку можно загружать только для подтверждённой позиции",
       );
     }
 

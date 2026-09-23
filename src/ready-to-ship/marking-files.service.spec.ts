@@ -25,25 +25,25 @@ describe("MarkingFilesService", () => {
       id: "c-confirmed",
       customer: { id: "cust-1" },
       label: "Контейнер 1",
-      isConfirmed: true,
     } as any);
     h.containers.seed({
       id: "c-draft",
       customer: { id: "cust-1" },
       label: "Контейнер 2",
-      isConfirmed: false,
     } as any);
     h.allocations.seed({
       id: "al-confirmed",
       container: { id: "c-confirmed" },
       piLineItem: { id: "li-A" },
       allocatedQty: "60",
+      isLocked: true,
     } as any);
     h.allocations.seed({
       id: "al-draft",
       container: { id: "c-draft" },
       piLineItem: { id: "li-A" },
       allocatedQty: "40",
+      isLocked: false,
     } as any);
   });
 
@@ -90,6 +90,7 @@ describe("MarkingFilesService", () => {
         container: { id: "c-confirmed" },
         piLineItem: { id: "li-A" },
         allocatedQty: "5",
+        isLocked: true,
       } as any);
 
       await h.markingService.upload("al-confirmed", pdf(), clientActor);
@@ -98,7 +99,7 @@ describe("MarkingFilesService", () => {
       expect(h.markings.rows).toHaveLength(2);
     });
 
-    it("refuses an allocation whose container is not confirmed", async () => {
+    it("refuses an allocation that isn't locked", async () => {
       await expect(
         h.markingService.upload("al-draft", pdf(), clientActor),
       ).rejects.toBeInstanceOf(BadRequestException);

@@ -777,7 +777,7 @@ describe("ReadyToShipService", () => {
         expect.objectContaining({ label: "Контейнер 1", fillPercent: 150 }),
       ]);
       expect(body.message).toContain("Контейнер 1 (150%)");
-      expect(h.containers.rows.every((c) => !c.isConfirmed)).toBe(true);
+      expect(h.allocations.rows.every((a) => !a.isLocked)).toBe(true);
     });
 
     it("counts exactly 100% as fine", async () => {
@@ -835,11 +835,15 @@ describe("ReadyToShipService", () => {
         customerId: "cust-1",
       });
       expect(h.containers.rows[0]).toMatchObject({
-        isConfirmed: false,
         confirmedAt: null,
         confirmedBy: null,
       });
-      expect(h.containers.rows[1].isConfirmed).toBe(true);
+      const allocationsOf = (index: number) =>
+        h.allocations.rows.filter(
+          (a: any) => a.container.id === containerId(index),
+        );
+      expect(allocationsOf(0).every((a: any) => !a.isLocked)).toBe(true);
+      expect(allocationsOf(1).every((a: any) => a.isLocked)).toBe(true);
     });
 
     it("does not touch existing marking files by itself", async () => {
@@ -857,7 +861,11 @@ describe("ReadyToShipService", () => {
       await expect(
         h.service.unlock(containerId(0), clientActor),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(h.containers.rows[0].isConfirmed).toBe(true);
+      expect(
+        h.allocations.rows
+          .filter((a: any) => a.container.id === containerId(0))
+          .every((a: any) => a.isLocked),
+      ).toBe(true);
     });
 
     it("404s an unknown container and 400s one that isn't confirmed", async () => {
@@ -885,6 +893,140 @@ describe("ReadyToShipService", () => {
         NotFoundException,
       );
       expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("unlockAllocation (Phase 16: one position, not the whole container)", () => {
+    beforeEach(async () => {
+      await h.service.getView(clientActor);
+      await move("li-A", 0, 50); // 50%
+      await move("li-B", 0, 50); // + 25% -> 75%, both land in Контейнер 1
+      await h.service.confirm(clientActor);
+    });
+
+    const allocationOf = (line: string) =>
+      h.allocations.rows.find((a: any) => a.piLineItem.id === line) as {
+        id: string;
+        isLocked: boolean;
+      };
+
+    it("unlocks only the named position, leaving its container's other positions locked", async () => {
+      const result = await h.service.unlockAllocation(
+        allocationOf("li-A").id,
+        opsActor,
+      );
+
+      expect(result).toMatchObject({
+        id: allocationOf("li-A").id,
+        containerId: containerId(0),
+        containerLabel: "Контейнер 1",
+        customerId: "cust-1",
+        isLocked: false,
+      });
+      expect(allocationOf("li-A").isLocked).toBe(false);
+      expect(allocationOf("li-B").isLocked).toBe(true);
+    });
+
+    it("the container reads as partially unlocked in the view, not fully confirmed", async () => {
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+
+      const view = await h.service.getView(clientActor);
+
+      expect(view.containers[0]).toMatchObject({
+        isConfirmed: false,
+        isPartiallyUnlocked: true,
+      });
+    });
+
+    it("move works on the unlocked position and 400s on the still-locked one", async () => {
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+
+      await expect(move("li-A", 0, 5)).resolves.toBeDefined();
+      expect(allocationOf("li-A").isLocked).toBe(false);
+
+      await expect(move("li-B", 0, 5)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("remove works on the unlocked position and 400s on the still-locked one", async () => {
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+
+      await expect(
+        h.service.remove(
+          { allocationId: allocationOf("li-A").id, qty: 10 },
+          clientActor,
+        ),
+      ).resolves.toBeDefined();
+
+      await expect(
+        h.service.remove(
+          { allocationId: allocationOf("li-B").id, qty: 10 },
+          clientActor,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("confirm returns the unlocked position to locked, together with any other draft", async () => {
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+      await move("li-A", 0, 5);
+
+      const view = await h.service.confirm(clientActor);
+
+      expect(allocationOf("li-A").isLocked).toBe(true);
+      expect(view.containers[0]).toMatchObject({
+        isConfirmed: true,
+        isPartiallyUnlocked: false,
+      });
+    });
+
+    it("changing the unlocked position's qty drops only its own marking file", async () => {
+      const pdf = () =>
+        ({ originalname: "m.pdf", buffer: Buffer.from("x"), size: 1 }) as any;
+      await h.markingService.upload(
+        allocationOf("li-A").id,
+        pdf(),
+        clientActor,
+      );
+      await h.markingService.upload(
+        allocationOf("li-B").id,
+        pdf(),
+        clientActor,
+      );
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+
+      await move("li-A", 0, 5);
+
+      expect(h.markings.rows.map((m: any) => m.allocation.id)).toEqual([
+        allocationOf("li-B").id,
+      ]);
+    });
+
+    it("404s an unknown allocation and 400s one that is already unlocked", async () => {
+      await expect(
+        h.service.unlockAllocation("nope", opsActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+      await expect(
+        h.service.unlockAllocation(allocationOf("li-A").id, opsActor),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("is ops-only", async () => {
+      await expect(
+        h.service.unlockAllocation(allocationOf("li-A").id, clientActor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(allocationOf("li-A").isLocked).toBe(true);
+    });
+
+    it("emits container.reopened-for-client, same as the whole-container unlock", async () => {
+      await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
+
+      expect(h.eventEmitter.emit).toHaveBeenCalledWith(
+        "container.reopened-for-client",
+        { label: "Контейнер 1", customerId: "cust-1" },
+      );
     });
   });
 });

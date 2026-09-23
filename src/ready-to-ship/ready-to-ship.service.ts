@@ -23,6 +23,7 @@ import {
   ContainerView,
   ReadyToShipView,
   UnallocatedLineView,
+  UnlockedAllocationView,
   UnlockedContainerView,
 } from "./ready-to-ship.types";
 import { buildReadyToShipExportWorkbook } from "./utils/build-ready-to-ship-export-workbook";
@@ -134,11 +135,6 @@ export class ReadyToShipService {
         dto.containerId,
         customerId,
       );
-      if (container.isConfirmed) {
-        throw new BadRequestException(
-          "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
-        );
-      }
       if (line.pi.isArchivedShipped) {
         throw new BadRequestException(
           "строка не входит в список готового к отгрузке",
@@ -180,17 +176,40 @@ export class ReadyToShipService {
         (a) => a.container.id === container.id,
       );
       if (existing) {
+        // This exact position may be locked even while the rest of the
+        // container isn't (Phase 16: partial unlock) — check the position
+        // itself, not the container as a whole.
+        if (existing.isLocked) {
+          throw new BadRequestException(
+            "позиция заблокирована — состав можно менять только после разблокировки CEAT",
+          );
+        }
         await this.setAllocatedQty(
           em,
           existing,
           (toNumberOrNull(existing.allocatedQty) ?? 0) + dto.qty,
         );
       } else {
+        // No position here yet for this line: blocked only if the container
+        // is fully locked (every position on it confirmed) — a partially
+        // unlocked or still-empty container accepts a brand new one.
+        const containerAllocations = await allocationRepo.find({
+          where: { container: { id: container.id } },
+        });
+        const isContainerFullyLocked =
+          containerAllocations.length > 0 &&
+          containerAllocations.every((a) => a.isLocked);
+        if (isContainerFullyLocked) {
+          throw new BadRequestException(
+            "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+          );
+        }
         await allocationRepo.save(
           allocationRepo.create({
             container: { id: container.id } as ShippingContainer,
             piLineItem: { id: line.id } as PiLineItem,
             allocatedQty: String(dto.qty),
+            isLocked: false,
           }),
         );
       }
@@ -239,9 +258,9 @@ export class ReadyToShipService {
           `ContainerLineAllocation ${dto.allocationId} not found`,
         );
       }
-      if (found.container.isConfirmed) {
+      if (found.isLocked) {
         throw new BadRequestException(
-          "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+          "позиция заблокирована — состав можно менять только после разблокировки CEAT",
         );
       }
 
@@ -275,20 +294,31 @@ export class ReadyToShipService {
     return this.loadView(customerId);
   }
 
-  /** Rolls back the newest move among this client's not-confirmed containers. */
+  /** Rolls back the newest move among this client's currently-unlocked positions. */
   async undoLast(actor: RequestUser): Promise<ReadyToShipView> {
     const customerId = this.requireClient(actor);
 
     await this.dataSource.transaction(async (em) => {
-      const draftIds = await this.findDraftContainerIds(em, customerId);
-      const [last] = draftIds.length
+      const containers = await em
+        .getRepository(ShippingContainer)
+        .find({ where: { customer: { id: customerId } } });
+      const containerIds = containers.map((c) => c.id);
+      const lockedKeys = await this.findLockedAllocationKeys(em, customerId);
+      const candidates = containerIds.length
         ? await em.getRepository(AllocationAction).find({
-            where: { container: { id: In(draftIds) } },
+            where: { container: { id: In(containerIds) } },
             relations: ["container", "piLineItem"],
             order: { createdAt: "DESC" },
-            take: 1,
           })
         : [];
+      // A container can now be a mix of locked and unlocked positions —
+      // only an action whose own position isn't locked is undoable. This
+      // also covers a position that was moved in and then fully removed
+      // again (no allocation row left at all): it's simply absent from
+      // lockedKeys, same as one that's still there and unlocked.
+      const last = candidates.find(
+        (a) => !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
+      );
       if (!last) {
         throw new NotFoundException("нет действий для отмены");
       }
@@ -316,12 +346,15 @@ export class ReadyToShipService {
   }
 
   /**
-   * Rolls back every move on this client's not-confirmed containers
-   * (drafts and unlocked ones), drops the containers that end up empty and
-   * recreates slots so the client again sees the full set. Confirmed
-   * containers are never touched, and count toward the slot total — the
-   * total is "how many containers this dispatch needs", not "how many empty
-   * drafts to show".
+   * Rolls back every move on this client's currently-unlocked positions,
+   * drops the containers that end up with nothing left at all, and
+   * recreates slots so the client again sees the full set. A locked
+   * position is never touched, even sitting right next to an unlocked one
+   * in the same partially-unlocked container (Phase 16) — and a container
+   * keeps its slot, un-recycled, as long as even one locked position of its
+   * survives the rollback. Confirmed containers still count toward the slot
+   * total either way — the total is "how many containers this dispatch
+   * needs", not "how many empty drafts to show".
    */
   async undoAll(actor: RequestUser): Promise<ReadyToShipView> {
     const customerId = this.requireClient(actor);
@@ -334,16 +367,35 @@ export class ReadyToShipService {
       const containers = await containerRepo.find({
         where: { customer: { id: customerId } },
       });
-      const drafts = containers.filter((c) => !c.isConfirmed);
-      const draftIds = drafts.map((c) => c.id);
+      const containerIds = containers.map((c) => c.id);
+      const allAllocations = containerIds.length
+        ? await allocationRepo.find({
+            where: { container: { id: In(containerIds) } },
+            relations: ["container", "piLineItem"],
+          })
+        : [];
+      const lockedKeys = new Set(
+        allAllocations
+          .filter((a) => a.isLocked)
+          .map((a) => allocationKey(a.container.id, a.piLineItem.id)),
+      );
+      // Positions this rollback may touch: existing unlocked allocation rows
+      // *plus* ones already removed entirely (no row, so not in lockedKeys
+      // either) — reduceAllocation only ever runs against a row that's
+      // actually there, so the "already gone" case just needs no action.
+      const unlockedAllocations = allAllocations.filter((a) => !a.isLocked);
 
-      if (draftIds.length) {
+      if (containerIds.length) {
         const actions = await actionRepo.find({
-          where: { container: { id: In(draftIds) } },
+          where: { container: { id: In(containerIds) } },
           relations: ["container", "piLineItem"],
         });
+        const relevantActions = actions.filter(
+          (a) =>
+            !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
+        );
         const rollbackByAllocation = new Map<string, number>();
-        for (const action of actions) {
+        for (const action of relevantActions) {
           const key = allocationKey(action.container.id, action.piLineItem.id);
           rollbackByAllocation.set(
             key,
@@ -352,11 +404,7 @@ export class ReadyToShipService {
           );
         }
 
-        const allocations = await allocationRepo.find({
-          where: { container: { id: In(draftIds) } },
-          relations: ["container", "piLineItem"],
-        });
-        for (const allocation of allocations) {
+        for (const allocation of unlockedAllocations) {
           const rollback = rollbackByAllocation.get(
             allocationKey(allocation.container.id, allocation.piLineItem.id),
           );
@@ -367,23 +415,39 @@ export class ReadyToShipService {
             await this.reduceAllocation(em, allocation, rollback);
           }
         }
-        if (actions.length) {
-          await actionRepo.delete({ id: In(actions.map((a) => a.id)) });
+        if (relevantActions.length) {
+          await actionRepo.delete({ id: In(relevantActions.map((a) => a.id)) });
         }
       }
 
-      const stillFilled = draftIds.length
+      // Recycle a container's slot only if it now has nothing locked on it
+      // at all — the same "pure draft" set the old whole-container model
+      // used, generalized to per-position locking: a container with even
+      // one locked (or partially-unlocked) position is never a deletion
+      // candidate, regardless of what just happened to its other positions.
+      const lockedContainerIds = new Set(
+        allAllocations.filter((a) => a.isLocked).map((a) => a.container.id),
+      );
+      const pureDraftContainers = containers.filter(
+        (c) => !lockedContainerIds.has(c.id),
+      );
+      const pureDraftIds = pureDraftContainers.map((c) => c.id);
+      const stillFilled = pureDraftIds.length
         ? await allocationRepo.find({
-            where: { container: { id: In(draftIds) } },
+            where: { container: { id: In(pureDraftIds) } },
             relations: ["container"],
           })
         : [];
       const filledIds = new Set(stillFilled.map((a) => a.container.id));
-      const emptyDrafts = drafts.filter((c) => !filledIds.has(c.id));
-      if (emptyDrafts.length) {
-        await containerRepo.delete({ id: In(emptyDrafts.map((c) => c.id)) });
+      const emptyContainers = pureDraftContainers.filter(
+        (c) => !filledIds.has(c.id),
+      );
+      if (emptyContainers.length) {
+        await containerRepo.delete({
+          id: In(emptyContainers.map((c) => c.id)),
+        });
       }
-      const kept = containers.filter((c) => !emptyDrafts.includes(c));
+      const kept = containers.filter((c) => !emptyContainers.includes(c));
 
       const total = computeTotalPossibleContainers(
         await this.loadActiveLines(em, customerId),
@@ -400,37 +464,54 @@ export class ReadyToShipService {
   }
 
   /**
-   * One action for the whole session: every not-confirmed container that
-   * holds at least one allocation gets confirmed together, or none do. A
-   * single save() of the whole set is one transaction, so a failure can't
-   * leave half of them confirmed.
+   * One action for the whole session: every currently-unlocked position
+   * across every one of this customer's containers gets locked together, or
+   * none do. A container "touched" by this (i.e. it has at least one
+   * unlocked position, whether that's a plain draft or one line reopened by
+   * ops — Phase 16) has *all* of its positions locked, including ones that
+   * were already locked before this call — reusing this one bulk action for
+   * both "confirm a fresh plan" and "re-confirm after a partial unlock" is
+   * exactly what the roadmap asked for, and it falls out naturally here
+   * rather than needing its own code path. A single save() of the whole set
+   * is one transaction, so a failure can't leave half of them confirmed.
    */
   async confirm(actor: RequestUser): Promise<ReadyToShipView> {
     const customerId = this.requireClient(actor);
 
     await this.dataSource.transaction(async (em) => {
       const containerRepo = em.getRepository(ShippingContainer);
-      const drafts = (
-        await containerRepo.find({ where: { customer: { id: customerId } } })
-      ).filter((c) => !c.isConfirmed);
-
-      const allocations = drafts.length
-        ? await em.getRepository(ContainerLineAllocation).find({
-            where: { container: { id: In(drafts.map((c) => c.id)) } },
+      const allocationRepo = em.getRepository(ContainerLineAllocation);
+      const containers = await containerRepo.find({
+        where: { customer: { id: customerId } },
+      });
+      const containerIds = containers.map((c) => c.id);
+      const allocations = containerIds.length
+        ? await allocationRepo.find({
+            where: { container: { id: In(containerIds) } },
             relations: ["container", "piLineItem"],
           })
         : [];
-      const fillByContainer = this.sumFillByContainer(allocations);
-      const toConfirm = drafts
-        .filter((c) => fillByContainer.has(c.id))
+
+      const touchedContainerIds = new Set(
+        allocations.filter((a) => !a.isLocked).map((a) => a.container.id),
+      );
+      const toConfirm = containers
+        .filter((c) => touchedContainerIds.has(c.id))
         .sort(byLabel);
 
       if (toConfirm.length === 0) {
         throw new BadRequestException(
-          "нет контейнеров с позициями для подтверждения",
+          "нет контейнеров с незафиксированными позициями для подтверждения",
         );
       }
 
+      // The overfill check is against the *whole* container (locked and
+      // unlocked positions together) — a physical container doesn't care
+      // which of its rows happen to be editable right now.
+      const touchedAllocations = allocations.filter((a) =>
+        touchedContainerIds.has(a.container.id),
+      );
+      const fillByContainer = this.sumFillByContainer(touchedAllocations);
       const overfilled = toConfirm.filter((c) =>
         isOverfilled(fillByContainer.get(c.id) ?? 0),
       );
@@ -452,9 +533,13 @@ export class ReadyToShipService {
         });
       }
 
+      for (const allocation of touchedAllocations) {
+        allocation.isLocked = true;
+      }
+      await allocationRepo.save(touchedAllocations);
+
       const now = new Date();
       for (const container of toConfirm) {
-        container.isConfirmed = true;
         container.confirmedAt = now;
         container.confirmedBy = { id: actor.id } as User;
       }
@@ -465,9 +550,13 @@ export class ReadyToShipService {
   }
 
   /**
-   * Ops-only, one container at a time. Marking files are left alone here —
-   * they're dropped later, per allocation row, the moment that row's
-   * quantity actually changes (see setAllocatedQty / reduceAllocation).
+   * Ops-only, one container at a time — locks/unlocks every position on it
+   * together. `unlockAllocation` below is the finer-grained Phase 16
+   * sibling, for freeing a single position without touching the rest of the
+   * container; this stays as the blunter option next to it. Marking files
+   * are left alone here — they're dropped later, per allocation row, the
+   * moment that row's quantity actually changes (see setAllocatedQty /
+   * reduceAllocation).
    */
   async unlock(
     containerId: string,
@@ -481,6 +570,9 @@ export class ReadyToShipService {
 
     const containerRepo =
       this.dataSource.manager.getRepository(ShippingContainer);
+    const allocationRepo = this.dataSource.manager.getRepository(
+      ContainerLineAllocation,
+    );
     const container = await containerRepo.findOne({
       where: { id: containerId },
       relations: ["customer"],
@@ -488,13 +580,20 @@ export class ReadyToShipService {
     if (!container) {
       throw new NotFoundException(`ShippingContainer ${containerId} not found`);
     }
-    if (!container.isConfirmed) {
+    const allocations = await allocationRepo.find({
+      where: { container: { id: containerId } },
+    });
+    const locked = allocations.filter((a) => a.isLocked);
+    if (locked.length === 0) {
       throw new BadRequestException(
         "контейнер не подтверждён — разблокировать нечего",
       );
     }
 
-    container.isConfirmed = false;
+    for (const allocation of locked) {
+      allocation.isLocked = false;
+    }
+    await allocationRepo.save(locked);
     container.confirmedAt = null;
     container.confirmedBy = null;
     await containerRepo.save(container);
@@ -512,6 +611,61 @@ export class ReadyToShipService {
       label: container.label,
       customerId: container.customer.id,
       isConfirmed: false,
+    };
+  }
+
+  /**
+   * Phase 16: the finer-grained sibling of unlock() — frees one position
+   * without touching the rest of its container, which can stay locked. The
+   * client can then edit (move/remove) just this one row; confirm() picks
+   * it back up along with any other draft later, same as unlock()'s
+   * whole-container version already did.
+   */
+  async unlockAllocation(
+    allocationId: string,
+    actor: RequestUser,
+  ): Promise<UnlockedAllocationView> {
+    if (actor.role !== Role.OPS) {
+      throw new ForbiddenException(
+        "Разблокировка позиции доступна только CEAT",
+      );
+    }
+
+    const allocationRepo = this.dataSource.manager.getRepository(
+      ContainerLineAllocation,
+    );
+    const allocation = await allocationRepo.findOne({
+      where: { id: allocationId },
+      relations: ["container", "container.customer"],
+    });
+    if (!allocation) {
+      throw new NotFoundException(
+        `ContainerLineAllocation ${allocationId} not found`,
+      );
+    }
+    if (!allocation.isLocked) {
+      throw new BadRequestException(
+        "позиция не заблокирована — разблокировать нечего",
+      );
+    }
+
+    allocation.isLocked = false;
+    await allocationRepo.save(allocation);
+
+    // Same trigger as unlock()'s Event 3 (Phase 13), just at the finer
+    // grain — freeing even one position is still "the client should look at
+    // this container again".
+    this.eventEmitter.emit(NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT, {
+      label: allocation.container.label,
+      customerId: allocation.container.customer.id,
+    });
+
+    return {
+      id: allocation.id,
+      containerId: allocation.container.id,
+      containerLabel: allocation.container.label,
+      customerId: allocation.container.customer.id,
+      isLocked: false,
     };
   }
 
@@ -556,14 +710,39 @@ export class ReadyToShipService {
     return container;
   }
 
-  private async findDraftContainerIds(
+  /**
+   * Every allocation across this customer's containers that is *not*
+   * locked — the scope undo/confirm now work over, since Phase 16 moved
+   * locking from the whole container down to each position. Loaded with
+   * `container`/`piLineItem` because every caller groups or keys by one of
+   * those.
+   */
+  /**
+   * The complement of "unlocked", by design: a position that was moved in
+   * and then fully removed again has no allocation row left at all, so it
+   * can never be found by querying for "isLocked: false" rows — but it's
+   * still exactly as undoable as one that does still exist. Checking "is
+   * this (container, line) pair currently *locked*" instead handles both
+   * cases the same way, since a nonexistent row is trivially not locked.
+   */
+  private async findLockedAllocationKeys(
     em: EntityManager,
     customerId: string,
-  ): Promise<string[]> {
+  ): Promise<Set<string>> {
     const containers = await em
       .getRepository(ShippingContainer)
       .find({ where: { customer: { id: customerId } } });
-    return containers.filter((c) => !c.isConfirmed).map((c) => c.id);
+    const containerIds = containers.map((c) => c.id);
+    if (!containerIds.length) {
+      return new Set();
+    }
+    const locked = await em.getRepository(ContainerLineAllocation).find({
+      where: { container: { id: In(containerIds) }, isLocked: true },
+      relations: ["container", "piLineItem"],
+    });
+    return new Set(
+      locked.map((a) => allocationKey(a.container.id, a.piLineItem.id)),
+    );
   }
 
   /** Any change to an existing row's quantity invalidates its marking file. */
@@ -631,6 +810,7 @@ export class ReadyToShipService {
         container: { id: action.container.id } as ShippingContainer,
         piLineItem: { id: action.piLineItem.id } as PiLineItem,
         allocatedQty: String(qty),
+        isLocked: false,
       }),
     );
   }
@@ -703,7 +883,6 @@ export class ReadyToShipService {
       repo.create({
         customer: { id: customerId } as Customer,
         label: `Контейнер ${next++}`,
-        isConfirmed: false,
         confirmedAt: null,
         confirmedBy: null,
       }),
@@ -775,27 +954,42 @@ export class ReadyToShipService {
         : existingContainers
     ).sort(byLabel);
     const containerIds = containers.map((c) => c.id);
-    const draftIds = containers.filter((c) => !c.isConfirmed).map((c) => c.id);
 
-    const [allocations, undoableActions] = await Promise.all([
-      containerIds.length
-        ? em.getRepository(ContainerLineAllocation).find({
-            where: { container: { id: In(containerIds) } },
-            relations: ["container", "piLineItem", "piLineItem.pi"],
-          })
-        : Promise.resolve([] as ContainerLineAllocation[]),
-      draftIds.length
-        ? em
-            .getRepository(AllocationAction)
-            .count({ where: { container: { id: In(draftIds) } } })
-        : Promise.resolve(0),
-    ]);
-    const markings = allocations.length
-      ? await em.getRepository(MarkingFile).find({
-          where: { allocation: { id: In(allocations.map((a) => a.id)) } },
-          relations: ["allocation"],
+    const allocations = containerIds.length
+      ? await em.getRepository(ContainerLineAllocation).find({
+          where: { container: { id: In(containerIds) } },
+          relations: ["container", "piLineItem", "piLineItem.pi"],
         })
       : [];
+    // Only an action whose own position isn't currently locked counts toward
+    // "undo can still reach this" (Phase 16: a container can now mix locked
+    // and unlocked positions). Keyed off *locked* positions, not unlocked
+    // ones — a position moved in and then fully removed again has no
+    // allocation row left to find as "unlocked", but it's absent from
+    // lockedKeys too, so it still counts correctly (see
+    // findLockedAllocationKeys/undoLast for the same reasoning).
+    const lockedKeys = new Set(
+      allocations
+        .filter((a) => a.isLocked)
+        .map((a) => allocationKey(a.container.id, a.piLineItem.id)),
+    );
+    const [actionRows, markings] = await Promise.all([
+      containerIds.length
+        ? em.getRepository(AllocationAction).find({
+            where: { container: { id: In(containerIds) } },
+            relations: ["container", "piLineItem"],
+          })
+        : Promise.resolve([] as AllocationAction[]),
+      allocations.length
+        ? em.getRepository(MarkingFile).find({
+            where: { allocation: { id: In(allocations.map((a) => a.id)) } },
+            relations: ["allocation"],
+          })
+        : Promise.resolve([] as MarkingFile[]),
+    ]);
+    const undoableActions = actionRows.filter(
+      (a) => !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
+    ).length;
     const markingByAllocation = new Map(
       markings.map((m) => [m.allocation.id, m]),
     );
@@ -851,6 +1045,7 @@ export class ReadyToShipService {
             materialDesc: line.materialDesc,
             loadability,
             allocatedQty,
+            isLocked: allocation.isLocked,
             fillContribution: fillContribution(allocatedQty, loadability),
             markingFile: marking
               ? { id: marking.id, uploadedAt: marking.uploadedAt }
@@ -862,10 +1057,19 @@ export class ReadyToShipService {
         (sum, a) => sum + a.fillContribution,
         0,
       );
+      // Phase 16: derived from the container's own positions, not stored —
+      // fully confirmed only when it has at least one position and every one
+      // of them is locked; partially unlocked when the lock state is mixed.
+      const lockedCount = allocationViews.filter((a) => a.isLocked).length;
+      const isConfirmed =
+        allocationViews.length > 0 && lockedCount === allocationViews.length;
+      const isPartiallyUnlocked =
+        lockedCount > 0 && lockedCount < allocationViews.length;
       return {
         id: container.id,
         label: container.label,
-        isConfirmed: container.isConfirmed,
+        isConfirmed,
+        isPartiallyUnlocked,
         confirmedAt: container.confirmedAt,
         confirmedById: container.confirmedBy?.id ?? null,
         fillPercent: toFillPercent(fillRatio),

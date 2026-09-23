@@ -30,6 +30,16 @@ export class ContainerLineAllocation extends BaseEntity {
   })
   allocatedQty: string;
 
+  /**
+   * Phase 16: locking moved here from the whole container
+   * (ShippingContainer used to have a single is_confirmed for all of it).
+   * A container's own "confirmed" / "partially unlocked" display state is
+   * derived from its positions' isLocked, not stored — see
+   * ReadyToShipService.loadView.
+   */
+  @Column({ name: "is_locked", type: "boolean", default: false })
+  isLocked: boolean;
+
   @OneToOne(() => MarkingFile, (marking) => marking.allocation)
   markingFile: MarkingFile | null;
 }
