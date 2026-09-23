@@ -1,10 +1,11 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { FileText, LogOut, Ship, Truck, Upload } from "lucide-react"
+import { FileText, LogOut, Ship, Truck, Upload, Users } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
 import { ThemeSwitcher } from "@/components/ThemeSwitcher"
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
 import { useAuth } from "@/auth/AuthContext"
 
 const NAV_ITEMS = [
@@ -12,6 +13,7 @@ const NAV_ITEMS = [
   { to: "/ops/ready-to-ship", labelKey: "nav.readyToShip", icon: Truck },
   { to: "/ops/actual-containers", labelKey: "nav.shipped", icon: Ship },
   { to: "/ops/backorder-upload", labelKey: "nav.backorderUpload", icon: Upload },
+  { to: "/ops/users", labelKey: "nav.users", icon: Users },
 ]
 
 export function OpsLayout() {
@@ -30,6 +32,7 @@ export function OpsLayout() {
         <div className="px-4 py-4">
           <p className="text-sm font-semibold">{t("nav.opsTitle")}</p>
           <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+          <ChangePasswordDialog />
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
           {NAV_ITEMS.map(({ to, labelKey, icon: Icon }) => (

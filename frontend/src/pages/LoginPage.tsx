@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
@@ -21,8 +21,9 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
-import { ApiError } from "@/api/client"
+import { ApiError, takeLogoutReason } from "@/api/client"
 import { useAuth } from "@/auth/AuthContext"
+import { getErrorMessage } from "@/lib/errors"
 
 interface LoginFormValues {
   email: string
@@ -30,7 +31,7 @@ interface LoginFormValues {
 }
 
 export function LoginPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { login } = useAuth()
   const navigate = useNavigate()
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -39,6 +40,18 @@ export function LoginPage() {
     defaultValues: { email: "", password: "" },
   })
 
+  // Thrown out mid-session (e.g. the account was just deactivated): say why.
+  // Deferred a tick: this runs on the first render, before <Toaster/> (a
+  // later sibling of <App/> in main.tsx) has subscribed, and sonner drops
+  // toasts raised before that. No cleanup on purpose — the reason is read
+  // once, so StrictMode's second run finds nothing and must not cancel it.
+  useEffect(() => {
+    const reason = takeLogoutReason()
+    if (reason && i18n.exists(`errors.${reason}`)) {
+      setTimeout(() => toast.error(t(`errors.${reason}`)), 0)
+    }
+  }, [t, i18n])
+
   async function onSubmit(values: LoginFormValues) {
     setIsSubmitting(true)
     try {
@@ -46,9 +59,11 @@ export function LoginPage() {
       navigate(user.role === "ops" ? "/ops" : "/client", { replace: true })
     } catch (error) {
       const message =
-        error instanceof ApiError && error.status === 401
-          ? t("login.invalidCredentials")
-          : t("login.failed")
+        error instanceof ApiError && error.code === "ACCOUNT_DEACTIVATED"
+          ? getErrorMessage(error)
+          : error instanceof ApiError && error.status === 401
+            ? t("login.invalidCredentials")
+            : t("login.failed")
       toast.error(message)
     } finally {
       setIsSubmitting(false)

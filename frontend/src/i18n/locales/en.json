@@ -42,7 +42,67 @@
     "readyToShip": "Ready to ship",
     "shipped": "Shipped",
     "backorderUpload": "Backorder upload",
+    "users": "Users",
+    "changePassword": "Change password",
     "logout": "Log out"
+  },
+  "users": {
+    "title": "Users",
+    "description": "Logins for CEAT staff and client employees. Users are never deleted — deactivate them instead.",
+    "add": "Add user",
+    "loadFailed": "Could not load the users",
+    "empty": "No users yet.",
+    "you": "you",
+    "columns": {
+      "email": "Email",
+      "role": "Role",
+      "customer": "Customer",
+      "status": "Status",
+      "createdAt": "Created"
+    },
+    "roles": {
+      "ops": "CEAT (ops)",
+      "client": "Client"
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Deactivated"
+    },
+    "deactivate": "Deactivate",
+    "reactivate": "Restore",
+    "deactivateTitle": "Deactivate {{email}}?",
+    "deactivateDescription": "They will be logged out, won't be able to log in and won't receive emails. The account and everything it did stay in the system; it can be restored at any time.",
+    "deactivated": "{{email}} deactivated",
+    "reactivated": "{{email}} restored",
+    "actionFailed": "Could not change the user's status",
+    "form": {
+      "title": "Add user",
+      "email": "Email",
+      "emailRequired": "Enter an email",
+      "password": "Password",
+      "passwordHint": "At least {{min}} characters",
+      "role": "Role",
+      "customer": "Customer",
+      "customerPlaceholder": "Choose a customer",
+      "customerRequired": "Choose a customer",
+      "submit": "Create",
+      "submitting": "Creating...",
+      "created": "User {{email}} created",
+      "failed": "Could not create the user"
+    }
+  },
+  "changePassword": {
+    "title": "Change password",
+    "current": "Current password",
+    "currentRequired": "Enter your current password",
+    "new": "New password",
+    "confirm": "Repeat the new password",
+    "tooShort": "At least {{min}} characters",
+    "mismatch": "The passwords don't match",
+    "submit": "Change password",
+    "submitting": "Saving...",
+    "changed": "Password changed",
+    "failed": "Could not change the password"
   },
   "login": {
     "description": "Log in to continue",
@@ -471,6 +531,12 @@
     "UNDO_REMOVE_CONFLICT": "Can't undo removing {{qty, number}} pcs: this line has already been placed in another container (free: {{remaining, number}}).",
     "MARKING_REQUIRES_LOCKED_ALLOCATION": "A marking file can only be uploaded for a confirmed position.",
     "ARRIVAL_ALREADY_CONFIRMED": "Arrival has already been confirmed.",
-    "ARRIVAL_NOT_CONFIRMED": "Arrival hasn't been confirmed — there's nothing to revoke."
+    "ARRIVAL_NOT_CONFIRMED": "Arrival hasn't been confirmed — there's nothing to revoke.",
+    "ACCOUNT_DEACTIVATED": "This account has been deactivated. Please contact CEAT.",
+    "EMAIL_TAKEN": "A user with the email {{email}} already exists.",
+    "CUSTOMER_REQUIRED_FOR_CLIENT": "Choose a customer for a client user.",
+    "CANNOT_DEACTIVATE_SELF": "You can't deactivate your own account.",
+    "WRONG_CURRENT_PASSWORD": "The current password is incorrect.",
+    "PASSWORD_TOO_SHORT": "The password must be at least {{min}} characters long."
   }
 }

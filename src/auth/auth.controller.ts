@@ -1,7 +1,11 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from "@nestjs/common";
-import { ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorator";
+import { CurrentUser } from "../common/auth/current-user.decorator";
 import { Public } from "../common/auth/public.decorator";
+import { RequestUser } from "../common/auth/request-user.interface";
 import { AuthService } from "./auth.service";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 import { LoginDto } from "./dto/login.dto";
 
 @ApiTags("auth")
@@ -15,5 +19,21 @@ export class AuthController {
   async login(@Body() dto: LoginDto) {
     const user = await this.authService.validateUser(dto.email, dto.password);
     return this.authService.login(user);
+  }
+
+  /** Both roles, always the caller's own password (Phase 20a). */
+  @ApiBearerAuth()
+  @ClientWriteAllowed()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post("change-password")
+  async changePassword(
+    @Body() dto: ChangePasswordDto,
+    @CurrentUser() user: RequestUser,
+  ): Promise<void> {
+    await this.authService.changePassword(
+      user,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 }

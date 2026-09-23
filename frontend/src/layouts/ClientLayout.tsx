@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
 import { ThemeSwitcher } from "@/components/ThemeSwitcher"
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
 import { useAuth } from "@/auth/AuthContext"
 import { useCustomersQuery } from "@/api/customers"
 
@@ -36,6 +37,7 @@ export function ClientLayout() {
         <div className="px-4 py-4">
           <p className="text-sm font-semibold">{customerName}</p>
           <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+          <ChangePasswordDialog />
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
           {NAV_ITEMS.map(({ to, labelKey, icon: Icon }) => (

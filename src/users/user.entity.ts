@@ -29,4 +29,12 @@ export class User extends BaseEntity {
   @ManyToOne(() => Customer, { nullable: true })
   @JoinColumn({ name: "customer_id" })
   customer: Customer | null;
+
+  /**
+   * Deactivated users are never deleted (they stay the uploader/confirmer on
+   * existing records): they can't log in, their tokens stop working (see
+   * JwtStrategy) and they get no notification emails.
+   */
+  @Column({ name: "is_active", type: "boolean", default: true })
+  isActive: boolean;
 }

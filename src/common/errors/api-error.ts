@@ -77,6 +77,14 @@ export const ERROR_CODES = [
   // --- Shipped containers ---
   "ARRIVAL_ALREADY_CONFIRMED",
   "ARRIVAL_NOT_CONFIRMED",
+
+  // --- Users ---
+  "ACCOUNT_DEACTIVATED",
+  "EMAIL_TAKEN",
+  "CUSTOMER_REQUIRED_FOR_CLIENT",
+  "CANNOT_DEACTIVATE_SELF",
+  "WRONG_CURRENT_PASSWORD",
+  "PASSWORD_TOO_SHORT",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

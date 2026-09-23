@@ -41,6 +41,27 @@ export function apiErrorFromBody(
   return new ApiError(extractErrorMessage(parsedBody, fallbackMessage), status, parsedBody)
 }
 
+const LOGOUT_REASON_KEY = "ceat.logoutReason"
+
+function rememberLogoutReason(code: string) {
+  try {
+    sessionStorage.setItem(LOGOUT_REASON_KEY, code)
+  } catch {
+    // storage unavailable — the user just lands on the login page
+  }
+}
+
+/** The error code that ended the last session (read once, then cleared). */
+export function takeLogoutReason(): string | null {
+  try {
+    const code = sessionStorage.getItem(LOGOUT_REASON_KEY)
+    sessionStorage.removeItem(LOGOUT_REASON_KEY)
+    return code
+  } catch {
+    return null
+  }
+}
+
 type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown }
 
 function extractErrorMessage(parsedBody: unknown, fallback: string): string {
@@ -97,11 +118,23 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   })
 
   if (response.status === 401) {
+    let parsedBody: unknown
+    try {
+      parsedBody = await response.json()
+    } catch {
+      parsedBody = undefined
+    }
+    const error = apiErrorFromBody(parsedBody, 401, "Unauthorized")
     clearStoredSession()
     if (window.location.pathname !== "/login") {
+      // A deactivated account is thrown out mid-session; the reload below
+      // would lose the reason, so the login page picks it up from here.
+      if (error.code === "ACCOUNT_DEACTIVATED") {
+        rememberLogoutReason(error.code)
+      }
       window.location.assign("/login")
     }
-    throw new ApiError("Unauthorized", 401)
+    throw error
   }
 
   // 403 goes the same way as every other error: the caller's onError shows
