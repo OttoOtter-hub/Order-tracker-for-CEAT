@@ -68,15 +68,15 @@ describe("buildBackorderExportWorkbook", () => {
     );
     const rows = await readWorkbookRows(workbook);
 
-    expect(rows[0][1]).toBe("Бэкордер от 2026-09-01");
-    expect(rows[1][1]).toBe("Выгружено: 2026-09-03");
+    expect(rows[0][1]).toBe("Backorder as of 2026-09-01");
+    expect(rows[1][1]).toBe("Exported: 2026-09-03");
 
     // exceljs's eachRow skips fully-blank rows, so index arithmetic off the
     // start is fragile — locate the column-header row by content instead.
     const columnHeaderIndex = rows.findIndex((r) => r[1] === "PI Number");
     const dataRows = rows.slice(columnHeaderIndex + 1);
     expect(dataRows).toHaveLength(2);
-    // no label -> the "Название" cell (column 3) is empty
+    // no label -> the "Name" cell (column 3) is empty
     expect(dataRows[0].slice(1, 5)).toEqual([
       "100037320",
       undefined,
@@ -117,7 +117,7 @@ describe("buildBackorderExportWorkbook", () => {
     const headerIndex = rows.findIndex((r) => r[1] === "PI Number");
     expect(rows[headerIndex].slice(1, 4)).toEqual([
       "PI Number",
-      "Название",
+      "Name",
       "PI Status",
     ]);
     const dataRows = rows.slice(headerIndex + 1);
@@ -192,7 +192,7 @@ describe("buildBackorderExportWorkbook", () => {
       new Date("2026-09-03T10:00:00Z"),
     );
     const rows = await readWorkbookRows(workbook);
-    expect(rows[0][1]).toBe("Бэкордер от —");
+    expect(rows[0][1]).toBe("Backorder as of —");
   });
 
   it("only includes line items from the PIs it's given (caller is responsible for filtering archived ones)", async () => {

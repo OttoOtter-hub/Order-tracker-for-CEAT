@@ -55,13 +55,13 @@ describe("ReadyToShipService.exportXlsx", () => {
     expect(fileName).toMatch(/^ReadyToShip_\d{4}-\d{2}-\d{2}\.xlsx$/);
     expect(await sheetRows(buffer)).toEqual([
       [
-        "Контейнер",
+        "Container",
         "SKU",
-        "Описание",
-        "Количество",
+        "Description",
+        "Quantity",
         "Load Factor",
-        "Проформа (PI)",
-        "Название",
+        "Proforma (PI)",
+        "Name",
         "SO",
       ],
       [1, "M1", "desc l1", 30, 0.6, "100037320", "Орел", "S1"],

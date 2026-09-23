@@ -233,13 +233,13 @@ describe("buildReadyToShipExportWorkbook", () => {
     const values = (row: number) =>
       (sheet.getRow(row).values as unknown[]).slice(1);
     expect(values(1)).toEqual([
-      "Контейнер",
+      "Container",
       "SKU",
-      "Описание",
-      "Количество",
+      "Description",
+      "Quantity",
       "Load Factor",
-      "Проформа (PI)",
-      "Название",
+      "Proforma (PI)",
+      "Name",
       "SO",
     ]);
     expect(values(2)).toEqual([

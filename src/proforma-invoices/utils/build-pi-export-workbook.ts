@@ -25,7 +25,7 @@ const LINE_ITEM_HEADERS = [
 
 /**
  * One sheet: a header block (PI number/status/SO numbers/aggregates) above
- * a blank row, then the line-items table with a "Всего" totals row at the
+ * a blank row, then the line-items table with a "Total" row at the
  * bottom (same math as the frontend's own totals row —
  * computeLineItemsTotals). `pi.lineItems` must already be loaded.
  */
@@ -41,7 +41,7 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
   ];
 
   sheet.addRow(["PI number", pi.piNumber]);
-  sheet.addRow(["Название", pi.label ?? null]);
+  sheet.addRow(["Name", pi.label ?? null]);
   sheet.addRow(["Status", pi.status]);
   sheet.addRow(["SO numbers", soNumbers.join(", ")]);
   sheet.addRow(["Total Qty", toNumberOrNull(pi.totalQty)]);
@@ -80,7 +80,7 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
 
   const totals = computeLineItemsTotals(lineItems, pi);
   const totalsRow = sheet.addRow([
-    "Всего",
+    "Total",
     null,
     null,
     totals.balanceToBeDelivered,

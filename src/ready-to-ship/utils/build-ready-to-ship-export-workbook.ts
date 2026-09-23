@@ -4,13 +4,13 @@ import type { ReadyToShipView } from "../ready-to-ship.types";
 export const OK_TO_MIX = "OK to mix";
 
 export const READY_TO_SHIP_EXPORT_HEADERS = [
-  "Контейнер",
+  "Container",
   "SKU",
-  "Описание",
-  "Количество",
+  "Description",
+  "Quantity",
   "Load Factor",
-  "Проформа (PI)",
-  "Название",
+  "Proforma (PI)",
+  "Name",
   "SO",
 ] as const;
 

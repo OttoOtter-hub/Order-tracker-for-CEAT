@@ -82,7 +82,7 @@ describe("buildPiExportWorkbook", () => {
 
     // header block
     expect(rows[0].slice(1)).toEqual(["PI number", "100037320"]);
-    expect(rows[1][1]).toBe("Название");
+    expect(rows[1][1]).toBe("Name");
     expect(rows[1][2]).toBeUndefined(); // no label -> empty cell
     expect(rows[2].slice(1)).toEqual([
       "Status",
@@ -119,7 +119,7 @@ describe("buildPiExportWorkbook", () => {
       "—", // no priority set -> dashes, not zeros
       "—",
     ]);
-    expect(totalsRow[1]).toBe("Всего");
+    expect(totalsRow[1]).toBe("Total");
     expect(totalsRow[4]).toBe(6); // balance
     expect(totalsRow[5]).toBe(6); // quantity
     expect(totalsRow[6]).toBeCloseTo(0.284); // mt
@@ -138,7 +138,7 @@ describe("buildPiExportWorkbook", () => {
       );
 
       expect(rows[0].slice(1)).toEqual(["PI number", "100037320"]);
-      expect(rows[1].slice(1)).toEqual(["Название", "Орел"]);
+      expect(rows[1].slice(1)).toEqual(["Name", "Орел"]);
     });
 
     it("leaves the value cell empty when there is no label", async () => {
@@ -146,7 +146,7 @@ describe("buildPiExportWorkbook", () => {
         buildPiExportWorkbook(makePi({ label: null })),
       );
 
-      expect(rows[1][1]).toBe("Название");
+      expect(rows[1][1]).toBe("Name");
       expect(rows[1][2]).toBeUndefined();
     });
   });
@@ -241,7 +241,7 @@ describe("buildPiExportWorkbook", () => {
       );
       const totalsRow = rows[rows.length - 1];
 
-      expect(totalsRow[1]).toBe("Всего");
+      expect(totalsRow[1]).toBe("Total");
       expect(totalsRow[11]).toBe(73); // 40 + 25 + 1 + 7
       expect(totalsRow[12]).toBe("—");
     });

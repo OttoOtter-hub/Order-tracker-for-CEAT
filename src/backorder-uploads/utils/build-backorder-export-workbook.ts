@@ -9,7 +9,7 @@ import {
 
 const ROW_HEADERS = [
   "PI Number",
-  "Название",
+  "Name",
   "PI Status",
   "Material Num",
   "Material Desc",
@@ -42,9 +42,9 @@ export function buildBackorderExportWorkbook(
   const sheet = workbook.addWorksheet("Backorder");
 
   sheet.addRow([
-    `Бэкордер от ${latestUploadDate ? formatDateForFilename(latestUploadDate) : "—"}`,
+    `Backorder as of ${latestUploadDate ? formatDateForFilename(latestUploadDate) : "—"}`,
   ]);
-  sheet.addRow([`Выгружено: ${formatDateForFilename(generatedAt)}`]);
+  sheet.addRow([`Exported: ${formatDateForFilename(generatedAt)}`]);
   sheet.addRow([]);
 
   const headerRow = sheet.addRow(ROW_HEADERS);
