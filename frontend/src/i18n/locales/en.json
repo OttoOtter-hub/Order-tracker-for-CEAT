@@ -120,6 +120,14 @@
       "additional": "Additional files",
       "noAdditional": "No additional files."
     },
+    "history": {
+      "title": "File history",
+      "loadFailed": "Could not load the file history",
+      "none": "No files yet.",
+      "current": "Current",
+      "archived": "Archived",
+      "replacedAt": "replaced {{date}}"
+    },
     "replacement": {
       "title": "CEAT proposed a file replacement",
       "current": "Current file",

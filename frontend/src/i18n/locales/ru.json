@@ -120,6 +120,14 @@
       "additional": "Доп. файлы",
       "noAdditional": "Нет доп. файлов."
     },
+    "history": {
+      "title": "История файлов",
+      "loadFailed": "Не удалось загрузить историю файлов",
+      "none": "Файлов пока нет.",
+      "current": "Текущая",
+      "archived": "Архив",
+      "replacedAt": "заменена {{date}}"
+    },
     "replacement": {
       "title": "CEAT предложил замену файла",
       "current": "Текущий файл",

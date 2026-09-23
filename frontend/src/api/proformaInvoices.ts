@@ -93,6 +93,36 @@ export interface ProformaInvoice {
   additionalFiles?: PiAdditionalFile[]
 }
 
+export type PiFileType = "original" | "signed"
+
+// One version of the original or signed file (Phase 19). The current ones
+// come straight from the PI row (id null, replacedAt null, isCurrent true);
+// the rest are archived versions, replacedAt = when they stopped being current.
+export interface PiFileHistoryEntry {
+  id: string | null
+  fileType: PiFileType
+  fileUrl: string
+  uploadedAt: string | null
+  uploadedBy: UserRef | null
+  replacedAt: string | null
+  isCurrent: boolean
+}
+
+// GET /proforma-invoices/:id/file-history — newest upload first. `enabled`
+// lets the collapsed history block skip the request until it's opened. Its
+// key sits under ["proforma-invoices", id], so every write that already
+// invalidates ["proforma-invoices"] (upload-signed, replacement-decision)
+// refreshes it too.
+export function usePiFileHistoryQuery(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["proforma-invoices", id, "file-history"],
+    queryFn: () =>
+      apiClient.get<PiFileHistoryEntry[]>(`/proforma-invoices/${id}/file-history`),
+    staleTime: 30_000,
+    enabled,
+  })
+}
+
 export function usePiListQuery() {
   return useQuery({
     queryKey: ["proforma-invoices"],

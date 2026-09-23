@@ -17,6 +17,7 @@ import { decodeMultipartFilename } from "../common/utils/decode-multipart-filena
 import { RequestUser } from "../common/auth/request-user.interface";
 import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.entity";
 import { ProformaInvoice } from "../proforma-invoices/proforma-invoice.entity";
+import { PiFileVersion } from "../proforma-invoices/pi-file-version.entity";
 import { StoredFile } from "./stored-file.entity";
 
 export interface DownloadableFile {
@@ -42,6 +43,8 @@ export class FilesService {
     private readonly piRepo: Repository<ProformaInvoice>,
     @InjectRepository(PiAdditionalFile)
     private readonly additionalFileRepo: Repository<PiAdditionalFile>,
+    @InjectRepository(PiFileVersion)
+    private readonly fileVersionRepo: Repository<PiFileVersion>,
     config: ConfigService,
   ) {
     this.uploadDir = resolve(config.get<string>("UPLOAD_DIR", "./uploads"));
@@ -113,7 +116,8 @@ export class FilesService {
 
   /**
    * Ownership check for `client`: a file is only downloadable if it's
-   * actually referenced by a PI (or PI additional file) belonging to the
+   * actually referenced by a PI (its current files, an additional file, or
+   * an archived version of its original/signed file) belonging to the
    * requester's own customer_id. Matched by exact URL equality against the
    * `/files/:id/download` string every *_url/fileUrl column is populated
    * with (see ProformaInvoicesService.storeUploadedFile) — not a LIKE scan,
@@ -145,6 +149,15 @@ export class FilesService {
       where: { fileUrl: url, pi: { customer: { id: actor.customerId } } },
     });
     if (additionalFileMatches > 0) {
+      return;
+    }
+
+    // Phase 19: a replaced original/signed file is no longer on the PI row,
+    // but stays downloadable from the card's file history.
+    const archivedVersionMatches = await this.fileVersionRepo.count({
+      where: { fileUrl: url, pi: { customer: { id: actor.customerId } } },
+    });
+    if (archivedVersionMatches > 0) {
       return;
     }
 

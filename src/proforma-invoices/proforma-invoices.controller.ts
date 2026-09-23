@@ -89,6 +89,18 @@ export class ProformaInvoicesController {
   }
 
   /**
+   * Phase 19: every version of the original and signed files, newest first,
+   * the current ones marked (replacedAt null). Read-only, both roles; not
+   * @ScopeByCustomer'd — it returns a list of versions, not a
+   * ProformaInvoice — so the owner-check is in the service (404 for a client
+   * on someone else's card).
+   */
+  @Get(":id/file-history")
+  getFileHistory(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    return this.service.getFileHistory(id, user);
+  }
+
+  /**
    * Ops-only: no @ClientWriteAllowed(), so RolesGuard already 403s client
    * on this POST. PI number comes from the filename, not a form field.
    */

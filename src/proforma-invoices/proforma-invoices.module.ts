@@ -7,6 +7,7 @@ import { FilesModule } from "../files/files.module";
 import { PiAdditionalFilesModule } from "../pi-additional-files/pi-additional-files.module";
 import { PiLineItemsModule } from "../pi-line-items/pi-line-items.module";
 import { ProformaInvoice } from "./proforma-invoice.entity";
+import { PiFileVersion } from "./pi-file-version.entity";
 import { ProformaInvoicesController } from "./proforma-invoices.controller";
 import { ProformaInvoicesService } from "./proforma-invoices.service";
 
@@ -19,6 +20,7 @@ import { ProformaInvoicesService } from "./proforma-invoices.service";
     // the same entity to be registered in more than one module's forFeature.
     TypeOrmModule.forFeature([
       ProformaInvoice,
+      PiFileVersion,
       ContainerLineAllocation,
       ActualContainerLineItem,
     ]),

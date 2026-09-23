@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { EventEmitter2 } from "@nestjs/event-emitter";
-import { In, Repository } from "typeorm";
+import { EntityManager, In, Repository } from "typeorm";
 import { ActualContainerLineItem } from "../actual-containers/actual-container-line-item.entity";
 import { ContainerLineAllocation } from "../ready-to-ship/container-line-allocation.entity";
 import { CustomersService } from "../customers/customers.service";
@@ -19,6 +19,7 @@ import { apiError } from "../common/errors/api-error";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { User } from "../users/user.entity";
 import { ProformaInvoice } from "./proforma-invoice.entity";
+import { PiFileType, PiFileVersion } from "./pi-file-version.entity";
 import { PiCreatedFrom } from "./enums/pi-created-from.enum";
 import { extractPiNumber } from "./utils/extract-pi-number";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
@@ -29,6 +30,39 @@ import {
 } from "./utils/compute-reconciliation";
 import { formatDateForFilename } from "../common/utils/format-date";
 import { NotificationEvent } from "../notifications/notification-events";
+
+/** One row of GET /proforma-invoices/:id/file-history. */
+export interface PiFileHistoryEntry {
+  /** The archive row's id; null for a current version (it lives on the PI). */
+  id: string | null;
+  fileType: PiFileType;
+  fileUrl: string;
+  uploadedAt: Date | null;
+  uploadedBy: { id: string; email: string } | null;
+  /** When it stopped being current; null = the current version. */
+  replacedAt: Date | null;
+  isCurrent: boolean;
+}
+
+// Only what the history needs — never the whole User entity.
+function toUploader(
+  user: User | null | undefined,
+): PiFileHistoryEntry["uploadedBy"] {
+  return user ? { id: user.id, email: user.email } : null;
+}
+
+/** Newest upload first; an unknown upload date sinks to the bottom. */
+function byUploadedAtDesc(
+  a: PiFileHistoryEntry,
+  b: PiFileHistoryEntry,
+): number {
+  const at = a.uploadedAt ? new Date(a.uploadedAt).getTime() : -Infinity;
+  const bt = b.uploadedAt ? new Date(b.uploadedAt).getTime() : -Infinity;
+  if (at !== bt) {
+    return bt - at;
+  }
+  return Number(b.isCurrent) - Number(a.isCurrent);
+}
 
 @Injectable()
 export class ProformaInvoicesService {
@@ -46,6 +80,8 @@ export class ProformaInvoicesService {
     private readonly filesService: FilesService,
     private readonly customersService: CustomersService,
     private readonly eventEmitter: EventEmitter2,
+    @InjectRepository(PiFileVersion)
+    private readonly fileVersionsRepo: Repository<PiFileVersion>,
   ) {}
 
   findAll(): Promise<ProformaInvoice[]> {
@@ -174,10 +210,20 @@ export class ProformaInvoicesService {
     const fileUrl = await this.storeUploadedFile(file, actor.id);
 
     if (existing) {
-      existing.piFileUrl = fileUrl;
-      existing.piFileUploadedAt = new Date();
-      existing.piFileUploadedBy = { id: actor.id } as User;
-      const saved = await this.repo.save(existing);
+      // existing.piFileUrl is always empty here (a filled one 409s above), so
+      // there is nothing to archive today — kept so the rule "archive before
+      // overwriting" holds on every path that writes pi_file_url.
+      const saved = await this.repo.manager.transaction(async (em) => {
+        const now = new Date();
+        await this.archiveReplacedFile(em, existing, PiFileType.ORIGINAL, {
+          newUrl: fileUrl,
+          replacedAt: now,
+        });
+        existing.piFileUrl = fileUrl;
+        existing.piFileUploadedAt = now;
+        existing.piFileUploadedBy = { id: actor.id } as User;
+        return em.getRepository(ProformaInvoice).save(existing);
+      });
       this.emitPiReadyToSign(
         saved.piNumber,
         saved.label ?? null,
@@ -233,7 +279,10 @@ export class ProformaInvoicesService {
     });
   }
 
-  /** Client uploads their signed copy — always overwrites, no approval. */
+  /**
+   * Client uploads their signed copy — no approval. A re-upload replaces the
+   * current signed file; the previous one goes to the file history first.
+   */
   async uploadSigned(
     id: string,
     file: Express.Multer.File,
@@ -241,10 +290,17 @@ export class ProformaInvoicesService {
   ): Promise<ProformaInvoice> {
     const pi = await this.findOwnedByActor(id, actor);
     const fileUrl = await this.storeUploadedFile(file, actor.id);
-    pi.signedFileUrl = fileUrl;
-    pi.signedFileUploadedAt = new Date();
-    pi.signedFileUploadedBy = { id: actor.id } as User;
-    const saved = await this.repo.save(pi);
+    const saved = await this.repo.manager.transaction(async (em) => {
+      const now = new Date();
+      await this.archiveReplacedFile(em, pi, PiFileType.SIGNED, {
+        newUrl: fileUrl,
+        replacedAt: now,
+      });
+      pi.signedFileUrl = fileUrl;
+      pi.signedFileUploadedAt = now;
+      pi.signedFileUploadedBy = { id: actor.id } as User;
+      return em.getRepository(ProformaInvoice).save(pi);
+    });
     return this.findOne(saved.id);
   }
 
@@ -321,16 +377,110 @@ export class ProformaInvoicesService {
         ),
       );
     }
-    if (approved) {
-      pi.piFileUrl = pi.pendingReplacementFileUrl;
-      pi.piFileUploadedAt = pi.pendingReplacementProposedAt;
-      pi.piFileUploadedBy = pi.pendingReplacementProposedBy;
-    }
-    pi.pendingReplacementFileUrl = null;
-    pi.pendingReplacementProposedBy = null;
-    pi.pendingReplacementProposedAt = null;
-    const saved = await this.repo.save(pi);
+    const saved = await this.repo.manager.transaction(async (em) => {
+      if (approved) {
+        // A rejected proposal was never current, so it isn't a version;
+        // only the file it replaces on approval is archived.
+        await this.archiveReplacedFile(em, pi, PiFileType.ORIGINAL, {
+          newUrl: pi.pendingReplacementFileUrl,
+          replacedAt: new Date(),
+        });
+        pi.piFileUrl = pi.pendingReplacementFileUrl;
+        pi.piFileUploadedAt = pi.pendingReplacementProposedAt;
+        pi.piFileUploadedBy = pi.pendingReplacementProposedBy;
+      }
+      pi.pendingReplacementFileUrl = null;
+      pi.pendingReplacementProposedBy = null;
+      pi.pendingReplacementProposedAt = null;
+      return em.getRepository(ProformaInvoice).save(pi);
+    });
     return this.findOne(saved.id);
+  }
+
+  /**
+   * Phase 19: before pi_file_url / signed_file_url is overwritten, keep the
+   * outgoing value (with who/when uploaded it) as a PiFileVersion. Nothing to
+   * keep on a first upload (empty slot) or if the value isn't changing.
+   * Runs inside the caller's transaction, so the archive row and the
+   * overwrite land together or not at all.
+   */
+  private async archiveReplacedFile(
+    em: EntityManager,
+    pi: ProformaInvoice,
+    fileType: PiFileType,
+    { newUrl, replacedAt }: { newUrl: string | null; replacedAt: Date },
+  ): Promise<void> {
+    const isOriginal = fileType === PiFileType.ORIGINAL;
+    const currentUrl = isOriginal ? pi.piFileUrl : pi.signedFileUrl;
+    if (!currentUrl || currentUrl === newUrl) {
+      return;
+    }
+    const uploadedBy = isOriginal
+      ? pi.piFileUploadedBy
+      : pi.signedFileUploadedBy;
+    const versions = em.getRepository(PiFileVersion);
+    await versions.save(
+      versions.create({
+        pi: { id: pi.id } as ProformaInvoice,
+        fileType,
+        fileUrl: currentUrl,
+        uploadedBy: uploadedBy ? ({ id: uploadedBy.id } as User) : null,
+        uploadedAt:
+          (isOriginal ? pi.piFileUploadedAt : pi.signedFileUploadedAt) ?? null,
+        replacedAt,
+      }),
+    );
+  }
+
+  /**
+   * Every version of the card's original and signed files, newest upload
+   * first: the current ones (from the PI row itself, replacedAt null) plus
+   * everything archived. Both roles; a client only for their own card (404
+   * otherwise, same as every other read here). Downloads go through the
+   * regular /files/:id/download by each entry's fileUrl.
+   */
+  async getFileHistory(
+    id: string,
+    actor: RequestUser,
+  ): Promise<PiFileHistoryEntry[]> {
+    const pi = await this.findOwnedByActor(id, actor);
+    const archived = await this.fileVersionsRepo.find({
+      where: { pi: { id: pi.id } },
+      relations: ["uploadedBy"],
+    });
+
+    const entries: PiFileHistoryEntry[] = archived.map((v) => ({
+      id: v.id,
+      fileType: v.fileType,
+      fileUrl: v.fileUrl,
+      uploadedAt: v.uploadedAt,
+      uploadedBy: toUploader(v.uploadedBy),
+      replacedAt: v.replacedAt,
+      isCurrent: false,
+    }));
+    if (pi.piFileUrl) {
+      entries.push({
+        id: null,
+        fileType: PiFileType.ORIGINAL,
+        fileUrl: pi.piFileUrl,
+        uploadedAt: pi.piFileUploadedAt,
+        uploadedBy: toUploader(pi.piFileUploadedBy),
+        replacedAt: null,
+        isCurrent: true,
+      });
+    }
+    if (pi.signedFileUrl) {
+      entries.push({
+        id: null,
+        fileType: PiFileType.SIGNED,
+        fileUrl: pi.signedFileUrl,
+        uploadedAt: pi.signedFileUploadedAt,
+        uploadedBy: toUploader(pi.signedFileUploadedBy),
+        replacedAt: null,
+        isCurrent: true,
+      });
+    }
+    return entries.sort(byUploadedAtDesc);
   }
 
   private async storeUploadedFile(

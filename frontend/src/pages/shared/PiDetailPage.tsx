@@ -32,6 +32,7 @@ import { FileUploadForm } from "@/components/FileUploadForm"
 import { AddAdditionalFileForm } from "@/pages/shared/AddAdditionalFileForm"
 import { PriorityInput } from "@/pages/shared/PriorityInput"
 import { PiLabelEditor } from "@/pages/shared/PiLabelEditor"
+import { PiFileHistory } from "@/pages/shared/PiFileHistory"
 import { useAuth } from "@/auth/AuthContext"
 import {
   usePiDetailQuery,
@@ -511,6 +512,8 @@ export function PiDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      <PiFileHistory piId={pi.id} />
 
       {/* Pending replacement */}
       {pi.pendingReplacementFileUrl && (

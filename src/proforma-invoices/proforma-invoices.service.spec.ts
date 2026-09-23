@@ -5,7 +5,10 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { makeFakeRepo } from "../common/testing/fake-repo";
+import { makeFakeDataSource } from "../common/testing/fake-data-source";
 import { ProformaInvoicesService } from "./proforma-invoices.service";
+import { ProformaInvoice } from "./proforma-invoice.entity";
+import { PiFileType, PiFileVersion } from "./pi-file-version.entity";
 import { PiCreatedFrom } from "./enums/pi-created-from.enum";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
@@ -16,6 +19,8 @@ describe("ProformaInvoicesService", () => {
   let lineItemsRepo: ReturnType<typeof makeFakeRepo>;
   let allocationsRepo: ReturnType<typeof makeFakeRepo>;
   let actualLineItemsRepo: ReturnType<typeof makeFakeRepo>;
+  let versionsRepo: ReturnType<typeof makeFakeRepo>;
+  let usersRepo: ReturnType<typeof makeFakeRepo>;
   let filesService: { save: jest.Mock };
   let customersService: { findFirst: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
@@ -47,6 +52,24 @@ describe("ProformaInvoicesService", () => {
     lineItemsRepo = makeFakeRepo();
     allocationsRepo = makeFakeRepo();
     actualLineItemsRepo = makeFakeRepo();
+    usersRepo = makeFakeRepo();
+    for (const [id, email] of [
+      ["ops-1", "ops@ceat.com"],
+      ["ops-old", "old-ops@ceat.com"],
+      ["client-1", "buyer@mtkrosberg.com"],
+    ]) {
+      usersRepo.seed({ id, email });
+    }
+    versionsRepo = makeFakeRepo({ uploadedBy: () => usersRepo });
+    // Writes that archive a file version run in repo.manager.transaction().
+    Object.assign(repo, {
+      manager: makeFakeDataSource(
+        new Map<unknown, unknown>([
+          [ProformaInvoice, repo],
+          [PiFileVersion, versionsRepo],
+        ]),
+      ),
+    });
     fileCounter = 1;
     filesService = {
       save: jest.fn(async () => {
@@ -77,6 +100,7 @@ describe("ProformaInvoicesService", () => {
       filesService as any,
       customersService as any,
       eventEmitter as any,
+      versionsRepo as any,
     );
   });
 
@@ -234,6 +258,207 @@ describe("ProformaInvoicesService", () => {
           "нет активного предложения замены для этого PI",
         ),
       );
+    });
+  });
+
+  describe("file history (Phase 19)", () => {
+    const T0 = new Date("2026-01-01T00:00:00Z");
+    const at = (iso: string) => {
+      const date = new Date(iso);
+      jest.setSystemTime(date);
+      return date;
+    };
+
+    beforeEach(() => {
+      jest.useFakeTimers({ now: T0 });
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    function seedFiledPi() {
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        customer: { id: "cust-1" },
+        piFileUrl: "/files/original/download",
+        piFileUploadedAt: T0,
+        piFileUploadedBy: { id: "ops-old" },
+        signedFileUrl: null,
+        signedFileUploadedAt: null,
+        signedFileUploadedBy: null,
+        pendingReplacementFileUrl: null,
+        pendingReplacementProposedBy: null,
+        pendingReplacementProposedAt: null,
+      });
+    }
+
+    async function replaceOriginal(fileName: string) {
+      await service.proposeReplacement("pi-1", file(fileName), opsActor);
+      return service.replacementDecision("pi-1", true, clientActor);
+    }
+
+    it("a first upload archives nothing — new card, filled-in card, first signed copy", async () => {
+      await service.uploadPi(file("100037999.pdf"), opsActor);
+      repo.seed({
+        id: "pi-backorder",
+        piNumber: "100037320",
+        piFileUrl: null,
+        createdFrom: PiCreatedFrom.BACKORDER_ROW,
+        customer: { id: "cust-1" },
+      });
+      await service.uploadPi(file("100037320.pdf"), opsActor);
+      await service.uploadSigned("pi-backorder", file("s.pdf"), clientActor);
+
+      expect(versionsRepo.rows).toHaveLength(0);
+      const history = await service.getFileHistory("pi-backorder", opsActor);
+      expect(
+        history.map((e) => [e.fileType, e.isCurrent, e.replacedAt]),
+      ).toEqual([
+        [PiFileType.ORIGINAL, true, null],
+        [PiFileType.SIGNED, true, null],
+      ]);
+    });
+
+    it("an approved replacement archives exactly one row: the old original, who/when uploaded it, replacedAt = now", async () => {
+      seedFiledPi();
+      at("2026-02-01T10:00:00Z");
+      await service.proposeReplacement("pi-1", file("repl.pdf"), opsActor);
+      const approvedAt = at("2026-02-03T09:00:00Z");
+      await service.replacementDecision("pi-1", true, clientActor);
+
+      expect(versionsRepo.rows).toHaveLength(1);
+      expect(versionsRepo.rows[0]).toMatchObject({
+        pi: { id: "pi-1" },
+        fileType: PiFileType.ORIGINAL,
+        fileUrl: "/files/original/download",
+        uploadedBy: { id: "ops-old" },
+        uploadedAt: T0,
+        replacedAt: approvedAt,
+      });
+    });
+
+    it("a rejected replacement archives nothing (the proposal was never current)", async () => {
+      seedFiledPi();
+      await service.proposeReplacement("pi-1", file("repl.pdf"), opsActor);
+      await service.replacementDecision("pi-1", false, clientActor);
+
+      expect(versionsRepo.rows).toHaveLength(0);
+    });
+
+    it("a re-uploaded signed copy archives the previous one", async () => {
+      seedFiledPi();
+      const firstSignedAt = at("2026-02-01T00:00:00Z");
+      await service.uploadSigned("pi-1", file("s1.pdf"), clientActor);
+      expect(versionsRepo.rows).toHaveLength(0);
+
+      const secondSignedAt = at("2026-02-05T00:00:00Z");
+      await service.uploadSigned("pi-1", file("s2.pdf"), clientActor);
+
+      expect(versionsRepo.rows).toHaveLength(1);
+      expect(versionsRepo.rows[0]).toMatchObject({
+        fileType: PiFileType.SIGNED,
+        fileUrl: "/files/file-1/download",
+        uploadedBy: { id: "client-1" },
+        uploadedAt: firstSignedAt,
+        replacedAt: secondSignedAt,
+      });
+    });
+
+    it("several replacements build the right chain, newest first, only the live files current", async () => {
+      seedFiledPi(); // original v0 at T0
+      at("2026-02-01T00:00:00Z");
+      await service.uploadSigned("pi-1", file("s1.pdf"), clientActor); // file-1
+      at("2026-02-10T00:00:00Z");
+      await service.proposeReplacement("pi-1", file("o1.pdf"), opsActor); // file-2
+      const o1ApprovedAt = at("2026-02-11T00:00:00Z");
+      await service.replacementDecision("pi-1", true, clientActor);
+      const s2At = at("2026-02-20T00:00:00Z");
+      await service.uploadSigned("pi-1", file("s2.pdf"), clientActor); // file-3
+      const o2ProposedAt = at("2026-03-01T00:00:00Z");
+      await service.proposeReplacement("pi-1", file("o2.pdf"), opsActor); // file-4
+      const o2ApprovedAt = at("2026-03-02T00:00:00Z");
+      await service.replacementDecision("pi-1", true, clientActor);
+
+      const history = await service.getFileHistory("pi-1", clientActor);
+
+      expect(
+        history.map((e) => ({
+          type: e.fileType,
+          url: e.fileUrl,
+          uploadedAt: e.uploadedAt,
+          replacedAt: e.replacedAt,
+          isCurrent: e.isCurrent,
+        })),
+      ).toEqual([
+        // current original: the second approved proposal, uploaded when proposed
+        {
+          type: PiFileType.ORIGINAL,
+          url: "/files/file-4/download",
+          uploadedAt: o2ProposedAt,
+          replacedAt: null,
+          isCurrent: true,
+        },
+        // current signed
+        {
+          type: PiFileType.SIGNED,
+          url: "/files/file-3/download",
+          uploadedAt: s2At,
+          replacedAt: null,
+          isCurrent: true,
+        },
+        // first replacement original, replaced by the second approval
+        {
+          type: PiFileType.ORIGINAL,
+          url: "/files/file-2/download",
+          uploadedAt: new Date("2026-02-10T00:00:00Z"),
+          replacedAt: o2ApprovedAt,
+          isCurrent: false,
+        },
+        // first signed copy, replaced by the re-upload
+        {
+          type: PiFileType.SIGNED,
+          url: "/files/file-1/download",
+          uploadedAt: new Date("2026-02-01T00:00:00Z"),
+          replacedAt: s2At,
+          isCurrent: false,
+        },
+        // the very first original, replaced by the first approval
+        {
+          type: PiFileType.ORIGINAL,
+          url: "/files/original/download",
+          uploadedAt: T0,
+          replacedAt: o1ApprovedAt,
+          isCurrent: false,
+        },
+      ]);
+      expect(versionsRepo.rows).toHaveLength(3);
+      // archived rows carry the uploader's email for the history list
+      expect(
+        history.find((e) => e.fileUrl === "/files/original/download")!
+          .uploadedBy,
+      ).toEqual({ id: "ops-old", email: "old-ops@ceat.com" });
+    });
+
+    it("owner-check: another customer's client gets 404, ops sees any card", async () => {
+      seedFiledPi();
+      await replaceOriginal("repl.pdf");
+
+      await expect(
+        service.getFileHistory("pi-1", otherClientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.getFileHistory("no-such-pi", clientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(await service.getFileHistory("pi-1", opsActor)).toHaveLength(2);
+    });
+
+    it("a foreign client can't write a version either (upload-signed is owner-checked first)", async () => {
+      seedFiledPi();
+      await expect(
+        service.uploadSigned("pi-1", file("x.pdf"), otherClientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(versionsRepo.rows).toHaveLength(0);
     });
   });
 

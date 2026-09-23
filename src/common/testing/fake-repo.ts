@@ -5,7 +5,8 @@ import { FindOperator } from "typeorm";
  * this project's service specs instead of a real DB or a heavy mocking
  * framework. Understands the `where` shapes those services actually use:
  * flat ({ id }, { piNumber }), nested relations ({ pi: { customer: { id } } })
- * and the `In([...])` operator at any depth.
+ * the `In([...])` operator at any depth, and an array of those (OR) for
+ * find/findOne/count.
  *
  * Rows hold relations exactly as they were written (a service typically
  * writes a bare `{ id }` reference). `relationRepos` lets a spec say which
@@ -63,6 +64,16 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
     });
   }
 
+  // A `where` array is TypeORM's OR: any one of the objects may match.
+  function matchesWhere(
+    row: any,
+    where: Record<string, any> | Record<string, any>[],
+  ): boolean {
+    return Array.isArray(where)
+      ? where.some((w) => matches(row, w))
+      : matches(row, where);
+  }
+
   function upsert(entity: T): T {
     if (!entity.id) {
       entity.id = `generated-${nextId++}`;
@@ -101,7 +112,7 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
         where: Record<string, any>;
         relations?: string[];
       }) => {
-        const found = rows.find((r) => matches(r, where));
+        const found = rows.find((r) => matchesWhere(r, where));
         return found ? hydrate(found, relations) : null;
       },
     ),
@@ -113,7 +124,7 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
         take?: number;
       }) => {
         let result = opts?.where
-          ? rows.filter((r) => matches(r, opts.where!))
+          ? rows.filter((r) => matchesWhere(r, opts.where!))
           : [...rows];
         const orderEntry = opts?.order && Object.entries(opts.order)[0];
         if (orderEntry) {
@@ -133,7 +144,7 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
     ),
     count: jest.fn(async (opts?: { where?: Record<string, any> }) =>
       opts?.where
-        ? rows.filter((r) => matches(r, opts.where!)).length
+        ? rows.filter((r) => matchesWhere(r, opts.where!)).length
         : rows.length,
     ),
     delete: jest.fn(async (where: Record<string, any>) => {
