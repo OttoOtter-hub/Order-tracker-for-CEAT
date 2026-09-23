@@ -1236,7 +1236,7 @@ ops по своему `customer_id`, те же значения; деталь о
     (9 − 3 = 6, как и ожидалось); до подтверждения контейнера та же строка
     показывала `plannedQty 0` (черновик не в счёт).
 
-## Фаза 13: email-уведомления по четырём событиям (не задеплоено)
+## Фаза 13: email-уведомления по четырём событиям (задеплоено на прод 2026-09-23, коммит `ee90dc8`)
 
 `nodemailer` + `EventEmitter2` (`@nestjs/event-emitter`) + `@nestjs/schedule`. Explицит-emit в
 конце соответствующих транзакционных методов, не TypeORM subscribers — тот же выбор в пользу
@@ -2634,6 +2634,69 @@ dist.bak-20260918-relink-pairing` → `mv dist.new dist` → `start`. Перед
   Откат: `stop`, вернуть `dist.bak-20260922-phase12` в `dist`, `start`,
   вернуть `ceat-frontend.prev-before-phase12` в `/var/www/ceat-frontend`,
   `nginx -t` → `reload`.
+
+### Редеплой Фаз 13-14 (email-уведомления + тёмная тема, backend + фронтенд)
+
+2026-09-23, коммиты `ee90dc8` (Фаза 13), `2f90ef6` (Фаза 14). Порядок, как
+просили: **сначала миграция, потом код.**
+
+- **Миграция.** `dist.new` рядом (SHA-256 архива сверен: `9ec05873…d52ac92`),
+  `migration:show` с него показал ровно одну ожидающую
+  (`AddActualContainerArrivalNotification1790200000000`, ещё не была
+  задеплоена — Фаза 13 писалась уже после того, как Фаза 12 ушла на прод в
+  этом же заходе, отдельным коммитом), накатана командой `migration:run`
+  **до** остановки сервиса (аддитивная nullable-колонка, старый код её не
+  видит).
+- **Новые npm-зависимости.** Фаза 13 впервые за всю историю деплоев этого
+  проекта добавила пакеты (`nodemailer`, `@nestjs/event-emitter`,
+  `@nestjs/schedule`, `cron` + `@types/nodemailer` в dev) — раньше ни одна
+  фаза этого не требовала. `package.json`/`package-lock.json` на проде
+  сохранены как `*.bak-20260923-p13deps`, залиты новые, `npm install`
+  (добавил 517 пакетов — транзитивные зависимости четырёх новых, не считая
+  каких-то ещё, `node_modules` явно не переустанавливался с нуля долгое
+  время), проверено `require()` каждого нового пакета напрямую перед
+  перезапуском сервиса — все резолвятся.
+- **Backend:** `stop` → `mv dist dist.bak-20260923-p121314` → `mv dist.new
+  dist` → `chmod -R 755` → `start` (поднялся штатно, в логе
+  `ScheduleModule`/`EventEmitterModule`/`NotificationsModule` "dependencies
+  initialized" без единой ошибки — то есть `ArrivalNotificationsService`
+  успешно зарегистрировал cron-джобу через `SchedulerRegistry` при
+  старте). Побайтовая сверка `.js` от уже задеплоенной на этом же заходе
+  Фазы 12: отличаются `actual-containers/{actual-container.entity,
+  actual-containers.module}` + новые `arrival-notifications.service`/`utils`,
+  `app.module`, `common/testing/fake-repo` (тестовый хелпер, тоже
+  компилируется в `dist` — так было и раньше, см. Фазу 9), новая миграция,
+  весь новый `notifications/`, `proforma-invoices.service`,
+  `ready-to-ship.service` + его тестовый `testing/ready-to-ship-harness`,
+  `users.service` — то есть ровно файлы Фазы 13, больше ничего.
+- **Фронтенд (только Фаза 14, backend у неё нет):** собран с
+  `VITE_API_URL=/api` (в бандле нет `localhost:3000`, есть `ui-theme`),
+  `/var/www/ceat-frontend` → `.prev-before-p121314`, `nginx -t` → `reload`;
+  новый бандл (`index-CLB5Z4wi.js`) отдаётся.
+- **Проверено публично:** `GET /` — `200`, `GET /api/proforma-invoices` и
+  `/api/customers` без токена — `401`, порт 3000 снаружи закрыт (`ufw`:
+  только `22`/`80`), журнал за первые минуты после рестарта — без единой
+  строки `error`/`exception`.
+- **Живая проверка на реальных данных прода — сознательно ограничена.**
+  Триггеры четырёх email-событий Фазы 13 (`upload-pi`, `propose-replacement`,
+  `unlock`) — это записи в реальные карточки живого клиента; ни один не
+  вызывался на проде (тот же принцип, что уже применялся для
+  `confirm-arrival` в Фазе 11 — "никогда не запускать confirm/undo/unlock
+  или загрузки на проде"). Вместо этого: чистый лог регистрации всех трёх
+  новых модулей при старте (подтверждает, что `ArrivalNotificationsService`
+  не упал при построении cron-джобы) и юнит-тесты (см. "Фаза 13" выше).
+  Тёмная тема (Фаза 14) — чисто фронтенд, без риска для данных: открыт
+  реальный `http://169.58.224.105/login` в браузере, `<html class="dark">`
+  проставился (система в тёмном режиме), переключателя темы на странице
+  входа нет — как и задумано.
+- Бэкапы: `dist.bak-20260923-p121314`, `ceat-frontend.prev-before-p121314`,
+  `package.json.bak-20260923-p13deps`/`package-lock.json.bak-20260923-p13deps`.
+  Откат: `stop`, вернуть `dist.bak-20260923-p121314` в `dist`, вернуть оба
+  `package*.json.bak-*` и `npm install` (откатит и `node_modules`), `start`,
+  вернуть `ceat-frontend.prev-before-p121314` в `/var/www/ceat-frontend`,
+  `nginx -t` → `reload`. Миграция Фазы 13 аддитивна — откатывать её вместе с
+  кодом не обязательно (старый код просто её не видит), но
+  `migration:revert` с бэкапного `dist` тоже сработает, если понадобится.
 
 ### Что не тронуто / известные пробелы
 
