@@ -29,6 +29,12 @@
   "language": {
     "label": "Язык"
   },
+  "theme": {
+    "label": "Тема",
+    "light": "Светлая",
+    "dark": "Тёмная",
+    "system": "Системная"
+  },
   "nav": {
     "opsTitle": "CEAT · Ops",
     "clientFallback": "Клиент",

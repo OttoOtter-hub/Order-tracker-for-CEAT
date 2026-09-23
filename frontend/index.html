@@ -2,6 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Anti-FOUC: sets the "dark" class on <html> before any CSS loads or React
+      renders, so a saved dark/system-dark preference never flashes light
+      first. Must stay in sync with ThemeProvider's storageKey ("ui-theme")
+      and its light/dark/system semantics (src/main.tsx) — next-themes
+      resolves the same way once it hydrates, so it never has to correct
+      what this script already set.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("ui-theme");
+          var isDark =
+            stored === "dark" ||
+            ((stored === "system" || stored === null) &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (isDark) {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (e) {
+          // localStorage blocked (private mode, etc.) — fall back to light,
+          // same as ThemeProvider would.
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CEAT Order Tracking</title>

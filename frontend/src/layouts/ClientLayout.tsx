@@ -4,6 +4,7 @@ import { FileText, LogOut, Ship, Truck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
+import { ThemeSwitcher } from "@/components/ThemeSwitcher"
 import { useAuth } from "@/auth/AuthContext"
 import { useCustomersQuery } from "@/api/customers"
 
@@ -53,8 +54,9 @@ export function ClientLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t px-4 py-3">
+        <div className="flex items-center gap-2 border-t px-4 py-3">
           <LanguageSwitcher />
+          <ThemeSwitcher />
         </div>
         <div className="border-t p-2">
           <Button
