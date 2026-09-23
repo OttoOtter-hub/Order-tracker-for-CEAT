@@ -65,3 +65,14 @@ export function useUploadBackorderMutation() {
 export function exportBackorderXlsx(): Promise<void> {
   return downloadFile("/backorder/export-xlsx", "Backorder_export.xlsx")
 }
+
+// GET /backorder-uploads/:id/snapshot-export (Phase 15) — reconstructs the
+// exact .xlsx this upload was parsed from, sheet-for-sheet, from the raw
+// BackorderUploadSnapshot rows. Ops-only, like the rest of this file's
+// upload history.
+export function exportSnapshot(id: string): Promise<void> {
+  return downloadFile(
+    `/backorder-uploads/${id}/snapshot-export`,
+    "Backorder_snapshot.xlsx"
+  )
+}

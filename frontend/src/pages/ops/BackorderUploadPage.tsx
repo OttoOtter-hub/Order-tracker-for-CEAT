@@ -1,11 +1,13 @@
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
+import { Download } from "lucide-react"
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -16,6 +18,7 @@ import {
 } from "@/components/ui/table"
 import { FileUploadForm } from "@/components/FileUploadForm"
 import {
+  exportSnapshot,
   useBackorderUploadsQuery,
   useUploadBackorderMutation,
   type BackorderUploadResult,
@@ -68,6 +71,16 @@ export function BackorderUploadPage() {
   const [lastResult, setLastResult] = useState<BackorderUploadResult | null>(
     null
   )
+  const [exportingId, setExportingId] = useState<string | null>(null)
+
+  function handleExportSnapshot(id: string) {
+    setExportingId(id)
+    exportSnapshot(id)
+      .catch((error) =>
+        toast.error(getErrorMessage(error, t("common.downloadFailed")))
+      )
+      .finally(() => setExportingId(null))
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,6 +145,9 @@ export function BackorderUploadPage() {
                   <TableHead>{t("backorder.columns.newCards")}</TableHead>
                   <TableHead>{t("backorder.columns.archived")}</TableHead>
                   <TableHead>{t("backorder.columns.skipped")}</TableHead>
+                  <TableHead>
+                    <span className="sr-only">{t("common.download")}</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -144,6 +160,17 @@ export function BackorderUploadPage() {
                     <TableCell>{u.newCardsCreated}</TableCell>
                     <TableCell>{u.cardsArchived}</TableCell>
                     <TableCell>{u.rowsSkipped}</TableCell>
+                    <TableCell>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={exportingId === u.id}
+                        onClick={() => handleExportSnapshot(u.id)}
+                      >
+                        <Download /> {t("common.download")}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
