@@ -52,6 +52,10 @@ describe("ReadyToShipService", () => {
   afterEach(() => clock.restore());
 
   const containerId = (index: number) => h.containers.rows[index].id as string;
+  // The plan's numbered slots — the always-present "OK to mix" (Phase 21)
+  // is left out; its own specs are in ready-to-ship.ok-to-mix.spec.ts.
+  const slots = <T extends object>(containers: T[]) =>
+    containers.filter((c) => !(c as { isOkToMix?: boolean }).isOkToMix);
 
   async function move(
     piLineItemId: string,
@@ -74,6 +78,7 @@ describe("ReadyToShipService", () => {
       expect(first.containers.map((c) => c.label)).toEqual([
         "Контейнер 1",
         "Контейнер 2",
+        "OK to mix",
       ]);
       expect(
         first.containers.every(
@@ -82,7 +87,8 @@ describe("ReadyToShipService", () => {
       ).toBe(true);
 
       await h.service.getView(clientActor);
-      expect(h.containers.rows).toHaveLength(2);
+      expect(slots(h.containers.rows)).toHaveLength(2);
+      expect(h.containers.rows).toHaveLength(3);
     });
 
     it("sizes the slot set from qty/loadability, not the stored (unreliable) load factor column", async () => {
@@ -145,13 +151,13 @@ describe("ReadyToShipService", () => {
       it("adds only the missing slots, keeping the existing containers and what is in them", async () => {
         const first = await h.service.getView(clientActor);
         await move("li-A", 0, 60);
-        const idsBefore = first.containers.map((c) => c.id);
+        const idsBefore = slots(first.containers).map((c) => c.id);
         growByOne();
 
         const view = await h.service.getView(clientActor);
 
         expect(view.totalPossibleContainers).toBe(3);
-        expect(view.containers.map((c) => c.label)).toEqual([
+        expect(slots(view.containers).map((c) => c.label)).toEqual([
           "Контейнер 1",
           "Контейнер 2",
           "Контейнер 3",
@@ -168,7 +174,7 @@ describe("ReadyToShipService", () => {
 
         await h.service.getView(clientActor);
 
-        expect(h.containers.rows).toHaveLength(3);
+        expect(slots(h.containers.rows)).toHaveLength(3);
       });
 
       it("counts confirmed containers toward the total, and tops up beyond them", async () => {
@@ -177,11 +183,13 @@ describe("ReadyToShipService", () => {
         await h.service.confirm(clientActor);
 
         const same = await h.service.getView(clientActor);
-        expect(same.containers).toHaveLength(2);
+        expect(slots(same.containers)).toHaveLength(2);
 
         growByOne();
         const grown = await h.service.getView(clientActor);
-        expect(grown.containers.map((c) => [c.label, c.isConfirmed])).toEqual([
+        expect(
+          slots(grown.containers).map((c) => [c.label, c.isConfirmed]),
+        ).toEqual([
           ["Контейнер 1", true],
           ["Контейнер 2", false],
           ["Контейнер 3", false],
@@ -198,18 +206,23 @@ describe("ReadyToShipService", () => {
         h.lines.rows.find((r) => r.id === "li-A")!.pi.isArchivedShipped = true;
         const shrunkFurther = await h.service.getView(clientActor);
         expect(shrunkFurther.totalPossibleContainers).toBe(0);
-        expect(shrunkFurther.containers).toHaveLength(2);
+        expect(slots(shrunkFurther.containers)).toHaveLength(2);
       });
 
       it("recreates a slot that went missing, numbering after the highest label in use", async () => {
         await h.service.getView(clientActor);
-        h.containers.rows.pop();
+        // The last numbered slot, not the "OK to mix" row created after it.
+        h.containers.rows.splice(
+          h.containers.rows.findIndex((r) => r.label === "Контейнер 2"),
+          1,
+        );
 
         const view = await h.service.getView(clientActor);
 
         expect(view.containers.map((c) => c.label)).toEqual([
           "Контейнер 1",
           "Контейнер 2",
+          "OK to mix",
         ]);
       });
 
@@ -219,7 +232,7 @@ describe("ReadyToShipService", () => {
 
         const view = await move("li-A", 0, 10);
 
-        expect(view.containers).toHaveLength(3);
+        expect(slots(view.containers)).toHaveLength(3);
       });
 
       it("tolerates two reads racing to add the same new slot: the loser's unique violation is swallowed", async () => {
@@ -237,8 +250,8 @@ describe("ReadyToShipService", () => {
 
         const view = await h.service.getView(clientActor);
 
-        expect(view.containers).toHaveLength(3);
-        expect(view.containers[2].id).toBe("won-3");
+        expect(slots(view.containers)).toHaveLength(3);
+        expect(slots(view.containers)[2].id).toBe("won-3");
       });
     });
 
@@ -301,7 +314,10 @@ describe("ReadyToShipService", () => {
       const view = await h.service.getView(otherClientActor);
 
       expect(view.customerId).toBe("cust-2");
-      expect(view.containers).toEqual([]);
+      // Their own, empty "OK to mix" only — nothing of cust-1's.
+      expect(
+        view.containers.map((c) => [c.label, c.allocations.length]),
+      ).toEqual([["OK to mix", 0]]);
       expect(view.unallocatedLines).toEqual([]);
     });
   });
@@ -740,8 +756,13 @@ describe("ReadyToShipService", () => {
       expect(view.containers.map((c) => c.label)).toEqual([
         "Контейнер 1",
         "Контейнер 2",
+        "OK to mix",
       ]);
-      expect(view.containers.some((c) => oldIds.includes(c.id))).toBe(false);
+      // Emptied numbered slots are recycled; "OK to mix" never is.
+      expect(slots(view.containers).some((c) => oldIds.includes(c.id))).toBe(
+        false,
+      );
+      expect(oldIds).toContain(view.containers[2].id);
       expect(view.unallocatedLines.map((l) => l.remainingQty).sort()).toEqual([
         100, 150,
       ]);
@@ -756,7 +777,9 @@ describe("ReadyToShipService", () => {
 
       // Total need is 2; one is confirmed, so exactly one draft slot comes
       // back — numbered after the highest label still in use.
-      expect(view.containers.map((c) => [c.label, c.isConfirmed])).toEqual([
+      expect(
+        slots(view.containers).map((c) => [c.label, c.isConfirmed]),
+      ).toEqual([
         ["Контейнер 1", true],
         ["Контейнер 2", false],
       ]);
@@ -767,7 +790,7 @@ describe("ReadyToShipService", () => {
     it("is a harmless no-op on an untouched plan", async () => {
       const view = await h.service.undoAll(clientActor);
 
-      expect(view.containers).toHaveLength(2);
+      expect(slots(view.containers)).toHaveLength(2);
     });
 
     it("is client-only", async () => {

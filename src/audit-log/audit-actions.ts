@@ -21,6 +21,7 @@ export const AUDIT_ACTIONS = [
 
   // Ready to ship
   "rts.moved",
+  "rts.moved_remaining_to_mix",
   "rts.removed",
   "rts.undone_last",
   "rts.undone_all",

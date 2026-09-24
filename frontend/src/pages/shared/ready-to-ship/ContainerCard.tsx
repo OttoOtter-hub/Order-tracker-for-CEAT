@@ -2,6 +2,8 @@ import { useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import {
+  ChevronDown,
+  ChevronRight,
   Download,
   FileCheck,
   FileX,
@@ -22,7 +24,7 @@ import {
   type ContainerAllocation,
   type ShippingContainer,
 } from "@/api/readyToShip"
-import { FILL_CARD, fillLevel, formatPercent } from "@/lib/fill"
+import { FILL_CARD, FILL_TEXT, fillLevel, formatPercent } from "@/lib/fill"
 import { formatNumber, formatPiTitle } from "@/lib/format"
 import { useContainerName } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
@@ -208,6 +210,13 @@ export function ContainerCard({
   const level = fillLevel(container.fillPercent)
   const isClient = mode === "client"
   const isOps = mode === "ops"
+  // "OK to mix" has no capacity: no meter, no fill colour, no percentages —
+  // just how much it holds.
+  const isOkToMix = container.isOkToMix
+  const okToMixSummary = t("readyToShip.card.okToMixSummary", {
+    count: container.totalLines,
+    qty: formatNumber(String(container.totalQty)),
+  })
   const showCounter =
     container.markingFilesTotal > 0 &&
     (container.isConfirmed || container.markingFilesUploaded > 0)
@@ -216,19 +225,73 @@ export function ContainerCard({
   // "partially unlocked" alike, next to the finer-grained per-line one below.
   const hasAnyLockedPosition = container.isConfirmed || container.isPartiallyUnlocked
 
-  return (
-    <Card
-      data-container-label={container.label}
-      data-confirmed={container.isConfirmed}
-      data-partially-unlocked={container.isPartiallyUnlocked}
-      className={cn("gap-3", FILL_CARD[level])}
+  // Screen-only state: a confirmed container starts collapsed, a draft one
+  // expanded, and a change of that status (confirm, unlock) resets it.
+  const [collapsed, setCollapsed] = useState(container.isConfirmed)
+  const [collapsedFor, setCollapsedFor] = useState(container.isConfirmed)
+  if (collapsedFor !== container.isConfirmed) {
+    setCollapsedFor(container.isConfirmed)
+    setCollapsed(container.isConfirmed)
+  }
+
+  const toggle = (
+    <Button
+      type="button"
+      size="icon-sm"
+      variant="ghost"
+      className="-ml-1.5 shrink-0"
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? t("readyToShip.card.expand") : t("readyToShip.card.collapse")}
+      title={collapsed ? t("readyToShip.card.expand") : t("readyToShip.card.collapse")}
+      data-testid="container-toggle"
+      onClick={() => setCollapsed((value) => !value)}
     >
+      {collapsed ? <ChevronRight /> : <ChevronDown />}
+    </Button>
+  )
+
+  const cardProps = {
+    "data-container-label": container.label,
+    "data-ok-to-mix": isOkToMix,
+    "data-confirmed": container.isConfirmed,
+    "data-partially-unlocked": container.isPartiallyUnlocked,
+    "data-collapsed": collapsed,
+  }
+
+  if (collapsed) {
+    return (
+      <Card
+        {...cardProps}
+        size="sm"
+        className={cn("py-2", !isOkToMix && FILL_CARD[level])}
+      >
+        <CardHeader className="flex items-center gap-2">
+          {toggle}
+          <CardTitle className="text-base">{containerName(container.label)}</CardTitle>
+          <span
+            className={cn(
+              "ml-auto text-sm tabular-nums",
+              isOkToMix ? "text-muted-foreground" : FILL_TEXT[level]
+            )}
+          >
+            {isOkToMix ? okToMixSummary : formatPercent(container.fillPercent)}
+          </span>
+        </CardHeader>
+      </Card>
+    )
+  }
+
+  return (
+    <Card {...cardProps} className={cn("gap-3", !isOkToMix && FILL_CARD[level])}>
       <CardHeader className="gap-2">
         <div className="flex items-start justify-between gap-3">
           <div className="grid gap-1.5">
-            <CardTitle className="text-lg">
-              {containerName(container.label)}
-            </CardTitle>
+            <div className="flex items-center gap-1">
+              {toggle}
+              <CardTitle className="text-lg">
+                {containerName(container.label)}
+              </CardTitle>
+            </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {container.isConfirmed ? (
                 <Badge variant="outline" className={GREEN_BADGE}>
@@ -246,7 +309,16 @@ export function ContainerCard({
               )}
             </div>
           </div>
-          <FillMeter percent={container.fillPercent} large className="w-44 shrink-0" />
+          {isOkToMix ? (
+            <span
+              className="shrink-0 text-sm font-medium tabular-nums"
+              data-testid="ok-to-mix-summary"
+            >
+              {okToMixSummary}
+            </span>
+          ) : (
+            <FillMeter percent={container.fillPercent} large className="w-44 shrink-0" />
+          )}
         </div>
 
         {(showCounter || (isOps && hasAnyLockedPosition)) && (
@@ -316,12 +388,14 @@ export function ContainerCard({
                         qty: formatNumber(String(allocation.allocatedQty)),
                       })}
                     </div>
-                    <div
-                      className="text-xs text-muted-foreground tabular-nums"
-                      title={t("readyToShip.card.shareHint")}
-                    >
-                      {formatPercent(allocation.fillContribution * 100)}
-                    </div>
+                    {!isOkToMix && (
+                      <div
+                        className="text-xs text-muted-foreground tabular-nums"
+                        title={t("readyToShip.card.shareHint")}
+                      >
+                        {formatPercent(allocation.fillContribution * 100)}
+                      </div>
+                    )}
                     {isClient && !allocation.isLocked && (
                       <Button
                         type="button"

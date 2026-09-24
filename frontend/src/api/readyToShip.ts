@@ -46,6 +46,11 @@ export interface ContainerAllocation {
 export interface ShippingContainer {
   id: string
   label: string
+  // Phase 21: the customer's one "OK to mix" container — always last, no
+  // fill percent (0) and never overfilled; totalQty/totalLines summarise it.
+  isOkToMix: boolean
+  totalQty: number
+  totalLines: number
   // Derived (see backend ReadyToShipService.loadView): true only once every
   // position on this container is locked.
   isConfirmed: boolean
@@ -114,6 +119,13 @@ export function useMoveMutation(customerId?: string) {
     customerId,
     (input: { piLineItemId: string; containerId: string; qty: number }) =>
       apiClient.post<ReadyToShipView>("/ready-to-ship/move", input)
+  )
+}
+
+// Phase 21: every line's whole remainder into "OK to mix", all or nothing.
+export function useMoveRemainingToMixMutation(customerId?: string) {
+  return useViewMutation(customerId, () =>
+    apiClient.post<ReadyToShipView>("/ready-to-ship/move-remaining-to-mix")
   )
 }
 

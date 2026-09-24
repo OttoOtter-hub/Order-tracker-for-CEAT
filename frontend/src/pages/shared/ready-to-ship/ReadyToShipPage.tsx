@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
-import { Download } from "lucide-react"
+import { Download, PackageOpen } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,7 @@ import { useAuth } from "@/auth/AuthContext"
 import { useCustomersQuery } from "@/api/customers"
 import {
   exportReadyToShipXlsx,
+  useMoveRemainingToMixMutation,
   useReadyToShipQuery,
   useUnlockAllocationMutation,
   useUnlockContainerMutation,
@@ -106,6 +107,7 @@ function ReadyToShipContent({
   const query = useReadyToShipQuery(customerId)
   const unlock = useUnlockContainerMutation()
   const unlockAllocation = useUnlockAllocationMutation()
+  const moveRemaining = useMoveRemainingToMixMutation(customerId)
 
   const [moveLine, setMoveLine] = useState<UnallocatedLine | null>(null)
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
@@ -114,33 +116,39 @@ function ReadyToShipContent({
     useState<UnlockAllocationTarget | null>(null)
   const [lastContainerId, setLastContainerId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [confirmMoveRemaining, setConfirmMoveRemaining] = useState(false)
 
   const view = query.data
 
   const summary = useMemo(() => {
     if (!view) return null
-    const working = view.containers.filter(
+    // "OK to mix" is not a slot of the plan: it stays out of the counts and
+    // the free slots, and always has its own card after the numbered ones.
+    const okToMix = view.containers.find((c) => c.isOkToMix) ?? null
+    const numbered = view.containers.filter((c) => !c.isOkToMix)
+    const working = numbered.filter(
       (c) => !c.isConfirmed && c.allocations.length > 0
     )
-    const confirmed = view.containers.filter((c) => c.isConfirmed)
+    const confirmed = numbered.filter((c) => c.isConfirmed)
     // The server keeps every slot it ever created (slots are only ever added,
     // so a plan that shrank leaves surplus empty ones — 47 slots for a week
     // that needs 40). Only as many empty slots are shown as the plan still
     // needs: totalPossibleContainers (already rounded up) minus the containers
     // that hold something. Containers with positions are never hidden, so the
     // count can exceed the need only when the client has filled more than it.
-    const emptySlots = view.containers.filter(
+    const emptySlots = numbered.filter(
       (c) => !c.isConfirmed && c.allocations.length === 0
     )
     const free = emptySlots.slice(
       0,
       Math.max(0, view.totalPossibleContainers - working.length - confirmed.length)
     )
-    const shown = new Set([...working, ...confirmed, ...free])
+    const shown = new Set([...working, ...confirmed, ...free, okToMix])
     return {
       working,
       confirmed,
       free,
+      okToMix,
       // What the client can actually work with, in the server's order.
       visibleContainers: view.containers.filter((c) => shown.has(c)),
       remainingTotal: view.unallocatedLines.reduce(
@@ -196,7 +204,7 @@ function ReadyToShipContent({
             </Badge>
             <Badge variant="secondary">
               {t("readyToShip.badgeContainers", {
-                n: summary.visibleContainers.length,
+                n: summary.visibleContainers.length - (summary.okToMix ? 1 : 0),
               })}
             </Badge>
           </div>
@@ -234,6 +242,22 @@ function ReadyToShipContent({
               lines={view.unallocatedLines}
               canMove={isClient}
               onMove={setMoveLine}
+              toolbar={
+                isClient &&
+                summary.okToMix && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={view.unallocatedLines.length === 0 || moveRemaining.isPending}
+                    data-testid="move-remaining-to-mix"
+                    onClick={() => setConfirmMoveRemaining(true)}
+                  >
+                    <PackageOpen />
+                    {t("readyToShip.list.moveRemaining")}
+                  </Button>
+                )
+              }
             />
           </CardContent>
         </Card>
@@ -252,7 +276,7 @@ function ReadyToShipContent({
             </span>
           </div>
 
-          {filled.length === 0 && (
+          {filled.length === 0 && !summary.okToMix?.allocations.length && (
             <p className="text-sm text-muted-foreground">
               {isClient
                 ? t("readyToShip.containers.emptyClient")
@@ -270,6 +294,17 @@ function ReadyToShipContent({
               onUnlockAllocation={setUnlockAllocationTarget}
             />
           ))}
+
+          {summary.okToMix && (
+            <ContainerCard
+              key={summary.okToMix.id}
+              container={summary.okToMix}
+              mode={mode}
+              onRemove={setRemoveTarget}
+              onUnlock={setUnlockTarget}
+              onUnlockAllocation={setUnlockAllocationTarget}
+            />
+          )}
 
           {summary.free.length > 0 && (
             <Card size="sm" data-testid="free-slots">
@@ -304,6 +339,31 @@ function ReadyToShipContent({
             target={removeTarget}
             customerId={customerId}
             onClose={() => setRemoveTarget(null)}
+          />
+          <ConfirmDialog
+            open={confirmMoveRemaining}
+            onOpenChange={setConfirmMoveRemaining}
+            title={t("readyToShip.list.moveRemainingTitle")}
+            description={t("readyToShip.list.moveRemainingDescription", {
+              lines: view.unallocatedLines.length,
+              qty: formatNumber(String(summary.remainingTotal)),
+            })}
+            confirmLabel={t("readyToShip.list.moveRemainingConfirm")}
+            isPending={moveRemaining.isPending}
+            onConfirm={() =>
+              moveRemaining.mutate(undefined, {
+                onSuccess: () => {
+                  toast.success(t("readyToShip.list.moveRemainingDone"))
+                  setConfirmMoveRemaining(false)
+                },
+                onError: (error) => {
+                  toast.error(
+                    getErrorMessage(error, t("readyToShip.list.moveRemainingFailed"))
+                  )
+                  setConfirmMoveRemaining(false)
+                },
+              })
+            }
           />
         </>
       )}

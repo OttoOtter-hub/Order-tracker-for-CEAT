@@ -28,7 +28,10 @@ import {
   UnlockedAllocationView,
   UnlockedContainerView,
 } from "./ready-to-ship.types";
-import { buildReadyToShipExportWorkbook } from "./utils/build-ready-to-ship-export-workbook";
+import {
+  buildReadyToShipExportWorkbook,
+  OK_TO_MIX,
+} from "./utils/build-ready-to-ship-export-workbook";
 import {
   computeTotalPossibleContainers,
   fillContribution,
@@ -48,11 +51,18 @@ function labelNumber(label: string): number {
   return match ? Number(match[1]) : 0;
 }
 
+/** Numbered slots in order, the "OK to mix" container always last. */
 function byLabel(a: ShippingContainer, b: ShippingContainer): number {
   return (
+    Number(a.isOkToMix ?? false) - Number(b.isOkToMix ?? false) ||
     labelNumber(a.label) - labelNumber(b.label) ||
     a.label.localeCompare(b.label)
   );
+}
+
+/** The plan's numbered slots — everything but "OK to mix". */
+function numberedOnly(containers: ShippingContainer[]): ShippingContainer[] {
+  return containers.filter((c) => !c.isOkToMix);
 }
 
 function allocationKey(containerId: string, piLineItemId: string): string {
@@ -151,8 +161,10 @@ export class ReadyToShipService {
           ),
         );
       }
+      // Phase 21: "OK to mix" has no fill to compute, so it is also the one
+      // place a line without loadability can go.
       const loadability = toNumberOrNull(line.loadability);
-      if (!loadability || loadability <= 0) {
+      if (!container.isOkToMix && (!loadability || loadability <= 0)) {
         throw new BadRequestException(
           apiError(
             "LINE_NO_LOADABILITY",
@@ -261,6 +273,128 @@ export class ReadyToShipService {
             materialNum: line.materialNum,
             soNumber: line.soNumber,
             qty: dto.qty,
+          },
+        },
+        em,
+      );
+    });
+
+    return this.loadView(customerId);
+  }
+
+  /**
+   * Phase 21: the whole undistributed remainder of every active line — those
+   * without loadability included — goes into "OK to mix", in one transaction
+   * (all lines or none). The same rules as a single move() apply to each
+   * line: a position already locked in "OK to mix", or a fully confirmed
+   * "OK to mix" that would need a new position, refuses the whole thing.
+   * One AllocationAction per line, so undo-last takes back one line at a time
+   * and undo-all everything, exactly as after individual moves.
+   */
+  async moveRemainingToMix(actor: RequestUser): Promise<ReadyToShipView> {
+    const customerId = this.requireClient(actor);
+
+    await this.dataSource.transaction(async (em) => {
+      const allocationRepo = em.getRepository(ContainerLineAllocation);
+      const okToMix = await this.ensureOkToMix(em, customerId);
+      const lines = await this.loadActiveLines(em, customerId);
+      const lineIds = lines.map((line) => line.item.id);
+      if (lineIds.length) {
+        // Same row locks as move(): a concurrent move can't slip in between
+        // this remainder calculation and the writes below.
+        await em.getRepository(PiLineItem).find({
+          where: { id: In(lineIds) },
+          lock: { mode: "pessimistic_write" },
+        });
+      }
+      const allocations = lineIds.length
+        ? await allocationRepo.find({
+            where: { piLineItem: { id: In(lineIds) } },
+            relations: ["container", "piLineItem"],
+          })
+        : [];
+
+      const toMove = lines
+        .map((line) => {
+          const placed = allocations
+            .filter((a) => a.piLineItem.id === line.item.id)
+            .reduce((sum, a) => sum + (toNumberOrNull(a.allocatedQty) ?? 0), 0);
+          return { line, qty: line.dispatchQty - placed };
+        })
+        .filter(({ qty }) => qty > 0);
+      if (toMove.length === 0) {
+        throw new BadRequestException(
+          apiError("NOTHING_TO_MOVE", "нет нераспределённого остатка"),
+        );
+      }
+
+      const inOkToMix = allocations.filter(
+        (a) => a.container.id === okToMix.id,
+      );
+      const okToMixFullyLocked =
+        inOkToMix.length > 0 && inOkToMix.every((a) => a.isLocked);
+      const plan = toMove.map((entry) => ({
+        ...entry,
+        existing: inOkToMix.find((a) => a.piLineItem.id === entry.line.item.id),
+      }));
+      // Every line is checked before anything is written — all or nothing.
+      if (plan.some(({ existing }) => existing?.isLocked)) {
+        throw new BadRequestException(
+          apiError(
+            "ALLOCATION_LOCKED",
+            "позиция заблокирована — состав можно менять только после разблокировки CEAT",
+          ),
+        );
+      }
+      if (okToMixFullyLocked && plan.some(({ existing }) => !existing)) {
+        throw new BadRequestException(
+          apiError(
+            "CONTAINER_LOCKED",
+            "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+          ),
+        );
+      }
+
+      const actionRepo = em.getRepository(AllocationAction);
+      const now = new Date();
+      for (const { line, qty, existing } of plan) {
+        if (existing) {
+          await this.setAllocatedQty(
+            em,
+            existing,
+            (toNumberOrNull(existing.allocatedQty) ?? 0) + qty,
+          );
+        } else {
+          await allocationRepo.save(
+            allocationRepo.create({
+              container: { id: okToMix.id } as ShippingContainer,
+              piLineItem: { id: line.item.id } as PiLineItem,
+              allocatedQty: String(qty),
+              isLocked: false,
+            }),
+          );
+        }
+        await actionRepo.save(
+          actionRepo.create({
+            customer: { id: customerId } as Customer,
+            container: { id: okToMix.id } as ShippingContainer,
+            piLineItem: { id: line.item.id } as PiLineItem,
+            deltaQty: String(qty),
+            createdAt: now,
+          }),
+        );
+      }
+
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.moved_remaining_to_mix",
+          entityType: "shipping_container",
+          entityId: okToMix.id,
+          metadata: {
+            containerLabel: okToMix.label,
+            lines: toMove.length,
+            qty: toMove.reduce((sum, { qty }) => sum + qty, 0),
           },
         },
         em,
@@ -523,7 +657,9 @@ export class ReadyToShipService {
       const lockedContainerIds = new Set(
         allAllocations.filter((a) => a.isLocked).map((a) => a.container.id),
       );
-      const pureDraftContainers = containers.filter(
+      // "OK to mix" is never recycled: it isn't a slot of the plan, and it
+      // keeps its identity (and its place last) even while empty.
+      const pureDraftContainers = numberedOnly(containers).filter(
         (c) => !lockedContainerIds.has(c.id),
       );
       const pureDraftIds = pureDraftContainers.map((c) => c.id);
@@ -542,7 +678,9 @@ export class ReadyToShipService {
           id: In(emptyContainers.map((c) => c.id)),
         });
       }
-      const kept = containers.filter((c) => !emptyContainers.includes(c));
+      const kept = numberedOnly(containers).filter(
+        (c) => !emptyContainers.includes(c),
+      );
 
       const total = computeTotalPossibleContainers(
         await this.loadActiveLines(em, customerId),
@@ -621,8 +759,10 @@ export class ReadyToShipService {
         touchedContainerIds.has(a.container.id),
       );
       const fillByContainer = this.sumFillByContainer(touchedAllocations);
-      const overfilled = toConfirm.filter((c) =>
-        isOverfilled(fillByContainer.get(c.id) ?? 0),
+      // "OK to mix" has no capacity: it's skipped entirely, however much
+      // it holds (Phase 21).
+      const overfilled = toConfirm.filter(
+        (c) => !c.isOkToMix && isOverfilled(fillByContainer.get(c.id) ?? 0),
       );
       if (overfilled.length > 0) {
         const percentOf = (c: ShippingContainer) =>
@@ -1078,11 +1218,41 @@ export class ReadyToShipService {
       repo.create({
         customer: { id: customerId } as Customer,
         label: `Контейнер ${next++}`,
+        isOkToMix: false,
         confirmedAt: null,
         confirmedBy: null,
       }),
     );
     await repo.save(fresh);
+  }
+
+  /**
+   * The customer's one "OK to mix" container, created on first need with the
+   * fixed label (the same in both languages — it's the trade term). The
+   * partial unique index on (customer_id) WHERE is_ok_to_mix — and the
+   * (customer_id, label) one — make a concurrent second create fail rather
+   * than duplicate it.
+   */
+  private async ensureOkToMix(
+    em: EntityManager,
+    customerId: string,
+  ): Promise<ShippingContainer> {
+    const repo = em.getRepository(ShippingContainer);
+    const existing = await repo.findOne({
+      where: { customer: { id: customerId }, isOkToMix: true },
+    });
+    if (existing) {
+      return existing;
+    }
+    return repo.save(
+      repo.create({
+        customer: { id: customerId } as Customer,
+        label: OK_TO_MIX,
+        isOkToMix: true,
+        confirmedAt: null,
+        confirmedBy: null,
+      }),
+    );
   }
 
   /**
@@ -1097,25 +1267,28 @@ export class ReadyToShipService {
    * same new labels; the (customer_id, label) unique constraint makes the
    * loser fail, which is swallowed here — the winner's containers are what
    * both then read.
+   *
+   * Phase 21: only numbered slots count toward `total`; the "OK to mix"
+   * container is made here too (once), whatever the total.
    */
   private async ensureContainerSlots(
     customerId: string,
     total: number,
   ): Promise<void> {
-    if (total <= 0) {
-      return;
-    }
     try {
       await this.dataSource.transaction(async (em) => {
-        const existing = await em
-          .getRepository(ShippingContainer)
-          .find({ where: { customer: { id: customerId } } });
+        const existing = numberedOnly(
+          await em
+            .getRepository(ShippingContainer)
+            .find({ where: { customer: { id: customerId } } }),
+        );
         await this.createEmptyContainers(
           em,
           customerId,
           total - existing.length,
           existing,
         );
+        await this.ensureOkToMix(em, customerId);
       });
     } catch (err) {
       if (!isUniqueViolation(err)) {
@@ -1141,9 +1314,14 @@ export class ReadyToShipService {
       this.loadActiveLines(em, customerId),
       findContainers(),
     ]);
+    // "OK to mix" is not a slot of the plan: it neither counts toward nor
+    // is counted against totalPossibleContainers.
     const totalPossibleContainers = computeTotalPossibleContainers(lines);
+    const needsTopUp =
+      numberedOnly(existingContainers).length < totalPossibleContainers ||
+      !existingContainers.some((c) => c.isOkToMix);
     const containers = (
-      existingContainers.length < totalPossibleContainers
+      needsTopUp
         ? (await this.ensureContainerSlots(customerId, totalPossibleContainers),
           await findContainers())
         : existingContainers
@@ -1241,7 +1419,10 @@ export class ReadyToShipService {
             loadability,
             allocatedQty,
             isLocked: allocation.isLocked,
-            fillContribution: fillContribution(allocatedQty, loadability),
+            // "OK to mix" has no capacity, so no share of it either.
+            fillContribution: container.isOkToMix
+              ? 0
+              : fillContribution(allocatedQty, loadability),
             markingFile: marking
               ? { id: marking.id, uploadedAt: marking.uploadedAt }
               : null,
@@ -1260,15 +1441,19 @@ export class ReadyToShipService {
         allocationViews.length > 0 && lockedCount === allocationViews.length;
       const isPartiallyUnlocked =
         lockedCount > 0 && lockedCount < allocationViews.length;
+      const isOkToMix = container.isOkToMix ?? false;
       return {
         id: container.id,
         label: container.label,
+        isOkToMix,
+        totalQty: allocationViews.reduce((sum, a) => sum + a.allocatedQty, 0),
+        totalLines: allocationViews.length,
         isConfirmed,
         isPartiallyUnlocked,
         confirmedAt: container.confirmedAt,
         confirmedById: container.confirmedBy?.id ?? null,
-        fillPercent: toFillPercent(fillRatio),
-        isOverfilled: isOverfilled(fillRatio),
+        fillPercent: isOkToMix ? 0 : toFillPercent(fillRatio),
+        isOverfilled: !isOkToMix && isOverfilled(fillRatio),
         markingFilesUploaded: allocationViews.filter((a) => a.markingFile)
           .length,
         markingFilesTotal: allocationViews.length,

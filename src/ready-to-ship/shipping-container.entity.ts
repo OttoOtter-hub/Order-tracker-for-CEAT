@@ -27,6 +27,17 @@ export class ShippingContainer extends BaseEntity {
   @Column({ type: "varchar" })
   label: string;
 
+  /**
+   * Phase 21: the customer's single "OK to mix" container — lines that ship
+   * mixed rather than in a numbered, loadability-planned slot. Created lazily
+   * with the fixed label "OK to mix", never counted as a slot of the plan
+   * (totalPossibleContainers), never overfilled (no fill percent at all), and
+   * the only place a line without loadability can go. Confirm, unlocks,
+   * undo and marking files treat it like any other container.
+   */
+  @Column({ name: "is_ok_to_mix", type: "boolean", default: false })
+  isOkToMix: boolean;
+
   /** Stamped by the last confirm() that touched (any of) this container's positions. */
   @Column({ name: "confirmed_at", type: "timestamptz", nullable: true })
   confirmedAt: Date | null;

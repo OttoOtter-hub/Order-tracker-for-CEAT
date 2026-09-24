@@ -151,6 +151,7 @@
       },
       "rts": {
         "moved": "Moved to a container",
+        "moved_remaining_to_mix": "Whole remainder moved to OK to mix",
         "removed": "Removed from a container",
         "undone_last": "Last action undone",
         "undone_all": "All unsaved changes undone",
@@ -193,6 +194,7 @@
       "positionsLocked": "Positions confirmed",
       "positionsUnlocked": "Positions unlocked",
       "positionsRolledBack": "Positions rolled back",
+      "lines": "Lines",
       "undoneDelta": "Quantity undone",
       "replacedPrevious": "Replaced an earlier file",
       "linesReset": "Lines reset",
@@ -407,9 +409,15 @@
       "actionsAria": "Actions",
       "so": "SO {{so}}",
       "approxContainers": "≈ {{n}} cont.",
-      "notPlaceable": "cannot be placed",
-      "notPlaceableHint": "Cannot be placed: the line has no loadability, so its container fill cannot be calculated",
-      "move": "Move"
+      "notPlaceable": "OK to mix only",
+      "notPlaceableHint": "The line has no loadability, so its container fill cannot be calculated — it can only go to OK to mix",
+      "move": "Move",
+      "moveRemaining": "Move remainder to OK to mix",
+      "moveRemainingTitle": "Move the whole remainder to OK to mix?",
+      "moveRemainingDescription": "The undistributed remainder of every line in the list (lines: {{lines}}, {{qty}} pcs in total) goes into OK to mix in one step. “Undo one action” then takes back one line at a time, “Undo all” — everything.",
+      "moveRemainingConfirm": "Move to OK to mix",
+      "moveRemainingDone": "Remainder moved to OK to mix",
+      "moveRemainingFailed": "Could not move the remainder to OK to mix"
     },
     "containers": {
       "title": "Containers",
@@ -431,7 +439,11 @@
       "pi": "PI {{title}}",
       "piSo": " · SO {{so}}",
       "shareHint": "Share of the container taken by this line",
-      "remove": "Remove"
+      "remove": "Remove",
+      "okToMixSummary_one": "{{count}} line / {{qty}} pcs",
+      "okToMixSummary_other": "{{count}} lines / {{qty}} pcs",
+      "expand": "Expand",
+      "collapse": "Collapse"
     },
     "marking": {
       "uploaded": "File uploaded",
@@ -460,6 +472,8 @@
       "container": "Container",
       "allConfirmed": "All containers are confirmed — there is nowhere to move to. Ask CEAT to unlock one.",
       "confirmedTag": "confirmed",
+      "needsLoadabilityTag": "needs loadability",
+      "onlyOkToMix": "This line has no loadability, so it can only go to OK to mix.",
       "afterMove": "Fill after the move",
       "overloadWarning": "“{{label}}” will be filled to {{percent}}: you can move it, but you will not be able to confirm the plan while the container is overloaded.",
       "submit": "Move",
@@ -649,6 +663,7 @@
     "CONTAINER_OVERFILLED": "Overfilled containers: {{containers}}.",
     "CONTAINER_NOT_LOCKED": "This container isn't confirmed — there's nothing to unlock.",
     "ALLOCATION_NOT_LOCKED": "This position isn't locked — there's nothing to unlock.",
+    "NOTHING_TO_MOVE": "There is no undistributed remainder left to move.",
     "UNDO_REMOVE_CONFLICT": "Can't undo removing {{qty, number}} pcs: this line has already been placed in another container (free: {{remaining, number}}).",
     "MARKING_REQUIRES_LOCKED_ALLOCATION": "A marking file can only be uploaded for a confirmed position.",
     "ARRIVAL_ALREADY_CONFIRMED": "Arrival has already been confirmed.",

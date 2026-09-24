@@ -99,9 +99,23 @@ function MoveForm({
     [max, t]
   )
 
-  const preferred = containers.find(
-    (c) => c.id === preferredContainerId && !c.isConfirmed
-  )
+  const loadability = line.loadability !== null && line.loadability > 0 ? line.loadability : null
+  // Phase 21: a line without loadability can only go to "OK to mix" — the
+  // numbered containers are offered, but disabled, so the reason is visible.
+  const blockedReason = (container: ShippingContainer): string | null =>
+    container.isConfirmed
+      ? t("readyToShip.move.confirmedTag")
+      : !container.isOkToMix && loadability === null
+        ? t("readyToShip.move.needsLoadabilityTag")
+        : null
+
+  const okToMix = containers.find((c) => c.isOkToMix)
+  const preferred =
+    loadability === null
+      ? okToMix && !blockedReason(okToMix)
+        ? okToMix
+        : undefined
+      : containers.find((c) => c.id === preferredContainerId && !blockedReason(c))
   const form = useForm<MoveFormValues>({
     resolver: zodResolver(schema),
     mode: "onChange",
@@ -121,14 +135,13 @@ function MoveForm({
   const selectedId = form.watch("containerId")
   const qty = /^\d+$/.test(qtyText) ? Number(qtyText) : null
   const qtyIsValid = qty !== null && qty >= 1 && qty <= max
-  const loadability = line.loadability !== null && line.loadability > 0 ? line.loadability : null
 
   function projectedPercent(container: ShippingContainer): number | null {
-    if (!qtyIsValid || loadability === null) return null
+    if (!qtyIsValid || loadability === null || container.isOkToMix) return null
     return container.fillPercent + (qty / loadability) * 100
   }
 
-  const hasTarget = containers.some((c) => !c.isConfirmed)
+  const hasTarget = containers.some((c) => !blockedReason(c))
   const selected = containers.find((c) => c.id === selectedId)
   const selectedProjected = selected ? projectedPercent(selected) : null
 
@@ -180,6 +193,11 @@ function MoveForm({
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
+          {loadability === null && (
+            <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+              {t("readyToShip.move.onlyOkToMix")}
+            </p>
+          )}
           <FormField
             control={form.control}
             name="qty"
@@ -245,13 +263,15 @@ function MoveForm({
                     {containers.map((container) => {
                       const projected = projectedPercent(container)
                       const isSelected = field.value === container.id
+                      const blocked = blockedReason(container)
                       return (
                         <label
                           key={container.id}
+                          data-ok-to-mix={container.isOkToMix}
                           className={cn(
                             "flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted/50",
                             isSelected && "border-primary bg-muted/40",
-                            container.isConfirmed &&
+                            blocked &&
                               "cursor-not-allowed opacity-50 hover:bg-transparent"
                           )}
                         >
@@ -260,16 +280,24 @@ function MoveForm({
                             name="container"
                             value={container.id}
                             checked={isSelected}
-                            disabled={container.isConfirmed}
+                            disabled={blocked !== null}
                             onChange={() => field.onChange(container.id)}
                             className="size-4 shrink-0"
                           />
                           <span className="w-24 shrink-0 font-medium">
                             {containerName(container.label)}
                           </span>
-                          {container.isConfirmed ? (
+                          {blocked ? (
                             <span className="text-xs text-muted-foreground">
-                              {t("readyToShip.move.confirmedTag")}
+                              {blocked}
+                            </span>
+                          ) : container.isOkToMix ? (
+                            // No capacity, so no meter: what it already holds.
+                            <span className="text-xs text-muted-foreground tabular-nums">
+                              {t("readyToShip.card.okToMixSummary", {
+                                count: container.totalLines,
+                                qty: formatNumber(String(container.totalQty)),
+                              })}
                             </span>
                           ) : (
                             <>

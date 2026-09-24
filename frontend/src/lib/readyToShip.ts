@@ -1,9 +1,9 @@
 import { useTranslation } from "react-i18next"
 import type { UnallocatedLine } from "@/api/readyToShip"
 
-// The backend rejects a move for a line with no usable loadability (its fill
-// can't be computed), so the UI never offers one: the row is marked and its
-// button disabled instead of letting the client hit the error in the dialog.
+// A line with no usable loadability has no computable fill, so the backend
+// only lets it into "OK to mix" (Phase 21): the row is marked, and in the
+// move dialog every numbered container is disabled for it.
 export function isPlaceable(line: UnallocatedLine): boolean {
   return line.loadability !== null && line.loadability > 0
 }

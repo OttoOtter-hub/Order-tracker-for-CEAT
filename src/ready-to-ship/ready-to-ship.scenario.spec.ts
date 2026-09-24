@@ -11,6 +11,11 @@ import {
 const pdf = () =>
   ({ originalname: "marking.pdf", buffer: Buffer.from("x"), size: 1 }) as any;
 
+// The plan's numbered slots; the always-present, empty "OK to mix" (Phase 21)
+// is not part of this story.
+const slots = <T extends { isOkToMix: boolean }>(containers: T[]) =>
+  containers.filter((c) => !c.isOkToMix);
+
 /**
  * The whole client/ops story end to end, on shared fake repos:
  * move -> undo-last -> move -> undo-all -> several moves -> confirm (blocked
@@ -78,7 +83,12 @@ describe("ready-to-ship scenario", () => {
     // Lazy init: two slots, everything still unallocated.
     const initial = await h.service.getView(clientActor);
     expect(initial.totalPossibleContainers).toBe(2);
-    expect(initial.containers).toHaveLength(2);
+    // Two numbered slots plus the always-present "OK to mix" (Phase 21).
+    expect(initial.containers.map((c) => c.label)).toEqual([
+      "Контейнер 1",
+      "Контейнер 2",
+      "OK to mix",
+    ]);
     expect(initial.unallocatedLines.map((l) => l.remainingQty).sort()).toEqual([
       100, 150,
     ]);
@@ -101,6 +111,7 @@ describe("ready-to-ship scenario", () => {
     expect(afterUndoAll.containers.map((c) => c.label)).toEqual([
       "Контейнер 1",
       "Контейнер 2",
+      "OK to mix",
     ]);
     expect(
       afterUndoAll.unallocatedLines.map((l) => l.remainingQty).sort(),
@@ -123,12 +134,14 @@ describe("ready-to-ship scenario", () => {
     // Fix it: undo the last move, put B into C2 instead -> C1 90%, C2 100%.
     await h.service.undoLast(clientActor);
     const fixed = await move("li-B", "Контейнер 2", 100);
-    expect(fixed.containers.map((c) => c.fillPercent)).toEqual([90, 100]);
+    expect(slots(fixed.containers).map((c) => c.fillPercent)).toEqual([
+      90, 100,
+    ]);
     expect(fixed.canConfirm).toBe(true);
 
     // Confirm: one action, every container of the session.
     const confirmed = await h.service.confirm(clientActor);
-    expect(confirmed.containers.every((c) => c.isConfirmed)).toBe(true);
+    expect(slots(confirmed.containers).every((c) => c.isConfirmed)).toBe(true);
     await expect(move("li-A", "Контейнер 1", 10)).rejects.toBeInstanceOf(
       BadRequestException,
     );
@@ -142,7 +155,7 @@ describe("ready-to-ship scenario", () => {
     }
     const withFiles = await h.service.getView(clientActor);
     expect(
-      withFiles.containers.map((c) => [
+      slots(withFiles.containers).map((c) => [
         c.markingFilesUploaded,
         c.markingFilesTotal,
       ]),
@@ -154,11 +167,11 @@ describe("ready-to-ship scenario", () => {
     // Ops unlocks C1 only. Its file is still there.
     await h.service.unlock(containerIdByLabel("Контейнер 1"), opsActor);
     const unlocked = await h.service.getView(clientActor);
-    expect(unlocked.containers.map((c) => c.isConfirmed)).toEqual([
+    expect(slots(unlocked.containers).map((c) => c.isConfirmed)).toEqual([
       false,
       true,
     ]);
-    expect(unlocked.containers[0].markingFilesUploaded).toBe(1);
+    expect(slots(unlocked.containers)[0].markingFilesUploaded).toBe(1);
 
     // The client changes the quantity: 10 units of A were never placed.
     clock.tick();
@@ -177,7 +190,7 @@ describe("ready-to-ship scenario", () => {
     await h.service.undoLast(clientActor);
     expect(allocationOf("Контейнер 1", "li-A")!.allocatedQty).toBe("90");
     const reconfirmed = await h.service.confirm(clientActor);
-    expect(reconfirmed.containers.map((c) => c.isConfirmed)).toEqual([
+    expect(slots(reconfirmed.containers).map((c) => c.isConfirmed)).toEqual([
       true,
       true,
     ]);
@@ -202,6 +215,7 @@ describe("ready-to-ship scenario", () => {
     ).toEqual([
       ["Контейнер 2", true, 2],
       ["Контейнер 3", false, 0],
+      ["OK to mix", false, 0],
     ]);
     expect(h.markings.rows.map((m) => m.allocation.id)).toEqual([a2A.id]);
   });

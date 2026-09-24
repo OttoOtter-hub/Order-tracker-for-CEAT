@@ -53,6 +53,7 @@ const FIELD_ORDER = [
   "customerName",
   "materialNum",
   "soNumber",
+  "lines",
   "qty",
   "undoneDelta",
   "from",

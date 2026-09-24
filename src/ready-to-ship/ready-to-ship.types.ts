@@ -33,6 +33,15 @@ export interface AllocationView {
 export interface ContainerView {
   id: string;
   label: string;
+  /**
+   * Phase 21: the "OK to mix" container — always last, fillPercent 0 and
+   * never overfilled; totalQty/totalLines are its whole summary.
+   */
+  isOkToMix: boolean;
+  /** Σ allocatedQty over the container's positions. */
+  totalQty: number;
+  /** How many positions (allocation rows) the container holds. */
+  totalLines: number;
   /** Derived: at least one position, and every one of them locked. */
   isConfirmed: boolean;
   /** Derived: a mix — some positions locked, at least one not. */

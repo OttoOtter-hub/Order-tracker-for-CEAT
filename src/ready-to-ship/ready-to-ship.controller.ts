@@ -73,6 +73,13 @@ export class ReadyToShipController {
     return this.service.move(dto, user);
   }
 
+  /** Phase 21: every line's whole remainder into "OK to mix", all or nothing. */
+  @ClientWriteAllowed()
+  @Post("move-remaining-to-mix")
+  moveRemainingToMix(@CurrentUser() user: RequestUser) {
+    return this.service.moveRemainingToMix(user);
+  }
+
   @ClientWriteAllowed()
   @Post("remove")
   remove(@Body() dto: RemoveAllocationDto, @CurrentUser() user: RequestUser) {

@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react"
+import { memo, useMemo, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Search, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -53,7 +53,7 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
         </div>
         {!placeable && (
           <div
-            className="mt-1 inline-flex items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive"
+            className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-500/20 dark:text-amber-400"
             title={t("readyToShip.list.notPlaceableHint")}
           >
             <TriangleAlert className="size-3" />
@@ -77,7 +77,6 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
             type="button"
             size="xs"
             variant="outline"
-            disabled={!placeable}
             title={placeable ? undefined : t("readyToShip.list.notPlaceableHint")}
             onClick={() => onMove(line)}
           >
@@ -94,9 +93,17 @@ interface ReadyLinesTableProps {
   // Client only; ops sees the same list read-only, without the button column.
   canMove: boolean
   onMove: (line: UnallocatedLine) => void
+  // Extra controls next to the search box (the client's "Move remainder to
+  // OK to mix").
+  toolbar?: ReactNode
 }
 
-export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps) {
+export function ReadyLinesTable({
+  lines,
+  canMove,
+  onMove,
+  toolbar,
+}: ReadyLinesTableProps) {
   const { t } = useTranslation()
   const [query, setQuery] = useState("")
   const { sorted, sortKey, direction, toggleSort } = useTableSort<
@@ -143,6 +150,7 @@ export function ReadyLinesTable({ lines, canMove, onMove }: ReadyLinesTableProps
             ? t("readyToShip.list.found", { n: visible.length, total: lines.length })
             : t("readyToShip.list.count", { n: lines.length })}
         </span>
+        {toolbar && <div className="ml-auto">{toolbar}</div>}
       </div>
 
       {lines.length === 0 ? (

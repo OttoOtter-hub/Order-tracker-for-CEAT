@@ -153,6 +153,7 @@
       },
       "rts": {
         "moved": "Перемещено в контейнер",
+        "moved_remaining_to_mix": "Весь остаток перенесён в OK to mix",
         "removed": "Убрано из контейнера",
         "undone_last": "Отменено последнее действие",
         "undone_all": "Отменены все несохранённые изменения",
@@ -195,6 +196,7 @@
       "positionsLocked": "Подтверждено позиций",
       "positionsUnlocked": "Разблокировано позиций",
       "positionsRolledBack": "Откачено позиций",
+      "lines": "Строк",
       "undoneDelta": "Отменённое количество",
       "replacedPrevious": "Заменил прежний файл",
       "linesReset": "Сброшено строк",
@@ -409,9 +411,15 @@
       "actionsAria": "Действия",
       "so": "SO {{so}}",
       "approxContainers": "≈ {{n}} конт.",
-      "notPlaceable": "нельзя разместить",
-      "notPlaceableHint": "Нельзя разместить: у строки не задана loadability, поэтому её заполнение контейнера не посчитать",
-      "move": "Переместить"
+      "notPlaceable": "только в OK to mix",
+      "notPlaceableHint": "У строки не задана loadability, поэтому её заполнение контейнера не посчитать — её можно поместить только в OK to mix",
+      "move": "Переместить",
+      "moveRemaining": "Скинуть остаток в OK to mix",
+      "moveRemainingTitle": "Перенести весь остаток в OK to mix?",
+      "moveRemainingDescription": "Нераспределённый остаток каждой строки списка (строк: {{lines}}, всего {{qty}} шт.) одним действием уйдёт в OK to mix. «Отменить одно действие» после этого возвращает по одной строке, «Отменить всё» — всё сразу.",
+      "moveRemainingConfirm": "Перенести в OK to mix",
+      "moveRemainingDone": "Остаток перенесён в OK to mix",
+      "moveRemainingFailed": "Не удалось перенести остаток в OK to mix"
     },
     "containers": {
       "title": "Контейнеры",
@@ -435,7 +443,13 @@
       "pi": "PI {{title}}",
       "piSo": " · SO {{so}}",
       "shareHint": "Доля контейнера, которую занимает эта строка",
-      "remove": "Убрать"
+      "remove": "Убрать",
+      "okToMixSummary_one": "{{count}} позиция / {{qty}} шт.",
+      "okToMixSummary_few": "{{count}} позиции / {{qty}} шт.",
+      "okToMixSummary_many": "{{count}} позиций / {{qty}} шт.",
+      "okToMixSummary_other": "{{count}} позиции / {{qty}} шт.",
+      "expand": "Развернуть",
+      "collapse": "Свернуть"
     },
     "marking": {
       "uploaded": "Файл загружен",
@@ -464,6 +478,8 @@
       "container": "Контейнер",
       "allConfirmed": "Все контейнеры подтверждены — переместить некуда. Попросите CEAT разблокировать нужный.",
       "confirmedTag": "подтверждён",
+      "needsLoadabilityTag": "нужна loadability",
+      "onlyOkToMix": "У строки не задана loadability, поэтому её можно поместить только в OK to mix.",
       "afterMove": "Заполнение после перемещения",
       "overloadWarning": "«{{label}}» будет заполнен на {{percent}}: переместить можно, но подтвердить план не получится, пока контейнер перегружен.",
       "submit": "Переместить",
@@ -653,6 +669,7 @@
     "CONTAINER_OVERFILLED": "Перегружены контейнеры: {{containers}}.",
     "CONTAINER_NOT_LOCKED": "Контейнер не подтверждён — разблокировать нечего.",
     "ALLOCATION_NOT_LOCKED": "Позиция не заблокирована — разблокировать нечего.",
+    "NOTHING_TO_MOVE": "Нераспределённого остатка не осталось — переносить нечего.",
     "UNDO_REMOVE_CONFLICT": "Нельзя отменить удаление {{qty, number}} шт.: строка уже размещена в другом контейнере (свободно {{remaining, number}}).",
     "MARKING_REQUIRES_LOCKED_ALLOCATION": "Маркировку можно загружать только для подтверждённой позиции.",
     "ARRIVAL_ALREADY_CONFIRMED": "Прибытие уже подтверждено.",
