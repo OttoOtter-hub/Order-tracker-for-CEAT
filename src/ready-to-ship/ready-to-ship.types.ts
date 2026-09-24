@@ -79,6 +79,17 @@ export interface UnlockedContainerView {
   isConfirmed: boolean;
 }
 
+/**
+ * Response of POST /ready-to-ship/unlock-all: what was actually reopened.
+ * All zeros and an empty list when nothing was locked (not an error).
+ */
+export interface UnlockedAllView {
+  customerId: string;
+  containersUnlocked: number;
+  positionsUnlocked: number;
+  containers: { id: string; label: string; positionsUnlocked: number }[];
+}
+
 /** Response of the Phase 16 single-position unlock (POST /container-allocations/:id/unlock). */
 export interface UnlockedAllocationView {
   id: string;

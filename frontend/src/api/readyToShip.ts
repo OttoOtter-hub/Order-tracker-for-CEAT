@@ -186,6 +186,27 @@ export function useUnlockContainerMutation() {
   })
 }
 
+export interface UnlockedAll {
+  customerId: string
+  containersUnlocked: number
+  positionsUnlocked: number
+  containers: { id: string; label: string; positionsUnlocked: number }[]
+}
+
+// ops-only: every container of the customer that has a locked position, at
+// once. Zeros (not an error) when nothing was locked.
+export function useUnlockAllMutation(customerId?: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<UnlockedAll>(
+        `/ready-to-ship/unlock-all?customerId=${encodeURIComponent(customerId ?? "")}`
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [READY_TO_SHIP_KEY] }),
+  })
+}
+
 // Phase 16: the finer-grained sibling — frees one position without touching
 // the rest of its container.
 export function useUnlockAllocationMutation() {

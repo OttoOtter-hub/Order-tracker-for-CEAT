@@ -26,6 +26,7 @@ import {
   ReadyToShipView,
   UnallocatedLineView,
   UnlockedAllocationView,
+  UnlockedAllView,
   UnlockedContainerView,
 } from "./ready-to-ship.types";
 import {
@@ -905,12 +906,8 @@ export class ReadyToShipService {
       );
     }
 
-    const containerRepo =
-      this.dataSource.manager.getRepository(ShippingContainer);
-    const allocationRepo = this.dataSource.manager.getRepository(
-      ContainerLineAllocation,
-    );
-    const container = await containerRepo.findOne({
+    const em = this.dataSource.manager;
+    const container = await em.getRepository(ShippingContainer).findOne({
       where: { id: containerId },
       relations: ["customer"],
     });
@@ -919,11 +916,11 @@ export class ReadyToShipService {
         apiError("NOT_FOUND", `ShippingContainer ${containerId} not found`),
       );
     }
-    const allocations = await allocationRepo.find({
-      where: { container: { id: containerId } },
-    });
-    const locked = allocations.filter((a) => a.isLocked);
-    if (locked.length === 0) {
+    const positionsUnlocked = await this.unlockContainerPositions(
+      em,
+      container,
+    );
+    if (positionsUnlocked === 0) {
       throw new BadRequestException(
         apiError(
           "CONTAINER_NOT_LOCKED",
@@ -931,14 +928,6 @@ export class ReadyToShipService {
         ),
       );
     }
-
-    for (const allocation of locked) {
-      allocation.isLocked = false;
-    }
-    await allocationRepo.save(locked);
-    container.confirmedAt = null;
-    container.confirmedBy = null;
-    await containerRepo.save(container);
 
     await this.audit.record({
       actor,
@@ -948,17 +937,11 @@ export class ReadyToShipService {
       metadata: {
         containerLabel: container.label,
         customerId: container.customer.id,
-        positionsUnlocked: locked.length,
+        positionsUnlocked,
       },
     });
 
-    // Event 3 (Phase 13): no "proposed_to_client" status exists here — this
-    // is the one ops action that puts a container back in front of the
-    // client for review (see notification-events.ts for the reasoning).
-    this.eventEmitter.emit(NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT, {
-      label: container.label,
-      customerId: container.customer.id,
-    });
+    this.emitReopened(container);
 
     return {
       id: container.id,
@@ -966,6 +949,125 @@ export class ReadyToShipService {
       customerId: container.customer.id,
       isConfirmed: false,
     };
+  }
+
+  /**
+   * Ops-only: unlock() for every container of the customer that has at least
+   * one locked position ("OK to mix" included, like any other), in one
+   * transaction — all or nothing. Nothing locked is not an error: the answer
+   * just says zero (and nothing is journaled, nothing was changed).
+   */
+  async unlockAll(
+    actor: RequestUser,
+    requestedCustomerId?: string,
+  ): Promise<UnlockedAllView> {
+    if (actor.role !== Role.OPS) {
+      throw new ForbiddenException(
+        apiError(
+          "OPS_ONLY_ACTION",
+          "Разблокировка контейнеров доступна только CEAT",
+        ),
+      );
+    }
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
+
+    const unlocked = await this.dataSource.transaction(async (em) => {
+      const containers = await em.getRepository(ShippingContainer).find({
+        where: { customer: { id: customerId } },
+        relations: ["customer"],
+      });
+      const affected: UnlockedAllView["containers"] = [];
+      for (const container of [...containers].sort(byLabel)) {
+        const positionsUnlocked = await this.unlockContainerPositions(
+          em,
+          container,
+        );
+        if (positionsUnlocked > 0) {
+          affected.push({
+            id: container.id,
+            label: container.label,
+            positionsUnlocked,
+          });
+        }
+      }
+
+      if (affected.length > 0) {
+        await this.audit.record(
+          {
+            actor,
+            action: "rts.unlocked_all",
+            entityType: "customer",
+            entityId: customerId,
+            metadata: {
+              containersUnlocked: affected.length,
+              positionsUnlocked: affected.reduce(
+                (sum, c) => sum + c.positionsUnlocked,
+                0,
+              ),
+              containerLabels: affected.map((c) => c.label),
+            },
+          },
+          em,
+        );
+      }
+      return { affected, containers };
+    });
+
+    // After the commit, one notice per reopened container — the same event
+    // unlock() sends for a single one.
+    for (const { id } of unlocked.affected) {
+      const container = unlocked.containers.find((c) => c.id === id);
+      if (container) this.emitReopened(container);
+    }
+
+    return {
+      customerId,
+      containersUnlocked: unlocked.affected.length,
+      positionsUnlocked: unlocked.affected.reduce(
+        (sum, c) => sum + c.positionsUnlocked,
+        0,
+      ),
+      containers: unlocked.affected,
+    };
+  }
+
+  /**
+   * The core of unlock()/unlockAll(): frees every locked position on the
+   * container and clears its confirmation stamp. Returns how many positions
+   * it freed — 0 means it was not locked at all, and nothing was written.
+   */
+  private async unlockContainerPositions(
+    em: EntityManager,
+    container: ShippingContainer,
+  ): Promise<number> {
+    const allocationRepo = em.getRepository(ContainerLineAllocation);
+    const allocations = await allocationRepo.find({
+      where: { container: { id: container.id } },
+    });
+    const locked = allocations.filter((a) => a.isLocked);
+    if (locked.length === 0) {
+      return 0;
+    }
+    for (const allocation of locked) {
+      allocation.isLocked = false;
+    }
+    await allocationRepo.save(locked);
+    container.confirmedAt = null;
+    container.confirmedBy = null;
+    await em.getRepository(ShippingContainer).save(container);
+    return locked.length;
+  }
+
+  /**
+   * Event 3 (Phase 13): no "proposed_to_client" status exists here — an
+   * unlock is the one ops action that puts a container back in front of the
+   * client for review (see notification-events.ts for the reasoning).
+   */
+  private emitReopened(container: ShippingContainer): void {
+    this.eventEmitter.emit(NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT, {
+      label: container.label,
+      customerId: container.customer.id,
+    });
   }
 
   /**

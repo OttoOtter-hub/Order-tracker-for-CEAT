@@ -157,6 +157,7 @@
         "undone_last": "Last action undone",
         "undone_all": "All unsaved changes undone",
         "confirmed": "Containers confirmed",
+        "unlocked_all": "All confirmed containers unlocked",
         "container_unlocked": "Container unlocked",
         "position_unlocked": "Position unlocked",
         "marking_uploaded": "Marking file uploaded",
@@ -194,6 +195,7 @@
       "containerLabels": "Containers",
       "positionsLocked": "Positions confirmed",
       "positionsUnlocked": "Positions unlocked",
+      "containersUnlocked": "Containers unlocked",
       "positionsRolledBack": "Positions rolled back",
       "lines": "Lines",
       "undoneDelta": "Quantity undone",
@@ -511,6 +513,15 @@
       "confirm": "Unlock",
       "done": "{{material}} unlocked",
       "failed": "Could not unlock"
+    },
+    "unlockAll": {
+      "button": "Unlock all",
+      "title": "Unlock all confirmed containers?",
+      "description": "This will unlock ALL of the client's confirmed containers. The client will be able to change their contents, and marking files on changed lines will be deleted. Continue?",
+      "confirm": "Unlock all",
+      "done": "Unlocked — containers: {{containers}}, lines: {{positions}}",
+      "nothing": "Nothing to unlock: no container has a confirmed line",
+      "failed": "Could not unlock the containers"
     }
   },
   "shipped": {

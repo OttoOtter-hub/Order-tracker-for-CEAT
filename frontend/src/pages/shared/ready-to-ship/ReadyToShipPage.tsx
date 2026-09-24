@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
-import { Download, PackageOpen } from "lucide-react"
+import { Download, LockOpen, PackageOpen } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ import {
   exportReadyToShipXlsx,
   useMoveRemainingToMixMutation,
   useReadyToShipQuery,
+  useUnlockAllMutation,
   useUnlockAllocationMutation,
   useUnlockContainerMutation,
   type ShippingContainer,
@@ -109,6 +110,7 @@ function ReadyToShipContent({
   const unlock = useUnlockContainerMutation()
   const unlockAllocation = useUnlockAllocationMutation()
   const moveRemaining = useMoveRemainingToMixMutation(customerId)
+  const unlockAll = useUnlockAllMutation(customerId)
 
   const [moveLine, setMoveLine] = useState<UnallocatedLine | null>(null)
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
@@ -118,6 +120,7 @@ function ReadyToShipContent({
   const [lastContainerId, setLastContainerId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const [confirmMoveRemaining, setConfirmMoveRemaining] = useState(false)
+  const [confirmUnlockAll, setConfirmUnlockAll] = useState(false)
 
   const view = query.data
 
@@ -150,6 +153,10 @@ function ReadyToShipContent({
       confirmed,
       free,
       okToMix,
+      // Anything "Unlock all" would reopen ("OK to mix" included).
+      hasLocked: view.containers.some(
+        (c) => c.isConfirmed || c.isPartiallyUnlocked
+      ),
       // What the client can actually work with, in the server's order.
       visibleContainers: view.containers.filter((c) => shown.has(c)),
       remainingTotal: view.unallocatedLines.reduce(
@@ -268,13 +275,29 @@ function ReadyToShipContent({
             <h2 className="text-base font-medium">
               {t("readyToShip.containers.title")}
             </h2>
-            <span className="text-xs text-muted-foreground">
-              {t("readyToShip.containers.counts", {
-                working: summary.working.length,
-                confirmed: summary.confirmed.length,
-                free: summary.free.length,
-              })}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {t("readyToShip.containers.counts", {
+                  working: summary.working.length,
+                  confirmed: summary.confirmed.length,
+                  free: summary.free.length,
+                })}
+              </span>
+              {!isClient && (
+                // Next to the per-container "Unlock" on the cards: the same
+                // thing for every container that has a locked line.
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!summary.hasLocked || unlockAll.isPending}
+                  data-testid="unlock-all"
+                  onClick={() => setConfirmUnlockAll(true)}
+                >
+                  <LockOpen /> {t("readyToShip.unlockAll.button")}
+                </Button>
+              )}
+            </div>
           </div>
 
           {filled.length === 0 && !summary.okToMix?.allocations.length && (
@@ -401,6 +424,39 @@ function ReadyToShipContent({
               },
             })
           }}
+        />
+      )}
+
+      {!isClient && (
+        <ConfirmDialog
+          open={confirmUnlockAll}
+          onOpenChange={setConfirmUnlockAll}
+          title={t("readyToShip.unlockAll.title")}
+          description={t("readyToShip.unlockAll.description")}
+          confirmLabel={t("readyToShip.unlockAll.confirm")}
+          destructive
+          isPending={unlockAll.isPending}
+          onConfirm={() =>
+            unlockAll.mutate(undefined, {
+              onSuccess: (result) => {
+                if (result.containersUnlocked === 0) {
+                  toast.info(t("readyToShip.unlockAll.nothing"))
+                } else {
+                  toast.success(
+                    t("readyToShip.unlockAll.done", {
+                      containers: result.containersUnlocked,
+                      positions: result.positionsUnlocked,
+                    })
+                  )
+                }
+                setConfirmUnlockAll(false)
+              },
+              onError: (error) => {
+                toast.error(getErrorMessage(error, t("readyToShip.unlockAll.failed")))
+                setConfirmUnlockAll(false)
+              },
+            })
+          }
         />
       )}
 

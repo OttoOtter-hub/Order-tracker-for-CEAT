@@ -28,6 +28,7 @@ export const AUDIT_ACTIONS = [
   "rts.undone_all",
   "rts.confirmed",
   "rts.container_unlocked",
+  "rts.unlocked_all",
   "rts.position_unlocked",
   "rts.marking_uploaded",
   "rts.marking_deleted",

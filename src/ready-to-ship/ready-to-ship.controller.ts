@@ -11,6 +11,8 @@ import { ApiBearerAuth, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorator";
 import { CurrentUser } from "../common/auth/current-user.decorator";
 import { RequestUser } from "../common/auth/request-user.interface";
+import { Roles } from "../common/auth/roles.decorator";
+import { Role } from "../common/enums/role.enum";
 import { MoveAllocationDto } from "./dto/move-allocation.dto";
 import { RemoveAllocationDto } from "./dto/remove-allocation.dto";
 import { ReadyToShipService } from "./ready-to-ship.service";
@@ -74,6 +76,25 @@ export class ReadyToShipController {
   }
 
   /** Phase 21: every line's whole remainder into "OK to mix", all or nothing. */
+  /**
+   * Ops-only (@Roles(Role.OPS): RolesGuard 403s a client): unlocks every
+   * container of the named customer that has a locked position, at once.
+   */
+  @ApiQuery({
+    name: "customerId",
+    required: true,
+    description: "the customer whose containers to unlock",
+  })
+  @Roles(Role.OPS)
+  @Post("unlock-all")
+  unlockAll(
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.unlockAll(user, customerId);
+  }
+
   @ClientWriteAllowed()
   @Post("move-remaining-to-mix")
   moveRemainingToMix(@CurrentUser() user: RequestUser) {

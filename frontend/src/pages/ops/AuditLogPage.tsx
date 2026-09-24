@@ -71,6 +71,7 @@ const FIELD_ORDER = [
   "confirmedAt",
   "confirmedBy",
   "positionsLocked",
+  "containersUnlocked",
   "positionsUnlocked",
   "positionsRolledBack",
   "linesReset",
