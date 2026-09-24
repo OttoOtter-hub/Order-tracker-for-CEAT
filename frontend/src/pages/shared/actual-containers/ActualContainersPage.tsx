@@ -180,7 +180,7 @@ export function ActualContainersPage() {
                         "cursor-pointer",
                         // A file is attached: light green, nothing more to it.
                         container.filesCount > 0 &&
-                          "bg-green-50 hover:bg-green-100/70 dark:bg-green-500/10 dark:hover:bg-green-500/15"
+                          "bg-success-row hover:bg-success-row-hover"
                       )}
                       onClick={() =>
                         navigate(`${basePath}/actual-containers/${container.id}`)

@@ -1,13 +1,31 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/manrope";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    /* Manrope: geometric like CEAT's own Poppins, but with Cyrillic (Poppins has none). */
+    --font-sans: 'Manrope Variable', ui-sans-serif, system-ui, sans-serif;
+    /* Brand and state colours beyond shadcn's set (see :root). */
+    --color-link: var(--link);
+    --color-heading: var(--heading);
+    --color-success: var(--success);
+    --color-success-text: var(--success-text);
+    --color-success-row: var(--success-row);
+    --color-success-row-hover: var(--success-row-hover);
+    --color-warning: var(--warning);
+    --color-warning-text: var(--warning-text);
+    --color-info: var(--info);
+    --color-info-text: var(--info-text);
+    --color-archived: var(--archived);
+    --color-archived-text: var(--archived-text);
+    --color-idle: var(--idle);
+    --color-idle-text: var(--idle-text);
+    --color-highlight: var(--highlight);
+    --color-highlight-hover: var(--highlight-hover);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,73 +66,124 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * CEAT palette (sampled from ceat.com: accent #f5822d, navy #23283c,
+ * blue #0054a8, near-black text, white / #f8f8f8 surfaces). Contrast was
+ * checked numerically (WCAG), not by eye:
+ * - white text on CEAT orange is only 2.6:1, so orange buttons carry
+ *   near-black text (7.3:1) and orange *text* on light surfaces uses the
+ *   darker --link (5.6:1);
+ * - orange is the brand/action colour only; states keep their meaning in
+ *   hues kept away from it: red (over/error), mustard gold (nearly full,
+ *   attention), pale yellow (priority rows), green (done/ready), blue (info).
+ */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
+    --background: oklch(0.985 0.002 90);
+    --foreground: oklch(0.18 0.012 270);
     --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
+    --card-foreground: oklch(0.18 0.012 270);
     --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --popover-foreground: oklch(0.18 0.012 270);
+    --primary: oklch(0.723 0.168 52);
+    --primary-foreground: oklch(0.18 0.012 270);
+    --secondary: oklch(0.945 0.014 272);
+    --secondary-foreground: oklch(0.282 0.038 273);
+    --muted: oklch(0.96 0.003 90);
+    --muted-foreground: oklch(0.49 0.012 270);
+    --accent: oklch(0.96 0.03 60);
+    --accent-foreground: oklch(0.18 0.012 270);
+    --destructive: oklch(0.55 0.215 25);
+    --border: oklch(0.915 0.004 90);
+    --input: oklch(0.88 0.005 90);
+    --ring: oklch(0.723 0.168 52);
+    --chart-1: oklch(0.723 0.168 52);
+    --chart-2: oklch(0.282 0.038 273);
+    --chart-3: oklch(0.454 0.152 255);
+    --chart-4: oklch(0.62 0.15 152);
+    --chart-5: oklch(0.67 0.14 83);
+    --radius: 0.5rem;
+    --sidebar: oklch(0.985 0.002 90);
+    --sidebar-foreground: oklch(0.18 0.012 270);
+    --sidebar-primary: oklch(0.723 0.168 52);
+    --sidebar-primary-foreground: oklch(0.18 0.012 270);
+    --sidebar-accent: oklch(0.96 0.03 60);
+    --sidebar-accent-foreground: oklch(0.18 0.012 270);
+    --sidebar-border: oklch(0.915 0.004 90);
+    --sidebar-ring: oklch(0.723 0.168 52);
+
+    /* Orange as text on light surfaces (links). */
+    --link: oklch(0.53 0.15 48);
+    /* Section headings: CEAT navy. */
+    --heading: oklch(0.282 0.038 273);
+    /* States: the fill is used for bars, rings and /10 tints; *-text for text on them. */
+    --success: oklch(0.62 0.15 152);
+    --success-text: oklch(0.46 0.12 152);
+    --success-row: oklch(0.972 0.03 152);
+    --success-row-hover: oklch(0.952 0.045 152);
+    --warning: oklch(0.67 0.14 83);
+    --warning-text: oklch(0.49 0.105 80);
+    --info: oklch(0.454 0.152 255);
+    --info-text: oklch(0.454 0.152 255);
+    --archived: oklch(0.55 0.15 305);
+    --archived-text: oklch(0.48 0.15 305);
+    --idle: oklch(0.55 0.01 270);
+    --idle-text: oklch(0.45 0.012 270);
+    /* Priority rows: pale yellow, well apart from the orange accent. */
+    --highlight: oklch(0.975 0.05 102);
+    --highlight-hover: oklch(0.955 0.07 102);
 }
 
+/* Dark: near-black surfaces and off-white (not pure white) text — less white
+   on screen overall; the orange stays the same brand orange. */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: oklch(0.13 0.004 270);
+    --foreground: oklch(0.93 0.004 270);
+    --card: oklch(0.175 0.005 270);
+    --card-foreground: oklch(0.93 0.004 270);
+    --popover: oklch(0.19 0.005 270);
+    --popover-foreground: oklch(0.93 0.004 270);
+    --primary: oklch(0.723 0.168 52);
+    --primary-foreground: oklch(0.15 0.006 270);
+    --secondary: oklch(0.27 0.035 272);
+    --secondary-foreground: oklch(0.91 0.02 272);
+    --muted: oklch(0.22 0.006 270);
+    --muted-foreground: oklch(0.70 0.012 270);
+    --accent: oklch(0.25 0.04 55);
+    --accent-foreground: oklch(0.95 0.012 60);
+    --destructive: oklch(0.69 0.19 22);
+    --border: oklch(1 0 0 / 9%);
+    --input: oklch(1 0 0 / 14%);
+    --ring: oklch(0.723 0.168 52);
+    --chart-1: oklch(0.723 0.168 52);
+    --chart-2: oklch(0.91 0.02 272);
+    --chart-3: oklch(0.66 0.13 255);
+    --chart-4: oklch(0.70 0.15 152);
+    --chart-5: oklch(0.83 0.15 90);
+    --sidebar: oklch(0.155 0.005 270);
+    --sidebar-foreground: oklch(0.93 0.004 270);
+    --sidebar-primary: oklch(0.723 0.168 52);
+    --sidebar-primary-foreground: oklch(0.15 0.006 270);
+    --sidebar-accent: oklch(0.25 0.04 55);
+    --sidebar-accent-foreground: oklch(0.95 0.012 60);
+    --sidebar-border: oklch(1 0 0 / 9%);
+    --sidebar-ring: oklch(0.723 0.168 52);
+
+    --link: oklch(0.76 0.15 55);
+    --heading: oklch(0.95 0.012 272);
+    --success: oklch(0.70 0.15 152);
+    --success-text: oklch(0.78 0.14 152);
+    --success-row: oklch(0.75 0.15 152 / 0.11);
+    --success-row-hover: oklch(0.75 0.15 152 / 0.17);
+    --warning: oklch(0.83 0.15 90);
+    --warning-text: oklch(0.86 0.13 92);
+    --info: oklch(0.66 0.13 255);
+    --info-text: oklch(0.76 0.11 255);
+    --archived: oklch(0.70 0.13 305);
+    --archived-text: oklch(0.78 0.11 305);
+    --idle: oklch(0.70 0.01 270);
+    --idle-text: oklch(0.76 0.01 270);
+    --highlight: oklch(0.85 0.15 100 / 0.11);
+    --highlight-hover: oklch(0.85 0.15 100 / 0.17);
 }
 
 @layer base {
@@ -126,5 +195,9 @@
     }
   html {
     @apply font-sans;
+    }
+  /* Section headings in CEAT navy (near-white in the dark theme). */
+  h1, h2, h3, [data-slot="card-title"], [data-slot="dialog-title"], [data-slot="alert-dialog-title"] {
+    color: var(--heading);
     }
 }

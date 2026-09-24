@@ -17,19 +17,19 @@ export function fillLevel(percent: number): FillLevel {
 // reason as statusStyles.ts).
 export const FILL_TEXT: Record<FillLevel, string> = {
   ok: "text-foreground",
-  warn: "text-amber-600 dark:text-amber-400",
+  warn: "text-warning-text",
   over: "text-destructive",
 }
 
 export const FILL_BAR: Record<FillLevel, string> = {
-  ok: "bg-primary",
-  warn: "bg-amber-500",
+  ok: "bg-info",
+  warn: "bg-warning",
   over: "bg-destructive",
 }
 
 export const FILL_CARD: Record<FillLevel, string> = {
   ok: "",
-  warn: "ring-amber-500/40",
+  warn: "ring-warning/50",
   over: "ring-destructive/50",
 }
 

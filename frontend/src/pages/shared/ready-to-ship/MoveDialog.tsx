@@ -197,7 +197,7 @@ function MoveForm({
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
           {loadability === null && (
-            <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+            <p className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning-text dark:bg-warning/20">
               {t("readyToShip.move.onlyOkToMix")}
             </p>
           )}

@@ -53,7 +53,7 @@ const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
         </div>
         {!placeable && (
           <div
-            className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-500/20 dark:text-amber-400"
+            className="mt-1 inline-flex items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-xs text-warning-text dark:bg-warning/20"
             title={t("readyToShip.list.notPlaceableHint")}
           >
             <TriangleAlert className="size-3" />

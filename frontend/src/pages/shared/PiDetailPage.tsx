@@ -556,7 +556,7 @@ export function PiDetailPage() {
 
       {/* Pending replacement */}
       {pi.pendingReplacementFileUrl && (
-        <Card className="ring-blue-500/30">
+        <Card className="ring-info/30">
           <CardHeader>
             <CardTitle>{t("piDetail.replacement.title")}</CardTitle>
           </CardHeader>
@@ -706,7 +706,7 @@ export function PiDetailPage() {
                         // A line with a priority stays marked in read-only
                         // view too, not only while priority mode is on.
                         draftValue > 0 &&
-                          "bg-yellow-50 hover:bg-yellow-100/70 dark:bg-yellow-500/10 dark:hover:bg-yellow-500/15"
+                          "bg-highlight hover:bg-highlight-hover"
                       )}
                     >
                       <TableCell>{item.materialNum ?? "—"}</TableCell>
@@ -791,7 +791,7 @@ export function PiDetailPage() {
                         // Not a warning — a plain, calm signal either way:
                         // green for "more shipped than planned", the
                         // ordinary text color otherwise. Never red/amber.
-                        row.delta > 0 && "text-green-600 dark:text-green-400"
+                        row.delta > 0 && "text-success-text"
                       )}
                     >
                       {formatNumber(String(row.delta))}

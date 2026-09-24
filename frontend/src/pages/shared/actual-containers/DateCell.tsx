@@ -23,7 +23,7 @@ export function DateCell({ value, overridden, sourceValue }: DateCellProps) {
     <span
       className={cn(
         "inline-flex items-center gap-1 whitespace-nowrap tabular-nums",
-        overridden && "font-medium text-amber-600 dark:text-amber-400"
+        overridden && "font-medium text-warning-text"
       )}
       data-overridden={overridden}
       title={overridden ? overrideHint(sourceValue) : undefined}

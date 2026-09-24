@@ -14,9 +14,9 @@ import { formatDateTime } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
 
 const AMBER_BADGE =
-  "border-transparent bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
+  "border-transparent bg-warning/10 text-warning-text dark:bg-warning/20"
 const GREEN_BADGE =
-  "border-transparent bg-green-500/10 text-green-600 dark:bg-green-500/20 dark:text-green-400"
+  "border-transparent bg-success/10 text-success-text dark:bg-success/20"
 
 interface ArrivalMarkerProps {
   container: ActualContainer

@@ -40,7 +40,7 @@ function DateField({
         {overridden && (
           <Badge
             variant="outline"
-            className="border-transparent bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
+            className="border-transparent bg-warning/10 text-warning-text dark:bg-warning/20"
           >
             {t("shipped.detail.dates.manual")}
           </Badge>

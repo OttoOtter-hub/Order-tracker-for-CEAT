@@ -43,7 +43,8 @@ export function OpsLayout() {
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-                  isActive && "bg-muted font-medium text-foreground"
+                  isActive &&
+                    "bg-accent font-medium text-accent-foreground shadow-[inset_3px_0_0_var(--primary)]"
                 )
               }
             >
