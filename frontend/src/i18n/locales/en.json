@@ -153,6 +153,7 @@
         "moved": "Moved to a container",
         "moved_remaining_to_mix": "Whole remainder moved to OK to mix",
         "removed": "Removed from a container",
+        "container_renamed": "Container name changed",
         "undone_last": "Last action undone",
         "undone_all": "All unsaved changes undone",
         "confirmed": "Containers confirmed",
@@ -443,7 +444,8 @@
       "okToMixSummary_one": "{{count}} line / {{qty}} pcs",
       "okToMixSummary_other": "{{count}} lines / {{qty}} pcs",
       "expand": "Expand",
-      "collapse": "Collapse"
+      "collapse": "Collapse",
+      "nameAria": "Container name"
     },
     "marking": {
       "uploaded": "File uploaded",
@@ -645,6 +647,8 @@
     "PRIORITY_QTY_OUT_OF_RANGE": "Priority must be between 0 and {{max, number}} (this line's balance to be delivered).",
     "PI_LABEL_NOT_STRING": "The name must be text.",
     "PI_LABEL_TOO_LONG": "The name can be at most {{max}} characters long.",
+    "CONTAINER_NAME_NOT_STRING": "The container name must be text.",
+    "CONTAINER_NAME_TOO_LONG": "The container name can be at most {{max}} characters long.",
     "INVALID_DATE": "Enter a valid date.",
     "DATE_OVERRIDE_EMPTY": "Specify an ETD and/or ETA date.",
     "CUSTOMER_ID_REQUIRED": "Select a customer.",
@@ -664,6 +668,7 @@
     "CONTAINER_NOT_LOCKED": "This container isn't confirmed — there's nothing to unlock.",
     "ALLOCATION_NOT_LOCKED": "This position isn't locked — there's nothing to unlock.",
     "NOTHING_TO_MOVE": "There is no undistributed remainder left to move.",
+    "OK_TO_MIX_NAME_NOT_ALLOWED": "The OK to mix container can't be given a name.",
     "UNDO_REMOVE_CONFLICT": "Can't undo removing {{qty, number}} pcs: this line has already been placed in another container (free: {{remaining, number}}).",
     "MARKING_REQUIRES_LOCKED_ALLOCATION": "A marking file can only be uploaded for a confirmed position.",
     "ARRIVAL_ALREADY_CONFIRMED": "Arrival has already been confirmed.",

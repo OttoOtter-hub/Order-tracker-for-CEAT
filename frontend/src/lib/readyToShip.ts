@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 import type { UnallocatedLine } from "@/api/readyToShip"
+import { withContainerName } from "@/lib/containerDisplay"
 
 // A line with no usable loadability has no computable fill, so the backend
 // only lets it into "OK to mix" (Phase 21): the row is marked, and in the
@@ -27,4 +28,15 @@ export function useContainerName(): (label: string) => string {
     const n = containerNumberOf(label)
     return n === null ? label : t("readyToShip.containerLabel", { n })
   }
+}
+
+// Phase 22: the name as shown everywhere a container is picked or listed —
+// "Container 3: Ростов" once the client has named it, else just the label.
+export function useContainerTitle(): (container: {
+  label: string
+  name?: string | null
+}) => string {
+  const containerName = useContainerName()
+  return (container) =>
+    withContainerName(containerName(container.label), container.name)
 }

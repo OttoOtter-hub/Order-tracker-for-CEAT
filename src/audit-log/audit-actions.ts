@@ -23,6 +23,7 @@ export const AUDIT_ACTIONS = [
   "rts.moved",
   "rts.moved_remaining_to_mix",
   "rts.removed",
+  "rts.container_renamed",
   "rts.undone_last",
   "rts.undone_all",
   "rts.confirmed",

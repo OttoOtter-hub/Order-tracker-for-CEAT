@@ -24,8 +24,12 @@ function allocation(overrides: Record<string, unknown>) {
   } as any;
 }
 
-function container(label: string, allocations: unknown[]) {
-  return { id: label, label, allocations } as any;
+function container(
+  label: string,
+  allocations: unknown[],
+  extra: Record<string, unknown> = {},
+) {
+  return { id: label, label, name: null, allocations, ...extra } as any;
 }
 
 function line(overrides: Record<string, unknown>) {
@@ -86,6 +90,7 @@ describe("buildReadyToShipExportRows", () => {
     expect(rows).toEqual([
       {
         container: 1,
+        containerName: null,
         sku: "107071",
         description: "10.0/75-15.3 TL",
         quantity: 30,
@@ -95,7 +100,8 @@ describe("buildReadyToShipExportRows", () => {
         soNumber: "300029159",
       },
       {
-        container: OK_TO_MIX,
+        container: null,
+        containerName: null,
         sku: "113972",
         description: "other tyre",
         quantity: 70,
@@ -107,7 +113,7 @@ describe("buildReadyToShipExportRows", () => {
     ]);
   });
 
-  it("carries a missing label as null, on both container rows and OK to mix rows", () => {
+  it("carries a missing label as null, on both container rows and unplaced rows", () => {
     const rows = buildReadyToShipExportRows({
       containers: [
         container("Контейнер 1", [allocation({ piLabel: undefined })]),
@@ -131,9 +137,12 @@ describe("buildReadyToShipExportRows", () => {
     expect(row.loadFactor).toBe(0.3333);
   });
 
-  it("orders numbered containers ascending as numbers (2 before 10), other labels after them, OK to mix last", () => {
+  it("orders numbered containers ascending as numbers (2 before 10), other labels after them, then OK to mix, then the unplaced remainder", () => {
     const rows = buildReadyToShipExportRows({
       containers: [
+        container(OK_TO_MIX, [allocation({ materialNum: "F" })], {
+          isOkToMix: true,
+        }),
         container("Контейнер 10", [allocation({ materialNum: "A" })]),
         container("Special", [allocation({ materialNum: "B" })]),
         container("Контейнер 2", [allocation({ materialNum: "C" })]),
@@ -147,7 +156,51 @@ describe("buildReadyToShipExportRows", () => {
       [2, "C"],
       [10, "A"],
       ["Special", "B"],
-      [OK_TO_MIX, "E"],
+      [OK_TO_MIX, "F"],
+      [null, "E"],
+    ]);
+  });
+
+  it("labels only what really sits in the OK to mix container as OK to mix; a remainder placed nowhere gets an empty Container", () => {
+    const rows = buildReadyToShipExportRows({
+      containers: [
+        container(
+          OK_TO_MIX,
+          [allocation({ materialNum: "MIXED", allocatedQty: 4 })],
+          { isOkToMix: true },
+        ),
+      ],
+      unallocatedLines: [
+        // The same line: 4 pcs in OK to mix, 6 pcs still unplaced.
+        line({ materialNum: "MIXED", remainingQty: 6 }),
+      ],
+    });
+
+    expect(rows.map((r) => [r.container, r.sku, r.quantity])).toEqual([
+      [OK_TO_MIX, "MIXED", 4],
+      [null, "MIXED", 6],
+    ]);
+  });
+
+  it("carries the container's name next to it, and none on OK to mix or unplaced rows", () => {
+    const rows = buildReadyToShipExportRows({
+      containers: [
+        container("Контейнер 3", [allocation({ materialNum: "A" })], {
+          name: "Ростов",
+        }),
+        container("Контейнер 4", [allocation({ materialNum: "B" })]),
+        container(OK_TO_MIX, [allocation({ materialNum: "C" })], {
+          isOkToMix: true,
+        }),
+      ],
+      unallocatedLines: [line({ materialNum: "D" })],
+    });
+
+    expect(rows.map((r) => [r.container, r.containerName, r.sku])).toEqual([
+      [3, "Ростов", "A"],
+      [4, null, "B"],
+      [OK_TO_MIX, null, "C"],
+      [null, null, "D"],
     ]);
   });
 
@@ -170,7 +223,7 @@ describe("buildReadyToShipExportRows", () => {
     ]);
   });
 
-  it("skips lines with nothing left, and lists a line without loadability as OK to mix with an empty Load Factor", () => {
+  it("skips lines with nothing left, and lists a line without loadability with an empty Container and Load Factor", () => {
     const rows = buildReadyToShipExportRows({
       containers: [],
       unallocatedLines: [
@@ -183,8 +236,8 @@ describe("buildReadyToShipExportRows", () => {
     expect(
       rows.map((r) => [r.sku, r.container, r.quantity, r.loadFactor]),
     ).toEqual([
-      ["NOLOAD", OK_TO_MIX, 7, null],
-      ["ZEROLOAD", OK_TO_MIX, 3, null],
+      ["NOLOAD", null, 7, null],
+      ["ZEROLOAD", null, 3, null],
     ]);
   });
 
@@ -204,18 +257,22 @@ describe("buildReadyToShipExportWorkbook", () => {
     return loaded;
   }
 
-  it("writes one sheet with the eight headers, then the rows: numbers as numbers, blanks empty", async () => {
+  it("writes one sheet with the nine headers, then the rows: numbers as numbers, blanks empty", async () => {
     const workbook = await reload(
       buildReadyToShipExportWorkbook({
         containers: [
-          container("Контейнер 3", [
-            allocation({
-              materialNum: "107071",
-              allocatedQty: 30,
-              loadability: 50,
-              piLabel: "Орел",
-            }),
-          ]),
+          container(
+            "Контейнер 3",
+            [
+              allocation({
+                materialNum: "107071",
+                allocatedQty: 30,
+                loadability: 50,
+                piLabel: "Орел",
+              }),
+            ],
+            { name: "Ростов" },
+          ),
         ],
         unallocatedLines: [
           line({
@@ -234,6 +291,7 @@ describe("buildReadyToShipExportWorkbook", () => {
       (sheet.getRow(row).values as unknown[]).slice(1);
     expect(values(1)).toEqual([
       "Container",
+      "Container Name",
       "SKU",
       "Description",
       "Quantity",
@@ -244,6 +302,7 @@ describe("buildReadyToShipExportWorkbook", () => {
     ]);
     expect(values(2)).toEqual([
       3,
+      "Ростов",
       "107071",
       "some tyre",
       30,
@@ -253,11 +312,12 @@ describe("buildReadyToShipExportWorkbook", () => {
       "300000001",
     ]);
     const noLoad = sheet.getRow(3);
-    expect(noLoad.getCell(1).value).toBe("OK to mix");
-    expect(noLoad.getCell(4).value).toBe(7);
-    expect(noLoad.getCell(5).value).toBeNull();
-    expect(noLoad.getCell(7).value).toBeNull(); // no label -> empty cell
-    expect(noLoad.getCell(8).value).toBeNull();
+    expect(noLoad.getCell(1).value).toBeNull(); // placed nowhere -> empty
+    expect(noLoad.getCell(2).value).toBeNull(); // no container name
+    expect(noLoad.getCell(5).value).toBe(7);
+    expect(noLoad.getCell(6).value).toBeNull();
+    expect(noLoad.getCell(8).value).toBeNull(); // no label -> empty cell
+    expect(noLoad.getCell(9).value).toBeNull();
     expect(sheet.rowCount).toBe(3);
   });
 

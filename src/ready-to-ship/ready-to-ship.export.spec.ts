@@ -49,13 +49,22 @@ describe("ReadyToShipService.exportXlsx", () => {
     );
   });
 
-  it("client gets the placed part under its container number and the remainder as OK to mix", async () => {
+  it("client gets the placed part under its container number and name, the real OK to mix under its label, and the unplaced remainder with an empty Container", async () => {
+    const view = await h.service.getView(clientActor);
+    const okToMix = view.containers.find((c) => c.isOkToMix);
+    await h.service.rename(view.containers[0].id, "Ростов", clientActor);
+    await h.service.move(
+      { piLineItemId: "l2", containerId: okToMix!.id, qty: 5 },
+      clientActor,
+    );
+
     const { buffer, fileName } = await h.service.exportXlsx(clientActor);
 
     expect(fileName).toMatch(/^ReadyToShip_\d{4}-\d{2}-\d{2}\.xlsx$/);
     expect(await sheetRows(buffer)).toEqual([
       [
         "Container",
+        "Container Name",
         "SKU",
         "Description",
         "Quantity",
@@ -64,14 +73,38 @@ describe("ReadyToShipService.exportXlsx", () => {
         "Name",
         "SO",
       ],
-      [1, "M1", "desc l1", 30, 0.6, "100037320", "Орел", "S1"],
-      ["OK to mix", "M1", "desc l1", 70, 1.4, "100037320", "Орел", "S1"],
-      // a PI without a label -> an empty cell, not "null"
+      [1, "Ростов", "M1", "desc l1", 30, 0.6, "100037320", "Орел", "S1"],
+      // really in the OK to mix container -> its label, no name
       [
         "OK to mix",
+        undefined,
         "M2",
         "desc l2",
-        7,
+        5,
+        undefined,
+        "100037321",
+        undefined,
+        "S2",
+      ],
+      // placed nowhere -> empty Container (not "OK to mix")
+      [
+        undefined,
+        undefined,
+        "M1",
+        "desc l1",
+        70,
+        1.4,
+        "100037320",
+        "Орел",
+        "S1",
+      ],
+      // a PI without a label -> an empty cell, not "null"
+      [
+        undefined,
+        undefined,
+        "M2",
+        "desc l2",
+        2,
         undefined,
         "100037321",
         undefined,

@@ -155,6 +155,7 @@
         "moved": "Перемещено в контейнер",
         "moved_remaining_to_mix": "Весь остаток перенесён в OK to mix",
         "removed": "Убрано из контейнера",
+        "container_renamed": "Изменено название контейнера",
         "undone_last": "Отменено последнее действие",
         "undone_all": "Отменены все несохранённые изменения",
         "confirmed": "Контейнеры подтверждены",
@@ -449,7 +450,8 @@
       "okToMixSummary_many": "{{count}} позиций / {{qty}} шт.",
       "okToMixSummary_other": "{{count}} позиции / {{qty}} шт.",
       "expand": "Развернуть",
-      "collapse": "Свернуть"
+      "collapse": "Свернуть",
+      "nameAria": "Название контейнера"
     },
     "marking": {
       "uploaded": "Файл загружен",
@@ -651,6 +653,8 @@
     "PRIORITY_QTY_OUT_OF_RANGE": "Приоритет должен быть от 0 до {{max, number}} (остаток строки к поставке).",
     "PI_LABEL_NOT_STRING": "Название должно быть текстом.",
     "PI_LABEL_TOO_LONG": "Название — не более {{max}} символов.",
+    "CONTAINER_NAME_NOT_STRING": "Название контейнера должно быть текстом.",
+    "CONTAINER_NAME_TOO_LONG": "Название контейнера — не более {{max}} символов.",
     "INVALID_DATE": "Укажите корректную дату.",
     "DATE_OVERRIDE_EMPTY": "Укажите дату ETD и/или ETA.",
     "CUSTOMER_ID_REQUIRED": "Выберите клиента.",
@@ -670,6 +674,7 @@
     "CONTAINER_NOT_LOCKED": "Контейнер не подтверждён — разблокировать нечего.",
     "ALLOCATION_NOT_LOCKED": "Позиция не заблокирована — разблокировать нечего.",
     "NOTHING_TO_MOVE": "Нераспределённого остатка не осталось — переносить нечего.",
+    "OK_TO_MIX_NAME_NOT_ALLOWED": "Контейнеру OK to mix название не задаётся.",
     "UNDO_REMOVE_CONFLICT": "Нельзя отменить удаление {{qty, number}} шт.: строка уже размещена в другом контейнере (свободно {{remaining, number}}).",
     "MARKING_REQUIRES_LOCKED_ALLOCATION": "Маркировку можно загружать только для подтверждённой позиции.",
     "ARRIVAL_ALREADY_CONFIRMED": "Прибытие уже подтверждено.",

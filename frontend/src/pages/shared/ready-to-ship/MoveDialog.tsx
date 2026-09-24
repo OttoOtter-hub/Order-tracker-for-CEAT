@@ -31,7 +31,8 @@ import {
 import { FILL_TEXT, fillLevel, formatPercent } from "@/lib/fill"
 import { formatNumber, formatPiTitle } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
-import { useContainerName } from "@/lib/readyToShip"
+import { moveTargetOrder } from "@/lib/containerDisplay"
+import { useContainerTitle } from "@/lib/readyToShip"
 import { cn } from "@/lib/utils"
 
 interface MoveFormValues {
@@ -75,8 +76,10 @@ function MoveForm({
   onMoved,
 }: MoveDialogProps & { line: UnallocatedLine }) {
   const { t } = useTranslation()
-  const containerName = useContainerName()
+  const containerTitle = useContainerTitle()
   const move = useMoveMutation(customerId)
+  // Phase 22: "OK to mix" first here (only here — the card list keeps it last).
+  const targets = useMemo(() => moveTargetOrder(containers), [containers])
   // The backend only takes whole units; a fractional remainder (never seen in
   // practice) can only be moved down to the integer below it.
   const max = Math.floor(line.remainingQty)
@@ -160,7 +163,7 @@ function MoveForm({
             t("readyToShip.move.success", {
               qty: formatNumber(String(amount)),
               label: target
-                ? containerName(target.label)
+                ? containerTitle(target)
                 : t("readyToShip.move.successFallbackLabel"),
             })
           )
@@ -260,7 +263,7 @@ function MoveForm({
                     aria-label={t("readyToShip.move.container")}
                     className="grid max-h-72 gap-1.5 overflow-y-auto pr-1"
                   >
-                    {containers.map((container) => {
+                    {targets.map((container) => {
                       const projected = projectedPercent(container)
                       const isSelected = field.value === container.id
                       const blocked = blockedReason(container)
@@ -284,8 +287,11 @@ function MoveForm({
                             onChange={() => field.onChange(container.id)}
                             className="size-4 shrink-0"
                           />
-                          <span className="w-24 shrink-0 font-medium">
-                            {containerName(container.label)}
+                          <span
+                            className="w-40 shrink-0 truncate font-medium"
+                            title={containerTitle(container)}
+                          >
+                            {containerTitle(container)}
                           </span>
                           {blocked ? (
                             <span className="text-xs text-muted-foreground">
@@ -332,7 +338,7 @@ function MoveForm({
             <p className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               {t("readyToShip.move.overloadWarning", {
-                label: selected ? containerName(selected.label) : "",
+                label: selected ? containerTitle(selected) : "",
                 percent: formatPercent(selectedProjected),
               })}
             </p>

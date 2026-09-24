@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { ContainerNameEditor } from "@/pages/shared/ready-to-ship/ContainerNameEditor"
 import { FillMeter } from "@/pages/shared/ready-to-ship/FillMeter"
 import type { RemoveTarget } from "@/pages/shared/ready-to-ship/RemoveDialog"
 import {
@@ -26,7 +27,7 @@ import {
 } from "@/api/readyToShip"
 import { FILL_CARD, FILL_TEXT, fillLevel, formatPercent } from "@/lib/fill"
 import { formatNumber, formatPiTitle } from "@/lib/format"
-import { useContainerName } from "@/lib/readyToShip"
+import { useContainerTitle } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 
@@ -48,7 +49,7 @@ interface MarkingCellProps {
 // change deletes the file) and deletes; both roles can download.
 function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
   const { t } = useTranslation()
-  const containerName = useContainerName()
+  const containerTitle = useContainerTitle()
   const upload = useUploadMarkingMutation()
   const remove = useDeleteMarkingMutation()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -163,7 +164,7 @@ function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
             title={t("readyToShip.marking.deleteTitle")}
             description={t("readyToShip.marking.deleteDescription", {
               material: allocation.materialNum ?? "—",
-              container: containerName(container.label),
+              container: containerTitle(container),
             })}
             confirmLabel={t("common.delete")}
             destructive
@@ -206,7 +207,7 @@ export function ContainerCard({
   onUnlockAllocation,
 }: ContainerCardProps) {
   const { t } = useTranslation()
-  const containerName = useContainerName()
+  const containerTitle = useContainerTitle()
   const level = fillLevel(container.fillPercent)
   const isClient = mode === "client"
   const isOps = mode === "ops"
@@ -267,7 +268,9 @@ export function ContainerCard({
       >
         <CardHeader className="flex items-center gap-2">
           {toggle}
-          <CardTitle className="text-base">{containerName(container.label)}</CardTitle>
+          <CardTitle className="min-w-0 truncate text-base">
+            {containerTitle(container)}
+          </CardTitle>
           <span
             className={cn(
               "ml-auto text-sm tabular-nums",
@@ -288,10 +291,18 @@ export function ContainerCard({
           <div className="grid gap-1.5">
             <div className="flex items-center gap-1">
               {toggle}
-              <CardTitle className="text-lg">
-                {containerName(container.label)}
+              <CardTitle className="text-lg break-words">
+                {containerTitle(container)}
               </CardTitle>
             </div>
+            {isClient && !isOkToMix && (
+              <ContainerNameEditor
+                // A name changed elsewhere (another tab) resets the field.
+                key={container.name ?? ""}
+                containerId={container.id}
+                name={container.name}
+              />
+            )}
             <div className="flex flex-wrap items-center gap-1.5">
               {container.isConfirmed ? (
                 <Badge variant="outline" className={GREEN_BADGE}>

@@ -681,6 +681,13 @@ export class ReadyToShipService {
       const kept = numberedOnly(containers).filter(
         (c) => !emptyContainers.includes(c),
       );
+      // Phase 22: a recycled slot that comes back under the same label keeps
+      // the name the client gave it.
+      const names = new Map(
+        emptyContainers
+          .filter((c) => c.name)
+          .map((c) => [c.label, c.name as string]),
+      );
 
       const total = computeTotalPossibleContainers(
         await this.loadActiveLines(em, customerId),
@@ -690,6 +697,7 @@ export class ReadyToShipService {
         customerId,
         total - kept.length,
         kept,
+        names,
       );
 
       await this.audit.record(
@@ -810,6 +818,62 @@ export class ReadyToShipService {
           metadata: {
             containerLabels: toConfirm.map((c) => c.label),
             positionsLocked: touchedAllocations.length,
+          },
+        },
+        em,
+      );
+    });
+
+    return this.loadView(customerId);
+  }
+
+  /**
+   * Phase 22: the client names one of its own numbered containers (at most
+   * 30 characters — the DTO checks that; blank clears it). A note, not part
+   * of the plan: allowed whatever the container's lock state. "OK to mix"
+   * keeps its fixed trade label and can't be named (400); another customer's
+   * container is a 404, same as move().
+   */
+  async rename(
+    containerId: string,
+    name: string | null,
+    actor: RequestUser,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.requireClient(actor);
+    const trimmed = name === null ? "" : name.trim();
+    const newName = trimmed === "" ? null : trimmed;
+
+    await this.dataSource.transaction(async (em) => {
+      const container = await this.findOwnedContainer(
+        em,
+        containerId,
+        customerId,
+      );
+      if (container.isOkToMix) {
+        throw new BadRequestException(
+          apiError(
+            "OK_TO_MIX_NAME_NOT_ALLOWED",
+            "контейнеру OK to mix название не задаётся",
+          ),
+        );
+      }
+      const previous = container.name ?? null;
+      if (previous === newName) {
+        return;
+      }
+      await em
+        .getRepository(ShippingContainer)
+        .update({ id: container.id }, { name: newName });
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.container_renamed",
+          entityType: "shipping_container",
+          entityId: container.id,
+          metadata: {
+            containerLabel: container.label,
+            from: previous,
+            to: newName,
           },
         },
         em,
@@ -1207,6 +1271,8 @@ export class ReadyToShipService {
     customerId: string,
     count: number,
     existing: ShippingContainer[],
+    // label -> name to restore on a slot recreated under that label.
+    names?: Map<string, string>,
   ): Promise<void> {
     if (count <= 0) {
       return;
@@ -1214,15 +1280,17 @@ export class ReadyToShipService {
     let next =
       existing.reduce((max, c) => Math.max(max, labelNumber(c.label)), 0) + 1;
     const repo = em.getRepository(ShippingContainer);
-    const fresh = Array.from({ length: count }, () =>
-      repo.create({
+    const fresh = Array.from({ length: count }, () => {
+      const label = `Контейнер ${next++}`;
+      return repo.create({
         customer: { id: customerId } as Customer,
-        label: `Контейнер ${next++}`,
+        label,
+        name: names?.get(label) ?? null,
         isOkToMix: false,
         confirmedAt: null,
         confirmedBy: null,
-      }),
-    );
+      });
+    });
     await repo.save(fresh);
   }
 
@@ -1445,6 +1513,7 @@ export class ReadyToShipService {
       return {
         id: container.id,
         label: container.label,
+        name: container.name ?? null,
         isOkToMix,
         totalQty: allocationViews.reduce((sum, a) => sum + a.allocatedQty, 0),
         totalLines: allocationViews.length,

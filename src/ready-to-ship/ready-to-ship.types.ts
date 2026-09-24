@@ -33,6 +33,8 @@ export interface AllocationView {
 export interface ContainerView {
   id: string;
   label: string;
+  /** Phase 22: the client's name for a numbered container; null when unset. */
+  name: string | null;
   /**
    * Phase 21: the "OK to mix" container — always last, fillPercent 0 and
    * never overfilled; totalQty/totalLines are its whole summary.

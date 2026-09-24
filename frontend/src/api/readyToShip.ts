@@ -46,6 +46,9 @@ export interface ContainerAllocation {
 export interface ShippingContainer {
   id: string
   label: string
+  // Phase 22: the client's own name for a numbered container ("Ростов"),
+  // shown as "Container 3: Ростов"; always null on "OK to mix".
+  name: string | null
   // Phase 21: the customer's one "OK to mix" container — always last, no
   // fill percent (0) and never overfilled; totalQty/totalLines summarise it.
   isOkToMix: boolean
@@ -126,6 +129,20 @@ export function useMoveMutation(customerId?: string) {
 export function useMoveRemainingToMixMutation(customerId?: string) {
   return useViewMutation(customerId, () =>
     apiClient.post<ReadyToShipView>("/ready-to-ship/move-remaining-to-mix")
+  )
+}
+
+// Same limit as the backend's UpdateContainerNameDto.
+export const CONTAINER_NAME_MAX_LENGTH = 30
+
+// Phase 22: client-only; null (or blank) clears the name.
+export function useRenameContainerMutation(customerId?: string) {
+  return useViewMutation(
+    customerId,
+    ({ containerId, name }: { containerId: string; name: string | null }) =>
+      apiClient.patch<ReadyToShipView>(`/containers/${containerId}/name`, {
+        name,
+      })
   )
 }
 

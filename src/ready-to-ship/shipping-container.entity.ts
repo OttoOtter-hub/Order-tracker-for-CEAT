@@ -28,6 +28,13 @@ export class ShippingContainer extends BaseEntity {
   label: string;
 
   /**
+   * Phase 22: the client's own note on a numbered container ("Ростов"),
+   * shown as "Контейнер 3: Ростов". Never set on "OK to mix".
+   */
+  @Column({ type: "varchar", length: 30, nullable: true })
+  name: string | null;
+
+  /**
    * Phase 21: the customer's single "OK to mix" container — lines that ship
    * mixed rather than in a numbered, loadability-planned slot. Created lazily
    * with the fixed label "OK to mix", never counted as a slot of the plan
