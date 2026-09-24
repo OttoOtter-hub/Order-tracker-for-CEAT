@@ -1154,7 +1154,17 @@ ops по своему `customer_id`, те же значения; деталь о
   RU/EN на лету меняет весь текст маркера и колонки; блок "Документы и оплата (ETA-15)" на
   детальной странице не тронут.
 
-## "Разблокировать все" для ops (после Фазы 22, ещё не задеплоено)
+## "Разблокировать все" для ops (после Фазы 22, задеплоено на прод 2026-09-24, коммит `d4d0a33`)
+
+**Деплой.** Без миграции (`migration:show` — 14/14, новых нет). `dist.new`
+рядом (SHA-256 архивов сверен), `diff -rq dist dist.new` — ровно файлы
+изменения. `stop` → `mv dist dist.bak-20260924-unlockall` → `mv dist.new dist` →
+`start`: `POST /ready-to-ship/unlock-all` зарегистрирован, 53 маршрута, ошибок
+нет. Фронтенд с `VITE_API_URL=/api` (`index-C3mc_ppE.js`), прежний —
+`ceat-frontend.prev-before-unlockall`, `nginx -t` → `reload`. Публичные
+проверки: `/`, бандл и CSS — `200`; `unlock-all` и `/ready-to-ship` без токена —
+`401 UNAUTHORIZED`; неверный логин — `INVALID_CREDENTIALS`; ufw — только 22/80.
+Сама массовая разблокировка на живых данных клиента не запускалась.
 
 - **`POST /ready-to-ship/unlock-all?customerId=…`** — только ops
   (`@Roles(Role.OPS)` плюс проверка в сервисе: client — `403 OPS_ONLY_ACTION`;
