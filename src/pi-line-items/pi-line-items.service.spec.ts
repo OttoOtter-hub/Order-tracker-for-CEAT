@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { makeFakeRepo } from "../common/testing/fake-repo";
+import { FakeAudit, makeFakeAudit } from "../common/testing/fake-audit";
 import { PiLineItemsService } from "./pi-line-items.service";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
@@ -27,15 +28,18 @@ describe("PiLineItemsService", () => {
     customerId: "cust-2",
   };
 
+  let audit: FakeAudit;
+
   beforeEach(() => {
     repo = makeFakeRepo();
-    service = new PiLineItemsService(repo as any);
+    audit = makeFakeAudit();
+    service = new PiLineItemsService(repo as any, audit as any);
   });
 
   function seedLineItem(overrides: Record<string, any> = {}) {
     return repo.seed({
       id: "li-1",
-      pi: { id: "pi-1", customer: { id: "cust-1" } },
+      pi: { id: "pi-1", piNumber: "100037320", customer: { id: "cust-1" } },
       soNumber: "300029159",
       materialNum: "107071",
       balanceToBeDelivered: "10.00",
@@ -111,6 +115,32 @@ describe("PiLineItemsService", () => {
       const updated = await service.updatePriority("li-1", 10, clientActor);
 
       expect(updated.priorityQty).toBe("10");
+    });
+
+    it("journals a change against the PI (from -> to), and nothing when the value is unchanged or refused", async () => {
+      seedLineItem({ priorityQty: "2" });
+
+      await service.updatePriority("li-1", 7, clientActor);
+      await service.updatePriority("li-1", 7, clientActor); // same value
+      await service
+        .updatePriority("li-1", 99, clientActor)
+        .catch(() => undefined); // out of range, refused
+
+      expect(audit.entries).toEqual([
+        expect.objectContaining({
+          actor: clientActor,
+          action: "pi.priority_changed",
+          entityType: "pi",
+          entityId: "pi-1",
+          metadata: expect.objectContaining({
+            piNumber: "100037320",
+            lineItemId: "li-1",
+            materialNum: "107071",
+            from: 2,
+            to: 7,
+          }),
+        }),
+      ]);
     });
   });
 });

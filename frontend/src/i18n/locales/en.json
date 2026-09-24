@@ -43,6 +43,7 @@
     "shipped": "Shipped",
     "backorderUpload": "Backorder upload",
     "users": "Users",
+    "auditLog": "Action log",
     "changePassword": "Change password",
     "logout": "Log out"
   },
@@ -89,6 +90,126 @@
       "submitting": "Creating...",
       "created": "User {{email}} created",
       "failed": "Could not create the user"
+    }
+  },
+  "audit": {
+    "title": "Action log",
+    "description": "Who changed, attached or deleted what — newest first.",
+    "loadFailed": "Could not load the action log",
+    "empty": "Nothing matches these filters.",
+    "columns": {
+      "when": "Date and time",
+      "who": "Who",
+      "action": "Action",
+      "entity": "Object",
+      "details": "Details"
+    },
+    "filters": {
+      "user": "User",
+      "anyUser": "Any user",
+      "entityType": "Object type",
+      "anyEntityType": "Any type",
+      "from": "From",
+      "to": "To",
+      "reset": "Reset filters"
+    },
+    "entityTypes": {
+      "pi": "PI",
+      "backorder_upload": "Backorder upload",
+      "shipping_container": "Ready-to-ship container",
+      "container_allocation": "Container position",
+      "customer": "Ready to ship",
+      "actual_container": "Shipped container",
+      "user": "User"
+    },
+    "show": "Show",
+    "hide": "Hide",
+    "noDetails": "No details",
+    "download": "Download",
+    "yes": "yes",
+    "no": "no",
+    "page": "Page {{page}} of {{pages}}",
+    "total_one": "{{count}} entry",
+    "total_other": "{{count}} entries",
+    "previous": "Previous",
+    "next": "Next",
+    "actions": {
+      "pi": {
+        "file_uploaded": "PI file uploaded",
+        "replacement_proposed": "PI file replacement proposed",
+        "replacement_approved": "PI file replacement approved",
+        "replacement_rejected": "PI file replacement rejected",
+        "signed": "PI signed (signed file uploaded)",
+        "signed_file_replaced": "Signed file replaced",
+        "additional_file_added": "Additional file added",
+        "label_changed": "Name changed",
+        "priority_changed": "Priority changed",
+        "priority_reset": "Priority reset"
+      },
+      "backorder": {
+        "uploaded": "Backorder file uploaded"
+      },
+      "rts": {
+        "moved": "Moved to a container",
+        "removed": "Removed from a container",
+        "undone_last": "Last action undone",
+        "undone_all": "All unsaved changes undone",
+        "confirmed": "Containers confirmed",
+        "container_unlocked": "Container unlocked",
+        "position_unlocked": "Position unlocked",
+        "marking_uploaded": "Marking file uploaded",
+        "marking_deleted": "Marking file deleted"
+      },
+      "container": {
+        "arrival_confirmed": "Arrival confirmed",
+        "arrival_revoked": "Arrival confirmation revoked",
+        "dates_changed": "ETD/ETA changed",
+        "dates_reset": "ETD/ETA reset to the file's dates",
+        "file_uploaded": "Container file uploaded",
+        "file_deleted": "Container file deleted"
+      },
+      "user": {
+        "created": "User created",
+        "deactivated": "User deactivated",
+        "reactivated": "User restored"
+      }
+    },
+    "fields": {
+      "piNumber": "PI",
+      "fileName": "File",
+      "fileUrl": "File",
+      "previousFileUrl": "Previous file",
+      "proposedFileUrl": "Proposed file",
+      "currentFileUrl": "Current file",
+      "description": "Description",
+      "cardCreated": "New card",
+      "from": "Was",
+      "to": "Now",
+      "materialNum": "Material",
+      "soNumber": "SO",
+      "qty": "Quantity",
+      "containerLabel": "Container",
+      "containerLabels": "Containers",
+      "positionsLocked": "Positions confirmed",
+      "positionsUnlocked": "Positions unlocked",
+      "positionsRolledBack": "Positions rolled back",
+      "undoneDelta": "Quantity undone",
+      "replacedPrevious": "Replaced an earlier file",
+      "linesReset": "Lines reset",
+      "rowsProcessed": "Rows",
+      "newCardsCreated": "New cards",
+      "cardsUpdated": "Cards updated",
+      "cardsArchived": "Cards archived",
+      "rowsSkipped": "Rows skipped",
+      "containersCreated": "Containers created",
+      "containerNumber": "Container",
+      "confirmedAt": "Confirmed at",
+      "confirmedBy": "Confirmed by",
+      "overrideEtd": "ETD",
+      "overrideEta": "ETA",
+      "email": "Email",
+      "role": "Role",
+      "customerName": "Customer"
     }
   },
   "changePassword": {

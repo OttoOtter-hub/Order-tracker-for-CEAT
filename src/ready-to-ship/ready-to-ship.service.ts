@@ -8,6 +8,7 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
 import { DataSource, EntityManager, In } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { apiError } from "../common/errors/api-error";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { Role } from "../common/enums/role.enum";
 import { formatDateForFilename } from "../common/utils/format-date";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
@@ -74,6 +75,7 @@ export class ReadyToShipService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
+    private readonly audit: AuditLogService,
   ) {}
 
   async getView(
@@ -246,6 +248,23 @@ export class ReadyToShipService {
           createdAt: new Date(),
         }),
       );
+
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.moved",
+          entityType: "shipping_container",
+          entityId: container.id,
+          metadata: {
+            containerLabel: container.label,
+            piNumber: line.pi.piNumber,
+            materialNum: line.materialNum,
+            soNumber: line.soNumber,
+            qty: dto.qty,
+          },
+        },
+        em,
+      );
     });
 
     return this.loadView(customerId);
@@ -276,7 +295,12 @@ export class ReadyToShipService {
       const allocationRepo = em.getRepository(ContainerLineAllocation);
       const found = await allocationRepo.findOne({
         where: { id: dto.allocationId },
-        relations: ["container", "container.customer", "piLineItem"],
+        relations: [
+          "container",
+          "container.customer",
+          "piLineItem",
+          "piLineItem.pi",
+        ],
       });
       if (!found || found.container.customer.id !== customerId) {
         throw new NotFoundException(
@@ -324,6 +348,23 @@ export class ReadyToShipService {
           createdAt: new Date(),
         }),
       );
+
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.removed",
+          entityType: "shipping_container",
+          entityId: found.container.id,
+          metadata: {
+            containerLabel: found.container.label,
+            piNumber: found.piLineItem.pi?.piNumber ?? null,
+            materialNum: found.piLineItem.materialNum,
+            soNumber: found.piLineItem.soNumber,
+            qty: dto.qty,
+          },
+        },
+        em,
+      );
     });
 
     return this.loadView(customerId);
@@ -342,7 +383,7 @@ export class ReadyToShipService {
       const candidates = containerIds.length
         ? await em.getRepository(AllocationAction).find({
             where: { container: { id: In(containerIds) } },
-            relations: ["container", "piLineItem"],
+            relations: ["container", "piLineItem", "piLineItem.pi"],
             order: { createdAt: "DESC" },
           })
         : [];
@@ -377,6 +418,23 @@ export class ReadyToShipService {
         }
       }
       await em.getRepository(AllocationAction).delete({ id: last.id });
+
+      // What was undone: a move (positive delta) or a removal (negative).
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.undone_last",
+          entityType: "shipping_container",
+          entityId: last.container.id,
+          metadata: {
+            containerLabel: last.container.label,
+            piNumber: last.piLineItem.pi?.piNumber ?? null,
+            materialNum: last.piLineItem.materialNum,
+            undoneDelta: delta,
+          },
+        },
+        em,
+      );
     });
 
     return this.loadView(customerId);
@@ -495,6 +553,17 @@ export class ReadyToShipService {
         total - kept.length,
         kept,
       );
+
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.undone_all",
+          entityType: "customer",
+          entityId: customerId,
+          metadata: { positionsRolledBack: unlockedAllocations.length },
+        },
+        em,
+      );
     });
 
     return this.loadView(customerId);
@@ -591,6 +660,20 @@ export class ReadyToShipService {
         container.confirmedBy = { id: actor.id } as User;
       }
       await containerRepo.save(toConfirm);
+
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.confirmed",
+          entityType: "customer",
+          entityId: customerId,
+          metadata: {
+            containerLabels: toConfirm.map((c) => c.label),
+            positionsLocked: touchedAllocations.length,
+          },
+        },
+        em,
+      );
     });
 
     return this.loadView(customerId);
@@ -653,6 +736,18 @@ export class ReadyToShipService {
     container.confirmedBy = null;
     await containerRepo.save(container);
 
+    await this.audit.record({
+      actor,
+      action: "rts.container_unlocked",
+      entityType: "shipping_container",
+      entityId: container.id,
+      metadata: {
+        containerLabel: container.label,
+        customerId: container.customer.id,
+        positionsUnlocked: locked.length,
+      },
+    });
+
     // Event 3 (Phase 13): no "proposed_to_client" status exists here — this
     // is the one ops action that puts a container back in front of the
     // client for review (see notification-events.ts for the reasoning).
@@ -694,7 +789,12 @@ export class ReadyToShipService {
     );
     const allocation = await allocationRepo.findOne({
       where: { id: allocationId },
-      relations: ["container", "container.customer"],
+      relations: [
+        "container",
+        "container.customer",
+        "piLineItem",
+        "piLineItem.pi",
+      ],
     });
     if (!allocation) {
       throw new NotFoundException(
@@ -715,6 +815,20 @@ export class ReadyToShipService {
 
     allocation.isLocked = false;
     await allocationRepo.save(allocation);
+
+    await this.audit.record({
+      actor,
+      action: "rts.position_unlocked",
+      entityType: "shipping_container",
+      entityId: allocation.container.id,
+      metadata: {
+        containerLabel: allocation.container.label,
+        allocationId: allocation.id,
+        piNumber: allocation.piLineItem?.pi?.piNumber ?? null,
+        materialNum: allocation.piLineItem?.materialNum ?? null,
+        qty: toNumberOrNull(allocation.allocatedQty),
+      },
+    });
 
     // Same trigger as unlock()'s Event 3 (Phase 13), just at the finer
     // grain — freeing even one position is still "the client should look at

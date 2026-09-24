@@ -133,8 +133,11 @@ export class ActualContainerFilesController {
   @Roles(Role.OPS)
   @HttpCode(204)
   @Delete(":id")
-  async remove(@Param("id", ParseUUIDPipe) id: string) {
-    await this.service.removeFile(id);
+  async remove(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    await this.service.removeFile(id, user);
   }
 
   @Get(":id/download")

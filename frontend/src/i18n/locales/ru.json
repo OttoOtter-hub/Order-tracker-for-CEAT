@@ -43,6 +43,7 @@
     "shipped": "Отгружено",
     "backorderUpload": "Загрузка бэкордера",
     "users": "Пользователи",
+    "auditLog": "Журнал действий",
     "changePassword": "Сменить пароль",
     "logout": "Выйти"
   },
@@ -89,6 +90,128 @@
       "submitting": "Создание...",
       "created": "Пользователь {{email}} создан",
       "failed": "Не удалось создать пользователя"
+    }
+  },
+  "audit": {
+    "title": "Журнал действий",
+    "description": "Кто что менял, прикреплял и удалял — новые сверху.",
+    "loadFailed": "Не удалось загрузить журнал действий",
+    "empty": "По этим фильтрам ничего не найдено.",
+    "columns": {
+      "when": "Дата и время",
+      "who": "Кто",
+      "action": "Действие",
+      "entity": "Объект",
+      "details": "Детали"
+    },
+    "filters": {
+      "user": "Пользователь",
+      "anyUser": "Любой пользователь",
+      "entityType": "Тип объекта",
+      "anyEntityType": "Любой тип",
+      "from": "С",
+      "to": "По",
+      "reset": "Сбросить фильтры"
+    },
+    "entityTypes": {
+      "pi": "Проформа",
+      "backorder_upload": "Загрузка бэкордера",
+      "shipping_container": "Контейнер (готово к отгрузке)",
+      "container_allocation": "Позиция в контейнере",
+      "customer": "Готово к отгрузке",
+      "actual_container": "Отгруженный контейнер",
+      "user": "Пользователь"
+    },
+    "show": "Показать",
+    "hide": "Скрыть",
+    "noDetails": "Без деталей",
+    "download": "Скачать",
+    "yes": "да",
+    "no": "нет",
+    "page": "Страница {{page}} из {{pages}}",
+    "total_one": "{{count}} запись",
+    "total_few": "{{count}} записи",
+    "total_many": "{{count}} записей",
+    "total_other": "{{count}} записи",
+    "previous": "Назад",
+    "next": "Вперёд",
+    "actions": {
+      "pi": {
+        "file_uploaded": "Загружен файл проформы",
+        "replacement_proposed": "Предложена замена файла проформы",
+        "replacement_approved": "Замена файла проформы одобрена",
+        "replacement_rejected": "Замена файла проформы отклонена",
+        "signed": "Проформа подписана (загружен подписанный файл)",
+        "signed_file_replaced": "Заменён подписанный файл",
+        "additional_file_added": "Добавлен доп. файл",
+        "label_changed": "Изменено название",
+        "priority_changed": "Изменён приоритет",
+        "priority_reset": "Приоритет сброшен"
+      },
+      "backorder": {
+        "uploaded": "Загружен файл бэкордера"
+      },
+      "rts": {
+        "moved": "Перемещено в контейнер",
+        "removed": "Убрано из контейнера",
+        "undone_last": "Отменено последнее действие",
+        "undone_all": "Отменены все несохранённые изменения",
+        "confirmed": "Контейнеры подтверждены",
+        "container_unlocked": "Контейнер разблокирован",
+        "position_unlocked": "Позиция разблокирована",
+        "marking_uploaded": "Загружен файл маркировки",
+        "marking_deleted": "Удалён файл маркировки"
+      },
+      "container": {
+        "arrival_confirmed": "Прибытие подтверждено",
+        "arrival_revoked": "Подтверждение прибытия отменено",
+        "dates_changed": "Изменены ETD/ETA",
+        "dates_reset": "ETD/ETA сброшены к данным файла",
+        "file_uploaded": "Загружен файл контейнера",
+        "file_deleted": "Удалён файл контейнера"
+      },
+      "user": {
+        "created": "Создан пользователь",
+        "deactivated": "Пользователь деактивирован",
+        "reactivated": "Пользователь восстановлен"
+      }
+    },
+    "fields": {
+      "piNumber": "Проформа",
+      "fileName": "Файл",
+      "fileUrl": "Файл",
+      "previousFileUrl": "Прежний файл",
+      "proposedFileUrl": "Предложенный файл",
+      "currentFileUrl": "Текущий файл",
+      "description": "Описание",
+      "cardCreated": "Новая карточка",
+      "from": "Было",
+      "to": "Стало",
+      "materialNum": "Материал",
+      "soNumber": "SO",
+      "qty": "Количество",
+      "containerLabel": "Контейнер",
+      "containerLabels": "Контейнеры",
+      "positionsLocked": "Подтверждено позиций",
+      "positionsUnlocked": "Разблокировано позиций",
+      "positionsRolledBack": "Откачено позиций",
+      "undoneDelta": "Отменённое количество",
+      "replacedPrevious": "Заменил прежний файл",
+      "linesReset": "Сброшено строк",
+      "rowsProcessed": "Строк",
+      "newCardsCreated": "Новых карточек",
+      "cardsUpdated": "Обновлено карточек",
+      "cardsArchived": "Заархивировано",
+      "rowsSkipped": "Пропущено строк",
+      "containersCreated": "Создано контейнеров",
+      "containerNumber": "Контейнер",
+      "confirmedAt": "Подтверждено",
+      "confirmedBy": "Кем подтверждено",
+      "overrideEtd": "ETD",
+      "overrideEta": "ETA",
+      "email": "Email",
+      "role": "Роль",
+      "customerName": "Клиент"
     }
   },
   "changePassword": {

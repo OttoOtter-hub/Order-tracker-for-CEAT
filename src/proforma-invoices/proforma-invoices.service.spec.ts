@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { makeFakeRepo } from "../common/testing/fake-repo";
 import { makeFakeDataSource } from "../common/testing/fake-data-source";
+import { FakeAudit, makeFakeAudit } from "../common/testing/fake-audit";
 import { ProformaInvoicesService } from "./proforma-invoices.service";
 import { ProformaInvoice } from "./proforma-invoice.entity";
 import { PiFileType, PiFileVersion } from "./pi-file-version.entity";
@@ -24,6 +25,7 @@ describe("ProformaInvoicesService", () => {
   let filesService: { save: jest.Mock };
   let customersService: { findFirst: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
+  let audit: FakeAudit;
   let service: ProformaInvoicesService;
   let fileCounter: number;
 
@@ -91,6 +93,7 @@ describe("ProformaInvoicesService", () => {
       })),
     };
     eventEmitter = { emit: jest.fn() };
+    audit = makeFakeAudit();
     service = new ProformaInvoicesService(
       repo as any,
       additionalFilesRepo as any,
@@ -101,6 +104,7 @@ describe("ProformaInvoicesService", () => {
       customersService as any,
       eventEmitter as any,
       versionsRepo as any,
+      audit as any,
     );
   });
 
@@ -459,6 +463,153 @@ describe("ProformaInvoicesService", () => {
         service.uploadSigned("pi-1", file("x.pdf"), otherClientActor),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(versionsRepo.rows).toHaveLength(0);
+    });
+  });
+
+  describe("action journal (Phase 20b)", () => {
+    function seedCard(overrides: Record<string, unknown> = {}) {
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        label: null,
+        customer: { id: "cust-1" },
+        piFileUrl: "/files/original/download",
+        piFileUploadedAt: new Date("2026-01-01T00:00:00Z"),
+        piFileUploadedBy: { id: "ops-old" },
+        signedFileUrl: null,
+        pendingReplacementFileUrl: null,
+        pendingReplacementProposedBy: null,
+        pendingReplacementProposedAt: null,
+        lineItems: [],
+        ...overrides,
+      });
+    }
+
+    it("PI upload — new card and filled-in card — journals pi.file_uploaded", async () => {
+      await service.uploadPi(file("100037999.pdf"), opsActor);
+      repo.seed({
+        id: "pi-bo",
+        piNumber: "100037320",
+        piFileUrl: null,
+        createdFrom: PiCreatedFrom.BACKORDER_ROW,
+        customer: { id: "cust-1" },
+      });
+      await service.uploadPi(file("100037320.pdf"), opsActor);
+
+      expect(audit.entries).toEqual([
+        expect.objectContaining({
+          actor: opsActor,
+          action: "pi.file_uploaded",
+          entityType: "pi",
+          metadata: expect.objectContaining({
+            piNumber: "100037999",
+            fileName: "100037999.pdf",
+            cardCreated: true,
+          }),
+          inTransaction: false,
+        }),
+        expect.objectContaining({
+          action: "pi.file_uploaded",
+          entityId: "pi-bo",
+          metadata: expect.objectContaining({ cardCreated: false }),
+          inTransaction: true,
+        }),
+      ]);
+    });
+
+    it("first signed copy is pi.signed, a re-upload pi.signed_file_replaced — both in the transaction", async () => {
+      seedCard();
+      await service.uploadSigned("pi-1", file("s1.pdf"), clientActor);
+      await service.uploadSigned("pi-1", file("s2.pdf"), clientActor);
+
+      expect(audit.entries.map((e) => [e.action, e.inTransaction])).toEqual([
+        ["pi.signed", true],
+        ["pi.signed_file_replaced", true],
+      ]);
+      expect(audit.entries[1].metadata).toMatchObject({
+        piNumber: "100037320",
+        fileName: "s2.pdf",
+        previousFileUrl: "/files/file-1/download",
+      });
+    });
+
+    it("additional file, proposal, approval and rejection are each journaled", async () => {
+      seedCard();
+      await service.addAdditionalFile(
+        "pi-1",
+        file("extra.pdf"),
+        "customs",
+        opsActor,
+      );
+      await service.proposeReplacement("pi-1", file("r1.pdf"), opsActor);
+      await service.replacementDecision("pi-1", true, clientActor);
+      await service.proposeReplacement("pi-1", file("r2.pdf"), opsActor);
+      await service.replacementDecision("pi-1", false, clientActor);
+
+      expect(audit.actions()).toEqual([
+        "pi.additional_file_added",
+        "pi.replacement_proposed",
+        "pi.replacement_approved",
+        "pi.replacement_proposed",
+        "pi.replacement_rejected",
+      ]);
+      expect(audit.entries[0].metadata).toMatchObject({
+        fileName: "extra.pdf",
+        description: "customs",
+      });
+      expect(audit.entries[2]).toMatchObject({
+        actor: clientActor,
+        inTransaction: true,
+        metadata: {
+          proposedFileUrl: "/files/file-2/download",
+          previousFileUrl: "/files/original/download",
+        },
+      });
+    });
+
+    it("label set and cleared are journaled with from/to; an unchanged save is not", async () => {
+      seedCard({ piFileUrl: null });
+      await service.updateLabel("pi-1", "  Orel  ", clientActor);
+      await service.updateLabel("pi-1", "Orel", clientActor); // unchanged
+      await service.updateLabel("pi-1", null, clientActor);
+
+      expect(audit.entries.map((e) => [e.action, e.metadata])).toEqual([
+        ["pi.label_changed", { piNumber: "100037320", from: null, to: "Orel" }],
+        ["pi.label_changed", { piNumber: "100037320", from: "Orel", to: null }],
+      ]);
+    });
+
+    it("priority reset is journaled with how many lines had a priority", async () => {
+      seedCard();
+      lineItemsRepo.seed({ id: "li-1", pi: { id: "pi-1" }, priorityQty: "5" });
+      lineItemsRepo.seed({ id: "li-2", pi: { id: "pi-1" }, priorityQty: "0" });
+      // findOne's relations aren't joined by the fake repo — stitch the lines on.
+      repo.rows.find((r) => r.id === "pi-1")!.lineItems = lineItemsRepo.rows;
+
+      await service.resetPriority("pi-1", clientActor);
+
+      expect(audit.entries).toEqual([
+        expect.objectContaining({
+          action: "pi.priority_reset",
+          entityId: "pi-1",
+          metadata: { piNumber: "100037320", linesReset: 1 },
+        }),
+      ]);
+    });
+
+    it("a refused action journals nothing", async () => {
+      seedCard({ signedFileUrl: "/files/signed/download" });
+      await service
+        .updateLabel("pi-1", "x", clientActor)
+        .catch(() => undefined);
+      await service
+        .replacementDecision("pi-1", true, clientActor)
+        .catch(() => undefined);
+      await service
+        .uploadSigned("pi-1", file("x.pdf"), otherClientActor)
+        .catch(() => undefined);
+
+      expect(audit.entries).toEqual([]);
     });
   });
 

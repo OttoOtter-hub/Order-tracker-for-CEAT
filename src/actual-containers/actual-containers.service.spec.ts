@@ -8,6 +8,7 @@ import { validate } from "class-validator";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
 import { makeFakeRepo } from "../common/testing/fake-repo";
+import { makeFakeAudit } from "../common/testing/fake-audit";
 import { ActualContainersService } from "./actual-containers.service";
 import { AddContainerFileDto } from "./dto/add-container-file.dto";
 import { UpdateContainerDatesDto } from "./dto/update-container-dates.dto";
@@ -92,10 +93,12 @@ function setup() {
       return { ...row, actualContainer: container };
     },
   };
+  const audit = makeFakeAudit();
   const service = new ActualContainersService(
     withRelations as any,
     filesWithContainer as any,
     filesService as any,
+    audit as any,
   );
   containerRepo.seed({
     id: "ct-1",
@@ -115,7 +118,7 @@ function setup() {
     overrideEtd: null,
     overrideEta: null,
   });
-  return { service, containerRepo, fileRepo, lineRepo, filesService };
+  return { service, containerRepo, fileRepo, lineRepo, filesService, audit };
 }
 
 describe("ActualContainersService", () => {
@@ -449,7 +452,7 @@ describe("ActualContainersService", () => {
       await service.addFile("ct-1", upload as any, undefined, ops);
       expect((await service.findAll(client))[0].filesCount).toBe(1);
 
-      await service.removeFile(fileRepo.rows[0].id!);
+      await service.removeFile(fileRepo.rows[0].id!, ops);
 
       expect(
         (await service.findAll(ops)).every((c) => c.filesCount === 0),
@@ -522,10 +525,10 @@ describe("ActualContainersService", () => {
       await service.addFile("ct-1", upload as any, undefined, ops);
       const id = fileRepo.rows[0].id!;
 
-      await service.removeFile(id);
+      await service.removeFile(id, ops);
 
       expect(fileRepo.rows).toHaveLength(0);
-      await expect(service.removeFile(id)).rejects.toBeInstanceOf(
+      await expect(service.removeFile(id, ops)).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -559,6 +562,100 @@ describe("ActualContainersService", () => {
 
       expect(ok).toHaveLength(0);
       expect(tooLong.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("action journal (Phase 20b)", () => {
+    const file = {
+      originalname: "BL.pdf",
+      mimetype: "application/pdf",
+      size: 3,
+      buffer: Buffer.from("pdf"),
+    };
+
+    it("date edit and reset are journaled with the before/after values", async () => {
+      const { service, audit } = setup();
+
+      await service.updateDates("ct-1", { overrideEta: "2026-06-01" }, ops);
+      await service.resetDates("ct-1", ops);
+
+      expect(audit.entries).toEqual([
+        expect.objectContaining({
+          actor: ops,
+          action: "container.dates_changed",
+          entityType: "actual_container",
+          entityId: "ct-1",
+          metadata: {
+            containerNumber: "AAAA1111111",
+            from: { overrideEtd: null, overrideEta: null },
+            to: { overrideEtd: null, overrideEta: "2026-06-01" },
+          },
+        }),
+        expect.objectContaining({
+          action: "container.dates_reset",
+          metadata: {
+            containerNumber: "AAAA1111111",
+            from: { overrideEtd: null, overrideEta: "2026-06-01" },
+          },
+        }),
+      ]);
+    });
+
+    it("arrival confirmation (client) and its revocation (ops) are journaled", async () => {
+      const { service, audit } = setup();
+
+      await service.confirmArrival("ct-1", client);
+      await service.revokeArrivalConfirmation("ct-1", ops);
+
+      expect(audit.entries.map((e) => [e.action, e.actor.id])).toEqual([
+        ["container.arrival_confirmed", client.id],
+        ["container.arrival_revoked", ops.id],
+      ]);
+      expect(audit.entries[1].metadata).toMatchObject({
+        containerNumber: "AAAA1111111",
+        confirmedAt: expect.any(Date),
+      });
+    });
+
+    it("file upload and delete are journaled with the file's name", async () => {
+      const { service, fileRepo, audit } = setup();
+
+      await service.addFile("ct-1", file as any, "bill of lading", ops);
+      await service.removeFile(fileRepo.rows[0].id!, ops);
+
+      expect(audit.entries).toEqual([
+        expect.objectContaining({
+          action: "container.file_uploaded",
+          entityId: "ct-1",
+          metadata: expect.objectContaining({
+            containerNumber: "AAAA1111111",
+            fileName: "BL.pdf",
+            description: "bill of lading",
+          }),
+        }),
+        expect.objectContaining({
+          action: "container.file_deleted",
+          entityId: "ct-1",
+          metadata: expect.objectContaining({
+            containerNumber: "AAAA1111111",
+            fileName: "BL.pdf",
+          }),
+        }),
+      ]);
+    });
+
+    it("a refused action journals nothing", async () => {
+      const { service, audit } = setup();
+
+      await service.confirmArrival("ct-1", ops).catch(() => undefined);
+      await service
+        .revokeArrivalConfirmation("ct-1", ops)
+        .catch(() => undefined);
+      await service
+        .updateDates("ct-2", { overrideEta: null }, client)
+        .catch(() => undefined);
+
+      expect(audit.entries).toEqual([]);
     });
   });
 });

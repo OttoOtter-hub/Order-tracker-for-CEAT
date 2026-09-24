@@ -9,6 +9,7 @@ import { FindOptionsWhere, Repository } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
 import { apiError } from "../common/errors/api-error";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { DownloadableFile, FilesService } from "../files/files.service";
 import { User } from "../users/user.entity";
 import { ActualContainer } from "./actual-container.entity";
@@ -42,6 +43,7 @@ export class ActualContainersService {
     @InjectRepository(ActualContainerFile)
     private readonly fileRepo: Repository<ActualContainerFile>,
     private readonly filesService: FilesService,
+    private readonly audit: AuditLogService,
   ) {}
 
   async findAll(actor: RequestUser): Promise<ActualContainer[]> {
@@ -107,6 +109,10 @@ export class ActualContainersService {
       );
     }
     const container = await this.findOne(id, actor);
+    const before = {
+      overrideEtd: container.overrideEtd,
+      overrideEta: container.overrideEta,
+    };
     if (dto.overrideEtd !== undefined) {
       container.overrideEtd = dto.overrideEtd;
     }
@@ -120,6 +126,20 @@ export class ActualContainersService {
         overrideEta: container.overrideEta,
       },
     );
+    await this.audit.record({
+      actor,
+      action: "container.dates_changed",
+      entityType: "actual_container",
+      entityId: container.id,
+      metadata: {
+        containerNumber: container.containerNumber,
+        from: before,
+        to: {
+          overrideEtd: container.overrideEtd,
+          overrideEta: container.overrideEta,
+        },
+      },
+    });
     return this.findOne(id, actor);
   }
 
@@ -130,6 +150,19 @@ export class ActualContainersService {
       { id: container.id },
       { overrideEtd: null, overrideEta: null },
     );
+    await this.audit.record({
+      actor,
+      action: "container.dates_reset",
+      entityType: "actual_container",
+      entityId: container.id,
+      metadata: {
+        containerNumber: container.containerNumber,
+        from: {
+          overrideEtd: container.overrideEtd,
+          overrideEta: container.overrideEta,
+        },
+      },
+    });
     return this.findOne(id, actor);
   }
 
@@ -167,6 +200,13 @@ export class ActualContainersService {
     container.arrivalConfirmedAt = new Date();
     container.arrivalConfirmedByUser = { id: actor.id } as User;
     await this.containerRepo.save(container);
+    await this.audit.record({
+      actor,
+      action: "container.arrival_confirmed",
+      entityType: "actual_container",
+      entityId: container.id,
+      metadata: { containerNumber: container.containerNumber },
+    });
     return this.findOne(id, actor);
   }
 
@@ -197,9 +237,22 @@ export class ActualContainersService {
         apiError("ARRIVAL_NOT_CONFIRMED", "прибытие не было подтверждено"),
       );
     }
+    const confirmedAt = container.arrivalConfirmedAt;
+    const confirmedBy = container.arrivalConfirmedByUser?.email ?? null;
     container.arrivalConfirmedAt = null;
     container.arrivalConfirmedByUser = null;
     await this.containerRepo.save(container);
+    await this.audit.record({
+      actor,
+      action: "container.arrival_revoked",
+      entityType: "actual_container",
+      entityId: container.id,
+      metadata: {
+        containerNumber: container.containerNumber,
+        confirmedAt,
+        confirmedBy,
+      },
+    });
     return this.findOne(id, actor);
   }
 
@@ -221,17 +274,43 @@ export class ActualContainersService {
         description: description?.trim() ? description.trim() : null,
       }),
     );
+    await this.audit.record({
+      actor,
+      action: "container.file_uploaded",
+      entityType: "actual_container",
+      entityId: container.id,
+      metadata: {
+        containerNumber: container.containerNumber,
+        fileName: saved.fileName,
+        fileUrl: saved.fileUrl,
+        description: saved.description,
+      },
+    });
     return saved;
   }
 
-  async removeFile(fileId: string): Promise<void> {
-    const existing = await this.fileRepo.findOne({ where: { id: fileId } });
+  async removeFile(fileId: string, actor: RequestUser): Promise<void> {
+    const existing = await this.fileRepo.findOne({
+      where: { id: fileId },
+      relations: ["actualContainer"],
+    });
     if (!existing) {
       throw new NotFoundException(
         apiError("NOT_FOUND", `ActualContainerFile ${fileId} not found`),
       );
     }
     await this.fileRepo.delete({ id: fileId });
+    await this.audit.record({
+      actor,
+      action: "container.file_deleted",
+      entityType: "actual_container",
+      entityId: existing.actualContainer?.id ?? null,
+      metadata: {
+        containerNumber: existing.actualContainer?.containerNumber ?? null,
+        fileName: existing.fileName,
+        fileUrl: existing.fileUrl,
+      },
+    });
   }
 
   async downloadFile(

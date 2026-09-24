@@ -9,6 +9,8 @@ import {
 } from "typeorm";
 import { ActualContainersImportService } from "../actual-containers/actual-containers-import.service";
 import { apiError } from "../common/errors/api-error";
+import { AuditLogService } from "../audit-log/audit-log.service";
+import { decodeMultipartFilename } from "../common/utils/decode-multipart-filename";
 import { CustomersService } from "../customers/customers.service";
 import { FilesService } from "../files/files.service";
 import { RequestUser } from "../common/auth/request-user.interface";
@@ -51,6 +53,7 @@ export class BackorderUploadsService {
     private readonly allocationRelink: AllocationRelinkService,
     private readonly dataSource: DataSource,
     private readonly actualContainersImport: ActualContainersImportService,
+    private readonly audit: AuditLogService,
   ) {}
 
   findAll(): Promise<BackorderUpload[]> {
@@ -253,6 +256,25 @@ export class BackorderUploadsService {
       upload.newCardsCreated = newCardsCreated;
       upload.cardsArchived = toArchive.length;
       const saved = await uploadRepo.save(upload);
+
+      await this.audit.record(
+        {
+          actor,
+          action: "backorder.uploaded",
+          entityType: "backorder_upload",
+          entityId: saved.id,
+          metadata: {
+            fileName: decodeMultipartFilename(file.originalname),
+            rowsProcessed: saved.rowsProcessed,
+            newCardsCreated: saved.newCardsCreated,
+            cardsUpdated: rowsByPiNumber.size - newCardsCreated,
+            cardsArchived: saved.cardsArchived,
+            rowsSkipped: saved.rowsSkipped,
+            containersCreated: importResult.containersCreated,
+          },
+        },
+        em,
+      );
 
       return {
         id: saved.id,

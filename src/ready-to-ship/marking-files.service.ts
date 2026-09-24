@@ -8,12 +8,23 @@ import { DataSource } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
 import { apiError } from "../common/errors/api-error";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { DownloadableFile, FilesService } from "../files/files.service";
 import { User } from "../users/user.entity";
 import { ContainerLineAllocation } from "./container-line-allocation.entity";
 import { MarkingFile } from "./marking-file.entity";
 
 const STORED_FILE_URL = /^\/files\/([^/]+)\/download$/;
+
+/** Which position a marking file belongs to, for the action journal. */
+function describeAllocation(allocation: ContainerLineAllocation) {
+  return {
+    containerLabel: allocation.container.label,
+    allocationId: allocation.id,
+    piNumber: allocation.piLineItem?.pi?.piNumber ?? null,
+    materialNum: allocation.piLineItem?.materialNum ?? null,
+  };
+}
 
 /**
  * One marking file per allocation row. Upload/delete are client-only,
@@ -26,6 +37,7 @@ export class MarkingFilesService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly filesService: FilesService,
+    private readonly audit: AuditLogService,
   ) {}
 
   /** Replaces any existing file for the allocation. Only once that position is locked. */
@@ -49,8 +61,8 @@ export class MarkingFilesService {
     const uploadedAt = new Date();
     const saved = await this.dataSource.transaction(async (em) => {
       const repo = em.getRepository(MarkingFile);
-      await repo.delete({ allocation: { id: allocation.id } });
-      return repo.save(
+      const replaced = await repo.delete({ allocation: { id: allocation.id } });
+      const marking = await repo.save(
         repo.create({
           allocation: { id: allocation.id } as ContainerLineAllocation,
           fileUrl: `/files/${stored.id}/download`,
@@ -58,6 +70,22 @@ export class MarkingFilesService {
           uploadedAt,
         }),
       );
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.marking_uploaded",
+          entityType: "shipping_container",
+          entityId: allocation.container.id,
+          metadata: {
+            ...describeAllocation(allocation),
+            fileName: stored.originalName,
+            fileUrl: marking.fileUrl,
+            replacedPrevious: (replaced.affected ?? 0) > 0,
+          },
+        },
+        em,
+      );
+      return marking;
     });
 
     return { id: saved.id, allocationId: allocation.id, uploadedAt };
@@ -76,6 +104,16 @@ export class MarkingFilesService {
       );
     }
     await repo.delete({ id: existing.id });
+    await this.audit.record({
+      actor,
+      action: "rts.marking_deleted",
+      entityType: "shipping_container",
+      entityId: allocation.container.id,
+      metadata: {
+        ...describeAllocation(allocation),
+        fileUrl: existing.fileUrl,
+      },
+    });
   }
 
   async download(
@@ -113,7 +151,12 @@ export class MarkingFilesService {
       .getRepository(ContainerLineAllocation)
       .findOne({
         where: { id: allocationId },
-        relations: ["container", "container.customer"],
+        relations: [
+          "container",
+          "container.customer",
+          "piLineItem",
+          "piLineItem.pi",
+        ],
       });
     if (
       !allocation ||

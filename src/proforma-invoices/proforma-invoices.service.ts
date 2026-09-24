@@ -16,6 +16,8 @@ import { PiAdditionalFile } from "../pi-additional-files/pi-additional-file.enti
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { Role } from "../common/enums/role.enum";
 import { apiError } from "../common/errors/api-error";
+import { decodeMultipartFilename } from "../common/utils/decode-multipart-filename";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { User } from "../users/user.entity";
 import { ProformaInvoice } from "./proforma-invoice.entity";
@@ -82,6 +84,7 @@ export class ProformaInvoicesService {
     private readonly eventEmitter: EventEmitter2,
     @InjectRepository(PiFileVersion)
     private readonly fileVersionsRepo: Repository<PiFileVersion>,
+    private readonly audit: AuditLogService,
   ) {}
 
   findAll(): Promise<ProformaInvoice[]> {
@@ -222,7 +225,23 @@ export class ProformaInvoicesService {
         existing.piFileUrl = fileUrl;
         existing.piFileUploadedAt = now;
         existing.piFileUploadedBy = { id: actor.id } as User;
-        return em.getRepository(ProformaInvoice).save(existing);
+        const filled = await em.getRepository(ProformaInvoice).save(existing);
+        await this.audit.record(
+          {
+            actor,
+            action: "pi.file_uploaded",
+            entityType: "pi",
+            entityId: filled.id,
+            metadata: {
+              piNumber,
+              fileName: decodeMultipartFilename(file.originalname),
+              fileUrl,
+              cardCreated: false,
+            },
+          },
+          em,
+        );
+        return filled;
       });
       this.emitPiReadyToSign(
         saved.piNumber,
@@ -246,6 +265,18 @@ export class ProformaInvoicesService {
     });
     try {
       const saved = await this.repo.save(pi);
+      await this.audit.record({
+        actor,
+        action: "pi.file_uploaded",
+        entityType: "pi",
+        entityId: saved.id,
+        metadata: {
+          piNumber,
+          fileName: decodeMultipartFilename(file.originalname),
+          fileUrl,
+          cardCreated: true,
+        },
+      });
       this.emitPiReadyToSign(saved.piNumber, saved.label ?? null, customer.id);
       return this.findOne(saved.id);
     } catch (err) {
@@ -290,6 +321,7 @@ export class ProformaInvoicesService {
   ): Promise<ProformaInvoice> {
     const pi = await this.findOwnedByActor(id, actor);
     const fileUrl = await this.storeUploadedFile(file, actor.id);
+    const previousFileUrl = pi.signedFileUrl;
     const saved = await this.repo.manager.transaction(async (em) => {
       const now = new Date();
       await this.archiveReplacedFile(em, pi, PiFileType.SIGNED, {
@@ -299,7 +331,25 @@ export class ProformaInvoicesService {
       pi.signedFileUrl = fileUrl;
       pi.signedFileUploadedAt = now;
       pi.signedFileUploadedBy = { id: actor.id } as User;
-      return em.getRepository(ProformaInvoice).save(pi);
+      const signed = await em.getRepository(ProformaInvoice).save(pi);
+      // The first signed copy is the card's signing (status -> signed); a
+      // later one only replaces the file.
+      await this.audit.record(
+        {
+          actor,
+          action: previousFileUrl ? "pi.signed_file_replaced" : "pi.signed",
+          entityType: "pi",
+          entityId: signed.id,
+          metadata: {
+            piNumber: pi.piNumber,
+            fileName: decodeMultipartFilename(file.originalname),
+            fileUrl,
+            previousFileUrl,
+          },
+        },
+        em,
+      );
+      return signed;
     });
     return this.findOne(saved.id);
   }
@@ -320,7 +370,20 @@ export class ProformaInvoicesService {
       uploadedAt: new Date(),
       description: description ?? null,
     });
-    return this.additionalFilesRepo.save(additionalFile);
+    const saved = await this.additionalFilesRepo.save(additionalFile);
+    await this.audit.record({
+      actor,
+      action: "pi.additional_file_added",
+      entityType: "pi",
+      entityId: pi.id,
+      metadata: {
+        piNumber: pi.piNumber,
+        fileName: decodeMultipartFilename(file.originalname),
+        fileUrl,
+        description: description ?? null,
+      },
+    });
+    return saved;
   }
 
   /**
@@ -347,6 +410,18 @@ export class ProformaInvoicesService {
     pi.pendingReplacementProposedBy = { id: actor.id } as User;
     pi.pendingReplacementProposedAt = new Date();
     const saved = await this.repo.save(pi);
+    await this.audit.record({
+      actor,
+      action: "pi.replacement_proposed",
+      entityType: "pi",
+      entityId: saved.id,
+      metadata: {
+        piNumber: pi.piNumber,
+        fileName: decodeMultipartFilename(file.originalname),
+        fileUrl,
+        currentFileUrl: pi.piFileUrl,
+      },
+    });
     this.eventEmitter.emit(NotificationEvent.PI_REPLACEMENT_PROPOSED, {
       piNumber: saved.piNumber,
       label: saved.label ?? null,
@@ -377,6 +452,8 @@ export class ProformaInvoicesService {
         ),
       );
     }
+    const proposedFileUrl = pi.pendingReplacementFileUrl;
+    const previousFileUrl = pi.piFileUrl;
     const saved = await this.repo.manager.transaction(async (em) => {
       if (approved) {
         // A rejected proposal was never current, so it isn't a version;
@@ -392,7 +469,20 @@ export class ProformaInvoicesService {
       pi.pendingReplacementFileUrl = null;
       pi.pendingReplacementProposedBy = null;
       pi.pendingReplacementProposedAt = null;
-      return em.getRepository(ProformaInvoice).save(pi);
+      const decided = await em.getRepository(ProformaInvoice).save(pi);
+      await this.audit.record(
+        {
+          actor,
+          action: approved
+            ? "pi.replacement_approved"
+            : "pi.replacement_rejected",
+          entityType: "pi",
+          entityId: decided.id,
+          metadata: { piNumber: pi.piNumber, proposedFileUrl, previousFileUrl },
+        },
+        em,
+      );
+      return decided;
     });
     return this.findOne(saved.id);
   }
@@ -537,10 +627,23 @@ export class ProformaInvoicesService {
       );
     }
     const trimmed = label === null ? "" : label.trim();
-    await this.repo.update(
-      { id: pi.id },
-      { label: trimmed === "" ? null : trimmed },
-    );
+    const newLabel = trimmed === "" ? null : trimmed;
+    await this.repo.update({ id: pi.id }, { label: newLabel });
+    // Journaled only when it actually changed (an Enter on an untouched
+    // field isn't an action anyone needs to see).
+    if ((pi.label ?? null) !== newLabel) {
+      await this.audit.record({
+        actor,
+        action: "pi.label_changed",
+        entityType: "pi",
+        entityId: pi.id,
+        metadata: {
+          piNumber: pi.piNumber,
+          from: pi.label ?? null,
+          to: newLabel,
+        },
+      });
+    }
     return this.findOne(pi.id);
   }
 
@@ -568,10 +671,20 @@ export class ProformaInvoicesService {
       );
     }
     const pi = await this.findOwnedByActor(id, actor);
+    const linesWithPriority = (pi.lineItems ?? []).filter(
+      (item) => Number(item.priorityQty) > 0,
+    ).length;
     await this.lineItemsRepo.update(
       { pi: { id: pi.id } },
       { priorityQty: "0" },
     );
+    await this.audit.record({
+      actor,
+      action: "pi.priority_reset",
+      entityType: "pi",
+      entityId: pi.id,
+      metadata: { piNumber: pi.piNumber, linesReset: linesWithPriority },
+    });
     return this.findOne(pi.id);
   }
 }

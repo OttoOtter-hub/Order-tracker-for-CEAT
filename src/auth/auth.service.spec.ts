@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { makeFakeRepo } from "../common/testing/fake-repo";
+import { makeFakeAudit } from "../common/testing/fake-audit";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
 import { UsersService } from "../users/users.service";
@@ -43,7 +44,11 @@ describe("AuthService + JwtStrategy (Phase 20a)", () => {
         isActive,
       });
     }
-    usersService = new UsersService(users as any, makeFakeRepo() as any);
+    usersService = new UsersService(
+      users as any,
+      makeFakeRepo() as any,
+      makeFakeAudit() as any,
+    );
     auth = new AuthService(usersService, { sign: () => "token" } as any);
     strategy = new JwtStrategy(
       { get: () => "test-secret" } as any,

@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { FileText, LogOut, Ship, Truck, Upload, Users } from "lucide-react"
+import { FileText, History, LogOut, Ship, Truck, Upload, Users } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { to: "/ops/actual-containers", labelKey: "nav.shipped", icon: Ship },
   { to: "/ops/backorder-upload", labelKey: "nav.backorderUpload", icon: Upload },
   { to: "/ops/users", labelKey: "nav.users", icon: Users },
+  { to: "/ops/audit-log", labelKey: "nav.auditLog", icon: History },
 ]
 
 export function OpsLayout() {

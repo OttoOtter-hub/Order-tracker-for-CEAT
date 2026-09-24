@@ -10,6 +10,7 @@ import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
 import { apiError } from "../common/errors/api-error";
 import { toNumberOrNull } from "../common/utils/numeric";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { PiLineItem } from "./pi-line-item.entity";
 
 @Injectable()
@@ -17,6 +18,7 @@ export class PiLineItemsService {
   constructor(
     @InjectRepository(PiLineItem)
     private readonly repo: Repository<PiLineItem>,
+    private readonly audit: AuditLogService,
   ) {}
 
   /**
@@ -79,7 +81,25 @@ export class PiLineItemsService {
       );
     }
 
+    const previousQty = toNumberOrNull(item.priorityQty) ?? 0;
     item.priorityQty = String(priorityQty);
-    return this.repo.save(item);
+    const saved = await this.repo.save(item);
+    if (previousQty !== priorityQty) {
+      await this.audit.record({
+        actor,
+        action: "pi.priority_changed",
+        entityType: "pi",
+        entityId: item.pi.id,
+        metadata: {
+          piNumber: item.pi.piNumber,
+          lineItemId: item.id,
+          materialNum: item.materialNum,
+          soNumber: item.soNumber,
+          from: previousQty,
+          to: priorityQty,
+        },
+      });
+    }
+    return saved;
   }
 }

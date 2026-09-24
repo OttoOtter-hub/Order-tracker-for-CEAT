@@ -11,6 +11,7 @@ import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
 import { apiError } from "../common/errors/api-error";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
+import { AuditLogService } from "../audit-log/audit-log.service";
 import { Customer } from "../customers/customer.entity";
 import { User } from "./user.entity";
 
@@ -65,6 +66,7 @@ export class UsersService {
     private readonly repo: Repository<User>,
     @InjectRepository(Customer)
     private readonly customerRepo: Repository<Customer>,
+    private readonly audit: AuditLogService,
   ) {}
 
   findByEmail(email: string): Promise<User | null> {
@@ -104,12 +106,15 @@ export class UsersService {
    * ops user never does (a customerId sent along for ops is ignored). The
    * email is stored trimmed and lower-cased.
    */
-  async create(dto: {
-    email: string;
-    password: string;
-    role: Role;
-    customerId?: string;
-  }): Promise<UserView> {
+  async create(
+    dto: {
+      email: string;
+      password: string;
+      role: Role;
+      customerId?: string;
+    },
+    actor: RequestUser,
+  ): Promise<UserView> {
     const email = normalizeEmail(dto.email);
     let customer: Customer | null = null;
     if (dto.role === Role.CLIENT) {
@@ -161,6 +166,13 @@ export class UsersService {
       where: { id: saved.id },
       relations: ["customer"],
     });
+    await this.audit.record({
+      actor,
+      action: "user.created",
+      entityType: "user",
+      entityId: saved.id,
+      metadata: { email, role: dto.role, customerName: customer?.name ?? null },
+    });
     return toView(created ?? saved);
   }
 
@@ -188,9 +200,20 @@ export class UsersService {
         apiError("NOT_FOUND", `User ${id} not found`),
       );
     }
+    const wasActive = user.isActive;
     await this.repo.update({ id }, { isActive: active });
     this.activeCache.set(id, { active, checkedAt: Date.now() });
     user.isActive = active;
+    // Journaled only on an actual change — a repeated click is a no-op.
+    if (wasActive !== active) {
+      await this.audit.record({
+        actor,
+        action: active ? "user.reactivated" : "user.deactivated",
+        entityType: "user",
+        entityId: user.id,
+        metadata: { email: user.email, role: user.role },
+      });
+    }
     return toView(user);
   }
 

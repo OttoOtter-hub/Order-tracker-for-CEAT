@@ -6,6 +6,7 @@ import { ActualContainersImportService } from "../actual-containers/actual-conta
 import { ActualContainersService } from "../actual-containers/actual-containers.service";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
+import { makeFakeAudit } from "../common/testing/fake-audit";
 import { makeFakeDataSource } from "../common/testing/fake-data-source";
 import { makeFakeRepo } from "../common/testing/fake-repo";
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
@@ -60,6 +61,7 @@ function setup() {
     { relink } as any,
     dataSource as any,
     new ActualContainersImportService(customersService as any),
+    makeFakeAudit() as any,
   );
   const filesService = {
     save: jest.fn(async (file: { originalname: string }) => ({
@@ -90,6 +92,7 @@ function setup() {
     containerRepoWithRelations as any,
     containerFileRepo as any,
     filesService as any,
+    makeFakeAudit() as any,
   );
   return {
     uploads,

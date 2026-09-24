@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { makeFakeRepo } from "../common/testing/fake-repo";
+import { FakeAudit, makeFakeAudit } from "../common/testing/fake-audit";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
 import { ACTIVE_CACHE_TTL_MS, UsersService } from "./users.service";
@@ -24,7 +25,10 @@ function codeOf(error: unknown): unknown {
 describe("UsersService", () => {
   let customers: ReturnType<typeof makeFakeRepo>;
   let users: ReturnType<typeof makeFakeRepo>;
+  let audit: FakeAudit;
   let service: UsersService;
+  const createAsOps = (dto: Parameters<UsersService["create"]>[0]) =>
+    service.create(dto, ops);
 
   beforeEach(() => {
     customers = makeFakeRepo();
@@ -39,12 +43,46 @@ describe("UsersService", () => {
       isActive: true,
       createdAt: new Date("2026-01-01T00:00:00Z"),
     });
-    service = new UsersService(users as any, customers as any);
+    audit = makeFakeAudit();
+    service = new UsersService(users as any, customers as any, audit as any);
+  });
+
+  it("journals creation, deactivation and reactivation — not a repeated no-op or a refusal", async () => {
+    const created = await createAsOps({
+      email: "Buyer3@MTK.com",
+      password: "s3cret-pass",
+      role: Role.CLIENT,
+      customerId: "cust-1",
+    });
+    await service.setActive(created.id, false, ops);
+    await service.setActive(created.id, false, ops); // already inactive
+    await service.setActive(created.id, true, ops);
+    await service.setActive("ops-1", false, ops).catch(() => undefined); // refused
+
+    expect(audit.actions()).toEqual([
+      "user.created",
+      "user.deactivated",
+      "user.reactivated",
+    ]);
+    expect(audit.entries[0]).toMatchObject({
+      actor: ops,
+      entityType: "user",
+      entityId: created.id,
+      metadata: {
+        email: "buyer3@mtk.com",
+        role: Role.CLIENT,
+        customerName: "MTK ROSBERG LLC",
+      },
+    });
+    expect(audit.entries[1]).toMatchObject({
+      entityId: created.id,
+      metadata: { email: "buyer3@mtk.com" },
+    });
   });
 
   describe("create", () => {
     it("creates an ops user: hashed password, no customer, active, email normalized", async () => {
-      const view = await service.create({
+      const view = await createAsOps({
         email: "  New.Ops@CEAT.com ",
         password: "s3cret-pass",
         role: Role.OPS,
@@ -66,7 +104,7 @@ describe("UsersService", () => {
     });
 
     it("creates a client user tied to its customer", async () => {
-      const view = await service.create({
+      const view = await createAsOps({
         email: "buyer2@mtk.com",
         password: "s3cret-pass",
         role: Role.CLIENT,
@@ -78,7 +116,7 @@ describe("UsersService", () => {
     });
 
     it("400s a client without a customer, 404s an unknown customer", async () => {
-      const noCustomer = service.create({
+      const noCustomer = createAsOps({
         email: "a@b.com",
         password: "s3cret-pass",
         role: Role.CLIENT,
@@ -91,7 +129,7 @@ describe("UsersService", () => {
       );
 
       await expect(
-        service.create({
+        createAsOps({
           email: "a@b.com",
           password: "s3cret-pass",
           role: Role.CLIENT,
@@ -102,7 +140,7 @@ describe("UsersService", () => {
     });
 
     it("409s a duplicate email, whatever its case", async () => {
-      const dup = service.create({
+      const dup = createAsOps({
         email: "OPS@ceat.com",
         password: "s3cret-pass",
         role: Role.OPS,
@@ -115,7 +153,7 @@ describe("UsersService", () => {
   });
 
   it("findAll lists every user without the password hash", async () => {
-    await service.create({
+    await createAsOps({
       email: "buyer2@mtk.com",
       password: "s3cret-pass",
       role: Role.CLIENT,

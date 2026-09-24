@@ -33,8 +33,8 @@ export class UsersController {
   }
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: RequestUser) {
+    return this.service.create(dto, actor);
   }
 
   @Patch(":id/deactivate")

@@ -1,3 +1,4 @@
+import { makeFakeAudit } from "../../common/testing/fake-audit";
 import { makeFakeDataSource } from "../../common/testing/fake-data-source";
 import { makeFakeRepo } from "../../common/testing/fake-repo";
 import { Role } from "../../common/enums/role.enum";
@@ -91,6 +92,7 @@ export function makeHarness() {
     })),
   };
   const eventEmitter = { emit: jest.fn() };
+  const audit = makeFakeAudit();
 
   return {
     containers,
@@ -101,10 +103,16 @@ export function makeHarness() {
     dataSource,
     filesService,
     eventEmitter,
-    service: new ReadyToShipService(dataSource as any, eventEmitter as any),
+    audit,
+    service: new ReadyToShipService(
+      dataSource as any,
+      eventEmitter as any,
+      audit as any,
+    ),
     markingService: new MarkingFilesService(
       dataSource as any,
       filesService as any,
+      audit as any,
     ),
     relink: new AllocationRelinkService(dataSource as any),
   };

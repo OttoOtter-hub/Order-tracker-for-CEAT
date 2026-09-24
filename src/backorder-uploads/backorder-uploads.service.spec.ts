@@ -1,6 +1,7 @@
 import * as ExcelJS from "exceljs";
 import { makeFakeRepo } from "../common/testing/fake-repo";
 import { makeFakeDataSource } from "../common/testing/fake-data-source";
+import { FakeAudit, makeFakeAudit } from "../common/testing/fake-audit";
 import { BackorderUploadsService } from "./backorder-uploads.service";
 import { BackorderUpload } from "./backorder-upload.entity";
 import { BackorderUploadSnapshot } from "./backorder-upload-snapshot.entity";
@@ -80,6 +81,7 @@ describe("BackorderUploadsService", () => {
   let customersService: { findFirst: jest.Mock; findAll: jest.Mock };
   let filesService: { save: jest.Mock };
   let allocationRelink: { relink: jest.Mock };
+  let audit: FakeAudit;
   let service: BackorderUploadsService;
 
   const opsActor: RequestUser = {
@@ -120,6 +122,7 @@ describe("BackorderUploadsService", () => {
       save: jest.fn(async () => ({ id: "stored-file-1" })),
     };
     allocationRelink = { relink: jest.fn(async () => undefined) };
+    audit = makeFakeAudit();
     const dataSource = makeFakeDataSource(
       new Map<unknown, unknown>([
         [BackorderUpload, backorderRepo],
@@ -138,7 +141,34 @@ describe("BackorderUploadsService", () => {
       allocationRelink as any,
       dataSource as any,
       new ActualContainersImportService(customersService as any),
+      audit as any,
     );
+  });
+
+  it("journals each upload in its transaction: who, file, how many cards", async () => {
+    const file = await buildBackorderFile([
+      row(100037320, "107071"),
+      row(100037321, "107072"),
+    ]);
+
+    const upload = await service.upload(file as any, opsActor);
+
+    expect(audit.entries).toEqual([
+      expect.objectContaining({
+        actor: opsActor,
+        action: "backorder.uploaded",
+        entityType: "backorder_upload",
+        entityId: upload.id,
+        inTransaction: true,
+        metadata: expect.objectContaining({
+          fileName: "2907_MTK_ROSBERG_INR.xlsx",
+          rowsProcessed: 2,
+          newCardsCreated: 2,
+          cardsUpdated: 0,
+          cardsArchived: 0,
+        }),
+      }),
+    ]);
   });
 
   it("creates a new card for a PI number that doesn't exist yet", async () => {

@@ -5,8 +5,9 @@ import { FindOperator } from "typeorm";
  * this project's service specs instead of a real DB or a heavy mocking
  * framework. Understands the `where` shapes those services actually use:
  * flat ({ id }, { piNumber }), nested relations ({ pi: { customer: { id } } })
- * the `In([...])` operator at any depth, and an array of those (OR) for
- * find/findOne/count.
+ * the `In([...])`, `MoreThanOrEqual`, `LessThan` and `And(...)` operators at
+ * any depth, and an array of those (OR) for find/findOne/count. find and
+ * findAndCount also honour order (several keys), skip and take.
  *
  * Rows hold relations exactly as they were written (a service typically
  * writes a bare `{ id }` reference). `relationRepos` lets a spec say which
@@ -49,13 +50,37 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
     return hydrated as T;
   }
 
+  function comparable(value: unknown): unknown {
+    return value instanceof Date ? value.getTime() : value;
+  }
+
+  function matchesOperator(
+    actual: unknown,
+    operator: FindOperator<unknown>,
+  ): boolean {
+    const a = comparable(actual) as number | string;
+    switch (operator.type) {
+      case "in":
+        return (operator.value as unknown[]).includes(actual);
+      case "moreThanOrEqual":
+        return a >= (comparable(operator.value) as number | string);
+      case "lessThan":
+        return a < (comparable(operator.value) as number | string);
+      case "and":
+        return (operator.value as unknown as FindOperator<unknown>[]).every(
+          (inner) => matchesOperator(actual, inner),
+        );
+      default:
+        throw new Error(
+          `fake-repo: unsupported FindOperator "${operator.type}"`,
+        );
+    }
+  }
+
   function matches(row: any, where: Record<string, any>): boolean {
     return Object.entries(where).every(([key, value]) => {
       if (value instanceof FindOperator) {
-        if (value.type === "in") {
-          return (value.value as unknown[]).includes(row?.[key]);
-        }
-        throw new Error(`fake-repo: unsupported FindOperator "${value.type}"`);
+        return matchesOperator(row?.[key], value);
       }
       if (value && typeof value === "object" && !(value instanceof Date)) {
         return matches(row?.[key] ?? {}, value);
@@ -72,6 +97,45 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
     return Array.isArray(where)
       ? where.some((w) => matches(row, w))
       : matches(row, where);
+  }
+
+  interface FindOpts {
+    where?: Record<string, any>;
+    relations?: string[];
+    order?: Record<string, "ASC" | "DESC">;
+    skip?: number;
+    take?: number;
+  }
+
+  /** where -> order (every key, in turn) -> skip/take; total is before paging. */
+  function query(opts?: FindOpts): { page: T[]; total: number } {
+    let result = opts?.where
+      ? rows.filter((r) => matchesWhere(r, opts.where!))
+      : [...rows];
+    const orderEntries = opts?.order ? Object.entries(opts.order) : [];
+    if (orderEntries.length) {
+      result = [...result].sort((a, b) => {
+        for (const [key, direction] of orderEntries) {
+          const av = comparable(a[key]) as number | string;
+          const bv = comparable(b[key]) as number | string;
+          const cmp = av > bv ? 1 : av < bv ? -1 : 0;
+          if (cmp !== 0) {
+            return direction === "DESC" ? -cmp : cmp;
+          }
+        }
+        return 0;
+      });
+    }
+    const total = result.length;
+    const start = opts?.skip ?? 0;
+    result = result.slice(
+      start,
+      opts?.take !== undefined ? start + opts.take : undefined,
+    );
+    return {
+      page: result.map((row) => hydrate(row, opts?.relations)),
+      total,
+    };
   }
 
   function upsert(entity: T): T {
@@ -116,32 +180,11 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
         return found ? hydrate(found, relations) : null;
       },
     ),
-    find: jest.fn(
-      async (opts?: {
-        where?: Record<string, any>;
-        relations?: string[];
-        order?: Record<string, "ASC" | "DESC">;
-        take?: number;
-      }) => {
-        let result = opts?.where
-          ? rows.filter((r) => matchesWhere(r, opts.where!))
-          : [...rows];
-        const orderEntry = opts?.order && Object.entries(opts.order)[0];
-        if (orderEntry) {
-          const [key, direction] = orderEntry;
-          result = [...result].sort((a, b) => {
-            const av = a[key];
-            const bv = b[key];
-            const cmp = av > bv ? 1 : av < bv ? -1 : 0;
-            return direction === "DESC" ? -cmp : cmp;
-          });
-        }
-        if (opts?.take !== undefined) {
-          result = result.slice(0, opts.take);
-        }
-        return result.map((row) => hydrate(row, opts?.relations));
-      },
-    ),
+    find: jest.fn(async (opts?: FindOpts) => query(opts).page),
+    findAndCount: jest.fn(async (opts?: FindOpts) => {
+      const { page, total } = query(opts);
+      return [page, total] as const;
+    }),
     count: jest.fn(async (opts?: { where?: Record<string, any> }) =>
       opts?.where
         ? rows.filter((r) => matchesWhere(r, opts.where!)).length
