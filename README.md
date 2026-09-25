@@ -2766,6 +2766,37 @@ CREATE SCHEMA public;
 и ту же Neon-БД (см. "Продакшн-деплой v2" ниже) — этот шаг уже выполнен там
 же, в Фазе 1.
 
+## Домен loadlist.info (2026-09-25)
+
+Постоянный домен — **https://loadlist.info** (и `www.loadlist.info`), взамен
+временного ttst.twelvetwenty.online. Старый домен, его конфиг и сертификат
+пока оставлены (уберём отдельным шагом), запасной путь по IP — тоже.
+
+- **DNS:** домен зарегистрирован 2026-09-25 (NS — Contabo), A-записи для
+  `loadlist.info` и `www` → IP сервера. Делегирование в зоне `.info` появилось
+  примерно через 12 минут после регистрации; до этого домен публично был
+  NXDOMAIN, поэтому сертификат выпускался только после того, как ответили
+  1.1.1.1, 8.8.8.8 и все три NS Contabo.
+- **nginx:** отдельный файл `sites-available/loadlist-info` (симлинк в
+  `sites-enabled`) — тот же `root` и прокси `/api/` → `localhost:3000`, что и у
+  старого домена. Копия каталога до изменений —
+  `/root/nginx-sites-available.bak-20260925-loadlist`, блок до certbot —
+  `/root/loadlist-info.before-certbot`.
+- **Сертификат:** `certbot --nginx --redirect --cert-name loadlist.info -d
+  loadlist.info -d www.loadlist.info` (после успешного `--dry-run`), Let's
+  Encrypt, до 2026-12-24, продлевается `certbot.timer` (`renew --dry-run` —
+  успешно). certbot добавил блок 443 и редирект http → https (путь и query
+  сохраняются).
+- **`CORS_ORIGIN`** — добавлены `https://loadlist.info` и
+  `https://www.loadlist.info`, старый домен и IP оставлены; копия —
+  `.env.bak-20260925-loadlist`, backend перезапущен.
+- **Проверено публично:** оба имени — `200`, сертификат валиден (цепочка и имя,
+  TLS 1.3), http → `301` на https, прямые ссылки SPA — `200`, API — неверный
+  логин `401 INVALID_CREDENTIALS`, без токена `401 UNAUTHORIZED`,
+  CORS-preflight отдаёт свой origin; старый домен и доступ по IP работают как
+  раньше, порт 3000 снаружи закрыт. Реальный вход под учётной записью проверяет
+  владелец.
+
 ## Домен и HTTPS (2026-09-25)
 
 Сайт отдаётся по **https://ttst.twelvetwenty.online** (nginx + certbot,
