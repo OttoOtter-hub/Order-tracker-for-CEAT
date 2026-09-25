@@ -30,6 +30,7 @@ export const ERROR_CODES = [
   "CLIENT_ONLY_ACTION",
   // An ops-only action or resource attempted by a client.
   "OPS_ONLY_ACTION",
+  "ADMIN_ONLY_ACTION",
   // A client calling a write endpoint that isn't open to clients.
   "CLIENT_READ_ONLY",
   "USER_NOT_LINKED_TO_CUSTOMER",
@@ -87,6 +88,8 @@ export const ERROR_CODES = [
   "EMAIL_TAKEN",
   "CUSTOMER_REQUIRED_FOR_CLIENT",
   "CANNOT_DEACTIVATE_SELF",
+  "ADMIN_REQUIRES_OPS",
+  "LAST_ADMIN",
   "WRONG_CURRENT_PASSWORD",
   "PASSWORD_TOO_SHORT",
 ] as const;

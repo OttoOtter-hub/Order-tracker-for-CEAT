@@ -31,3 +31,15 @@ export function ProtectedRoute({ allowedRole, children }: ProtectedRouteProps) {
 
   return <>{children}</>
 }
+
+// Users and Action log: ops administrators only. An ordinary ops user who
+// types the address lands on the PI list instead of a 403 page. isAdmin still
+// unknown (a session stored before it existed, refreshing from /auth/me)
+// renders the page — the API decides.
+export function AdminRoute({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  if (user?.isAdmin === false) {
+    return <Navigate to="/ops/pi" replace />
+  }
+  return <>{children}</>
+}

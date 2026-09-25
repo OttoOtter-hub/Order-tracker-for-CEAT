@@ -5,6 +5,9 @@ export interface AuthUser {
   email: string
   role: Role
   customerId: string | null
+  // Ops administrator (Users, Action log). Absent on sessions stored before
+  // it existed — AuthProvider refreshes it from GET /auth/me.
+  isAdmin?: boolean
 }
 
 const TOKEN_KEY = "ceat.accessToken"

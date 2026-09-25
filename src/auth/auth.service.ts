@@ -7,6 +7,7 @@ import {
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { RequestUser } from "../common/auth/request-user.interface";
+import { Role } from "../common/enums/role.enum";
 import { apiError } from "../common/errors/api-error";
 import { PASSWORD_HASH_ROUNDS, UsersService } from "../users/users.service";
 import { User } from "../users/user.entity";
@@ -47,6 +48,8 @@ export class AuthService {
       email: user.email,
       role: user.role,
       customerId: user.customer?.id ?? null,
+      // For the frontend's menu only; the API checks the database (JwtStrategy).
+      isAdmin: user.role === Role.OPS && !!user.isAdmin,
     };
     return { accessToken: this.jwtService.sign(payload) };
   }

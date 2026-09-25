@@ -13,8 +13,9 @@ const NAV_ITEMS = [
   { to: "/ops/ready-to-ship", labelKey: "nav.readyToShip", icon: Truck },
   { to: "/ops/actual-containers", labelKey: "nav.shipped", icon: Ship },
   { to: "/ops/backorder-upload", labelKey: "nav.backorderUpload", icon: Upload },
-  { to: "/ops/users", labelKey: "nav.users", icon: Users },
-  { to: "/ops/audit-log", labelKey: "nav.auditLog", icon: History },
+  // Administrators only — an ordinary ops user doesn't see these at all.
+  { to: "/ops/users", labelKey: "nav.users", icon: Users, adminOnly: true },
+  { to: "/ops/audit-log", labelKey: "nav.auditLog", icon: History, adminOnly: true },
 ]
 
 export function OpsLayout() {
@@ -36,7 +37,8 @@ export function OpsLayout() {
           <ChangePasswordDialog />
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-2">
-          {NAV_ITEMS.map(({ to, labelKey, icon: Icon }) => (
+          {NAV_ITEMS.filter((item) => !item.adminOnly || user?.isAdmin).map(
+            ({ to, labelKey, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -51,7 +53,8 @@ export function OpsLayout() {
               <Icon className="size-4" />
               {t(labelKey)}
             </NavLink>
-          ))}
+            )
+          )}
         </nav>
         <div className="flex items-center gap-2 border-t px-4 py-3">
           <LanguageSwitcher />

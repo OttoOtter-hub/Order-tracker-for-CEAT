@@ -45,6 +45,8 @@ export const AUDIT_ACTIONS = [
   "user.created",
   "user.deactivated",
   "user.reactivated",
+  "user.admin_granted",
+  "user.admin_revoked",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

@@ -1,4 +1,11 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+} from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { ClientWriteAllowed } from "../common/auth/client-write-allowed.decorator";
 import { CurrentUser } from "../common/auth/current-user.decorator";
@@ -19,6 +26,23 @@ export class AuthController {
   async login(@Body() dto: LoginDto) {
     const user = await this.authService.validateUser(dto.email, dto.password);
     return this.authService.login(user);
+  }
+
+  /**
+   * Who the token's user is right now — isAdmin straight from the database
+   * (via JwtStrategy), so the frontend's menu follows a grant/revoke without
+   * a new login.
+   */
+  @ApiBearerAuth()
+  @Get("me")
+  me(@CurrentUser() user: RequestUser) {
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      customerId: user.customerId,
+      isAdmin: !!user.isAdmin,
+    };
   }
 
   /** Both roles, always the caller's own password (Phase 20a). */

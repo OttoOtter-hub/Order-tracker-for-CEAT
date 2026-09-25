@@ -21,6 +21,9 @@ interface LoginResponse {
   accessToken: string
 }
 
+// GET /auth/me — the token's user as the server sees it right now.
+type MeResponse = Required<AuthUser>
+
 interface AuthContextValue {
   user: AuthUser | null
   /** True until the initial localStorage restore has run — lets
@@ -29,6 +32,8 @@ interface AuthContextValue {
   isLoading: boolean
   login: (email: string, password: string) => Promise<AuthUser>
   logout: () => void
+  /** Re-reads the user from the server (e.g. after an admin grant/revoke). */
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -37,14 +42,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
+  // Admin rights live in the database and can change while a session is
+  // open (or predate it), so the stored copy is refreshed from the server.
+  // A failure changes nothing here — a 401 already logs out in apiClient.
+  const refreshUser = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) return
+    try {
+      const me = await apiClient.get<MeResponse>("/auth/me")
+      const fresh: AuthUser = {
+        id: me.id,
+        email: me.email,
+        role: me.role,
+        customerId: me.customerId,
+        isAdmin: me.isAdmin,
+      }
+      setStoredSession(token, fresh)
+      setUser(fresh)
+    } catch {
+      // keep the stored user
+    }
+  }, [])
+
   useEffect(() => {
     const storedToken = getStoredToken()
     const storedUser = getStoredUser()
     if (storedToken && storedUser) {
       setUser(storedUser)
+      void refreshUser()
     }
     setIsLoading(false)
-  }, [])
+  }, [refreshUser])
 
   const login = useCallback(async (email: string, password: string) => {
     const { accessToken } = await apiClient.post<LoginResponse>("/auth/login", {
@@ -61,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: payload.email,
       role: payload.role,
       customerId: payload.customerId,
+      isAdmin: payload.isAdmin === true,
     }
     setStoredSession(accessToken, authUser)
     setUser(authUser)
@@ -73,8 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ user, isLoading, login, logout }),
-    [user, isLoading, login, logout]
+    () => ({ user, isLoading, login, logout, refreshUser }),
+    [user, isLoading, login, logout, refreshUser]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

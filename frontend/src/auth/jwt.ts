@@ -5,6 +5,7 @@ export interface JwtPayload {
   email: string
   role: Role
   customerId: string | null
+  isAdmin?: boolean
   iat?: number
   exp?: number
 }

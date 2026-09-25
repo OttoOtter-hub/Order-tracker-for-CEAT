@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsOptional,
@@ -33,4 +34,12 @@ export class CreateUserDto {
   @IsOptional()
   @IsUUID()
   customerId?: string;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: "Make the new user an admin — ops only (400 for a client)",
+  })
+  @IsOptional()
+  @IsBoolean()
+  isAdmin?: boolean;
 }

@@ -6,13 +6,15 @@ import type { Role } from "@/auth/storage"
 // the form checks it up front, the API enforces it (PASSWORD_TOO_SHORT).
 export const MIN_PASSWORD_LENGTH = 8
 
-// GET /users row — ops only, never the password hash.
+// GET /users row — ops administrators only, never the password hash.
 export interface ManagedUser {
   id: string
   email: string
   role: Role
   customer: { id: string; name: string } | null
   isActive: boolean
+  // Ops administrator; always false for a client.
+  isAdmin: boolean
   createdAt: string
 }
 
@@ -21,6 +23,8 @@ export interface NewUser {
   password: string
   role: Role
   customerId?: string
+  // Ops only (the API answers 400 for a client).
+  isAdmin?: boolean
 }
 
 const USERS_KEY = ["users"]
@@ -49,6 +53,20 @@ export function useSetUserActiveMutation() {
       apiClient.patch<ManagedUser>(
         `/users/${id}/${active ? "reactivate" : "deactivate"}`
       ),
+    onSuccess: (updated) =>
+      queryClient.setQueryData<ManagedUser[]>(USERS_KEY, (list) =>
+        list?.map((user) => (user.id === updated.id ? updated : user))
+      ),
+  })
+}
+
+// PATCH /users/:id/set-admin — grant/revoke; the last active admin is
+// refused by the API (LAST_ADMIN).
+export function useSetUserAdminMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, isAdmin }: { id: string; isAdmin: boolean }) =>
+      apiClient.patch<ManagedUser>(`/users/${id}/set-admin`, { isAdmin }),
     onSuccess: (updated) =>
       queryClient.setQueryData<ManagedUser[]>(USERS_KEY, (list) =>
         list?.map((user) => (user.id === updated.id ? updated : user))

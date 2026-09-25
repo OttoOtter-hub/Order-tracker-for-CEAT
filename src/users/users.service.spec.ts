@@ -166,7 +166,15 @@ describe("UsersService", () => {
     );
     for (const u of list) {
       expect(Object.keys(u).sort()).toEqual(
-        ["createdAt", "customer", "email", "id", "isActive", "role"].sort(),
+        [
+          "createdAt",
+          "customer",
+          "email",
+          "id",
+          "isActive",
+          "isAdmin",
+          "role",
+        ].sort(),
       );
     }
   });

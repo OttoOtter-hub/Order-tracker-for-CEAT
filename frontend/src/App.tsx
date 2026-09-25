@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom"
-import { ProtectedRoute } from "@/auth/ProtectedRoute"
+import { AdminRoute, ProtectedRoute } from "@/auth/ProtectedRoute"
 import { useAuth } from "@/auth/AuthContext"
 import { LoginPage } from "@/pages/LoginPage"
 import { OpsLayout } from "@/layouts/OpsLayout"
@@ -48,8 +48,22 @@ function App() {
           element={<ActualContainerDetailPage />}
         />
         <Route path="backorder-upload" element={<BackorderUploadPage />} />
-        <Route path="users" element={<UsersPage />} />
-        <Route path="audit-log" element={<AuditLogPage />} />
+        <Route
+          path="users"
+          element={
+            <AdminRoute>
+              <UsersPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="audit-log"
+          element={
+            <AdminRoute>
+              <AuditLogPage />
+            </AdminRoute>
+          }
+        />
       </Route>
 
       <Route

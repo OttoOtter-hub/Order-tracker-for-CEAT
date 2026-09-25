@@ -45,20 +45,47 @@ import {
   MIN_PASSWORD_LENGTH,
   useCreateUserMutation,
   useSetUserActiveMutation,
+  useSetUserAdminMutation,
   useUsersQuery,
   type ManagedUser,
 } from "@/api/users"
 import { formatDateTime } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
 
-// Phase 20a: ops manage logins — several employees per role. Users are only
-// ever deactivated, never deleted (they stay the author of what they did).
+// Phase 20a: ops administrators manage logins — several employees per role.
+// Users are only ever deactivated, never deleted (they stay the author of
+// what they did). Admin level: an ops user can be made an administrator.
 export function UsersPage() {
   const { t } = useTranslation()
-  const { user: me } = useAuth()
+  const { user: me, refreshUser } = useAuth()
   const users = useUsersQuery()
   const setActive = useSetUserActiveMutation()
+  const setAdmin = useSetUserAdminMutation()
   const [toDeactivate, setToDeactivate] = useState<ManagedUser | null>(null)
+  // The API keeps at least one active admin (LAST_ADMIN); the toggle of that
+  // last one is disabled so the refusal is visible before the click.
+  const activeAdmins = (users.data ?? []).filter(
+    (user) => user.isAdmin && user.isActive
+  ).length
+
+  function changeAdmin(user: ManagedUser, isAdmin: boolean) {
+    setAdmin.mutate(
+      { id: user.id, isAdmin },
+      {
+        onSuccess: () => {
+          toast.success(
+            t(isAdmin ? "users.adminGranted" : "users.adminRevoked", {
+              email: user.email,
+            })
+          )
+          // Own rights changed: the menu (Users, Action log) follows.
+          if (user.id === me?.id) void refreshUser()
+        },
+        onError: (error) =>
+          toast.error(getErrorMessage(error, t("users.adminFailed"))),
+      }
+    )
+  }
 
   function changeStatus(user: ManagedUser, active: boolean) {
     setActive.mutate(
@@ -104,6 +131,7 @@ export function UsersPage() {
               <TableHead>{t("users.columns.role")}</TableHead>
               <TableHead>{t("users.columns.customer")}</TableHead>
               <TableHead>{t("users.columns.status")}</TableHead>
+              <TableHead>{t("users.columns.admin")}</TableHead>
               <TableHead>{t("users.columns.createdAt")}</TableHead>
               <TableHead />
             </TableRow>
@@ -131,6 +159,18 @@ export function UsersPage() {
                       <Badge variant="secondary">{t("users.status.active")}</Badge>
                     ) : (
                       <Badge variant="outline">{t("users.status.inactive")}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {user.role === "ops" ? (
+                      <AdminToggle
+                        user={user}
+                        isLastAdmin={user.isAdmin && user.isActive && activeAdmins <= 1}
+                        isPending={setAdmin.isPending}
+                        onChange={(isAdmin) => changeAdmin(user, isAdmin)}
+                      />
+                    ) : (
+                      "—"
                     )}
                   </TableCell>
                   <TableCell>{formatDateTime(user.createdAt)}</TableCell>
@@ -179,11 +219,38 @@ export function UsersPage() {
   )
 }
 
+function AdminToggle({
+  user,
+  isLastAdmin,
+  isPending,
+  onChange,
+}: {
+  user: ManagedUser
+  isLastAdmin: boolean
+  isPending: boolean
+  onChange: (isAdmin: boolean) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <input
+      type="checkbox"
+      className="size-4 cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+      checked={user.isAdmin}
+      disabled={isPending || isLastAdmin}
+      aria-label={`${t("users.columns.admin")}: ${user.email}`}
+      title={isLastAdmin ? t("users.lastAdminHint") : t("users.adminToggle")}
+      data-testid="admin-toggle"
+      onChange={(e) => onChange(e.target.checked)}
+    />
+  )
+}
+
 interface NewUserValues {
   email: string
   password: string
   role: Role
   customerId: string
+  isAdmin: boolean
 }
 
 const EMPTY_USER: NewUserValues = {
@@ -191,6 +258,7 @@ const EMPTY_USER: NewUserValues = {
   password: "",
   role: "client",
   customerId: "",
+  isAdmin: false,
 }
 
 function AddUserDialog() {
@@ -216,6 +284,8 @@ function AddUserDialog() {
         role: values.role,
         // A customer only means something for a client login.
         customerId: values.role === "client" ? values.customerId : undefined,
+        // Only an ops user can be an admin.
+        isAdmin: values.role === "ops" && values.isAdmin,
       },
       {
         onSuccess: (created) => {
@@ -322,6 +392,27 @@ function AddUserDialog() {
                       </SelectContent>
                     </Select>
                     <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            {role === "ops" && (
+              <FormField
+                control={form.control}
+                name="isAdmin"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center gap-2">
+                    <FormControl>
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-primary"
+                        checked={field.value}
+                        onChange={(e) => field.onChange(e.target.checked)}
+                      />
+                    </FormControl>
+                    <FormLabel className="font-normal">
+                      {t("users.form.isAdmin")}
+                    </FormLabel>
                   </FormItem>
                 )}
               />

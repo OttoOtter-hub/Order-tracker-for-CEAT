@@ -37,4 +37,12 @@ export class User extends BaseEntity {
    */
   @Column({ name: "is_active", type: "boolean", default: true })
   isActive: boolean;
+
+  /**
+   * An ops user who may also manage users and read the action log. Only
+   * ever true for role=ops (a DB check constraint enforces it); for a
+   * client it means nothing.
+   */
+  @Column({ name: "is_admin", type: "boolean", default: false })
+  isAdmin: boolean;
 }

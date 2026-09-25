@@ -10,13 +10,16 @@ import { Role } from "../enums/role.enum";
 import { apiError } from "../errors/api-error";
 import { IS_PUBLIC_KEY } from "./public.decorator";
 import { ROLES_KEY } from "./roles.decorator";
+import { ADMIN_ONLY_KEY } from "./admin-only.decorator";
 import { CLIENT_WRITE_ALLOWED_KEY } from "./client-write-allowed.decorator";
 import { RequestUser } from "./request-user.interface";
 
 /**
  * Single authorization gate, applied globally, so no controller method has to
  * repeat "if role === client, only allow GET / only my customer" by hand:
- * - ops: always allowed.
+ * - ops: always allowed — except on @AdminOnly() controllers/handlers, which
+ *   need an ops admin (User.isAdmin); anyone else there gets 403
+ *   ADMIN_ONLY_ACTION.
  * - client: 403 on controllers marked @Roles(Role.OPS); 403 on any non-GET
  *   method unless the handler is @ClientWriteAllowed(); otherwise allowed
  *   (row-level scoping to the client's own customer_id happens afterwards,
@@ -41,6 +44,18 @@ export class RolesGuard implements CanActivate {
       throw new UnauthorizedException(apiError("UNAUTHORIZED", "Unauthorized"));
     }
     if (user.role === Role.OPS) {
+      const adminOnly = this.reflector.getAllAndOverride<boolean>(
+        ADMIN_ONLY_KEY,
+        [context.getHandler(), context.getClass()],
+      );
+      if (adminOnly && !user.isAdmin) {
+        throw new ForbiddenException(
+          apiError(
+            "ADMIN_ONLY_ACTION",
+            "This resource is only available to CEAT administrators",
+          ),
+        );
+      }
       return true;
     }
 

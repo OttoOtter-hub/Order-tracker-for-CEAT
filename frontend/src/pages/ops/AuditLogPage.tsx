@@ -51,6 +51,7 @@ const FIELD_ORDER = [
   "email",
   "role",
   "customerName",
+  "isAdmin",
   "materialNum",
   "soNumber",
   "lines",

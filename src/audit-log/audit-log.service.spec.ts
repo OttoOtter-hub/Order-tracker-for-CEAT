@@ -238,23 +238,42 @@ describe("AuditLogService", () => {
 
 describe("GET /audit-log access", () => {
   const guard = new RolesGuard(new Reflector());
-  const context = (role: Role) =>
+  const context = (role: Role, isAdmin = false) =>
     ({
       getHandler: () => AuditLogController.prototype.find,
       getClass: () => AuditLogController,
       switchToHttp: () => ({
         getRequest: () => ({
           method: "GET",
-          user: { id: "u", email: "u@x.com", role, customerId: "cust-1" },
+          user: {
+            id: "u",
+            email: "u@x.com",
+            role,
+            customerId: "cust-1",
+            isAdmin,
+          },
         }),
       }),
     }) as unknown as ExecutionContext;
 
-  it("is ops-only: a client gets 403 OPS_ONLY_ACTION even on GET", () => {
-    expect(() => guard.canActivate(context(Role.CLIENT))).toThrow(
-      ForbiddenException,
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ForbiddenException);
+      return ((e as ForbiddenException).getResponse() as { code: string }).code;
+    }
+    return undefined;
+  };
+
+  it("is admin-only: a client gets 403 OPS_ONLY_ACTION, a non-admin ops user 403 ADMIN_ONLY_ACTION, even on GET", () => {
+    expect(codeOf(() => guard.canActivate(context(Role.CLIENT)))).toBe(
+      "OPS_ONLY_ACTION",
     );
-    expect(guard.canActivate(context(Role.OPS))).toBe(true);
+    expect(codeOf(() => guard.canActivate(context(Role.OPS)))).toBe(
+      "ADMIN_ONLY_ACTION",
+    );
+    expect(guard.canActivate(context(Role.OPS, true))).toBe(true);
   });
 });
 
