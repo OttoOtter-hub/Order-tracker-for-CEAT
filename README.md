@@ -2842,6 +2842,28 @@ CREATE SCHEMA public;
 
 ## Домен loadlist.info (2026-09-25)
 
+**Доступ по IP закрыт (2026-09-25).** Приложение отвечает только на
+`loadlist.info` / `www.loadlist.info`. Резервные копии до изменений —
+`/root/remove-ip-20260925/` (оба каталога nginx, `.env`, прежний catch-all,
+удалённый блок IP).
+
+- nginx: блок `ceat-frontend-ip` снят и перенесён в резервные копии.
+  `sites-available/00-default-catchall` теперь — `listen 80 default_server` с
+  `return 444` (соединение закрывается без ответа) и `listen 443 ssl
+  default_server` с `ssl_reject_handshake on` (TLS-рукопожатие отклоняется до
+  показа сертификата — никакого предупреждения о сертификате, просто нет
+  соединения). Так обрабатывается любой Host, кроме loadlist.info: голый IP,
+  старый ttst-домен (его DNS всё ещё указывает сюда), сканеры.
+- `CORS_ORIGIN` — `https://loadlist.info,https://www.loadlist.info`; backend
+  перезапущен, preflight с IP-origin больше не проходит.
+- ufw не менялся: 22, 80, 443.
+- Проверено публично: `http://<server-ip>` (и `/api/…`) — пустой ответ, обрыв
+  (curl 52); `https://<server-ip>` — рукопожатие отклонено (curl 35); то же с
+  чужим Host/SNI и со старым ttst-доменом; loadlist.info и www — `200`,
+  валидный сертификат, http → `301`, API отвечает; порт 3000 — таймаут. SSH по
+  IP (порт 22) работает как прежде. Проверки после деплоя теперь — только через
+  домен.
+
 Постоянный домен — **https://loadlist.info** (и `www.loadlist.info`), взамен
 временного ttst.twelvetwenty.online. Запасной путь по IP оставлен.
 
