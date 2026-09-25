@@ -3451,6 +3451,32 @@ dist.bak-20260918-relink-pairing` → `mv dist.new dist` → `start`. Перед
   `client_max_body_size` не задан (по умолчанию 1 МБ): реальный файл — 117 КБ,
   запас есть; если файл когда-нибудь перерастёт 1 МБ, загрузка упрётся в `413`.
 
+### Зачистка тестовых данных перед реальной эксплуатацией (2026-09-25)
+
+Все тестовые данные удалены перед загрузкой настоящих рабочих файлов.
+Оставлены без изменений: `customers` (1), `users` (3, с правами и `is_admin`
+как были), `migrations` (15), схема.
+
+- **Бэкап** (до изменений, только root): `/opt/ceat-backend/backups/
+  pre-production-wipe-20260925-124557.dump` — `pg_dump -Fc` всех 15
+  очищенных таблиц (схема и данные; восстановление — `pg_restore
+  --data-only`), и `…-uploads.tgz` / каталог `…-uploads/` — 7 загруженных
+  файлов (они перенесены из `uploads`, не удалены).
+- **Прогон вхолостую** — тот же скрипт в транзакции с `ROLLBACK`: порядок по
+  внешним ключам без ошибок, данные не изменились. Затем по подтверждению
+  владельца — тот же скрипт с `COMMIT`, одной транзакцией, в порядке:
+  `marking_files`, `allocation_actions`, `container_line_allocations`,
+  `shipping_containers`, `actual_container_files`,
+  `actual_container_line_items`, `actual_containers`,
+  `backorder_upload_snapshots`, `backorder_uploads`, `pi_additional_files`,
+  `pi_file_versions`, `pi_line_items`, `proforma_invoices`, `audit_log`,
+  `stored_files` (реестр загруженных файлов — внешних ключей на него нет,
+  ссылки по id).
+- **Удалено строк:** 16 + 16 + 48 (слоты и OK to mix пересоздадутся сами) + 2
+  + 602 + 77 + 3129 + 3 + 525 + 28 + 13 + 7; `marking_files`,
+  `pi_additional_files`, `pi_file_versions` были пусты. После — 0 во всех
+  этих таблицах, `uploads` пуст, backend работает без ошибок.
+
 ### Зачистка бизнес-данных на проде для повторного теста (2026-09-21)
 
 По просьбе пользователя очищены 12 таблиц: `marking_files`, `allocation_actions`,
