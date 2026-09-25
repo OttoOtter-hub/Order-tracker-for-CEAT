@@ -2769,8 +2769,31 @@ CREATE SCHEMA public;
 ## Домен loadlist.info (2026-09-25)
 
 Постоянный домен — **https://loadlist.info** (и `www.loadlist.info`), взамен
-временного ttst.twelvetwenty.online. Старый домен, его конфиг и сертификат
-пока оставлены (уберём отдельным шагом), запасной путь по IP — тоже.
+временного ttst.twelvetwenty.online. Запасной путь по IP оставлен.
+
+**Временный домен убран (2026-09-25).** Резервные копии до изменений —
+`/root/remove-ttst-20260925/` (оба каталога nginx, архив `/etc/letsencrypt`,
+`.env`, удалённые файлы конфигов).
+
+- nginx: блок старого домена (`sites-available/ceat-frontend` вместе с его
+  копией, где был тот же сертификат) снят из `sites-enabled` и перенесён в
+  резервные копии. В том же файле certbot держал `listen 80 default_server`;
+  без него любой чужой Host на 80 попал бы в блок IP (первый по алфавиту) и
+  получил бы сайт. Поэтому добавлен отдельный
+  `sites-available/00-default-catchall` (`listen 80 default_server;
+  server_name _; return 404;`) — поведение для чужих имён прежнее. Блок IP и
+  `loadlist-info` не менялись.
+- Сертификат: `certbot delete --cert-name ttst.twelvetwenty.online` (после
+  снятия блока, чтобы nginx не ссылался на удалённые файлы); остался только
+  `loadlist.info`.
+- `CORS_ORIGIN` — `http://<server-ip>,https://loadlist.info,https://www.loadlist.info`;
+  backend перезапущен, preflight для старого домена больше не проходит.
+- Проверено публично: DNS старого домена всё ещё указывает на сервер (он не
+  наш), но http отдаёт `404`, а https не проходит проверку сертификата (сервер
+  предъявляет сертификат loadlist.info); loadlist.info и www — `200`, валидный
+  сертификат, http → `301`, API отвечает; по IP — сайт, прямые ссылки и API как
+  раньше (https по IP, как и прежде, — с несовпадающим сертификатом); порт 3000
+  снаружи закрыт.
 
 - **DNS:** домен зарегистрирован 2026-09-25 (NS — Contabo), A-записи для
   `loadlist.info` и `www` → IP сервера. Делегирование в зоне `.info` появилось
