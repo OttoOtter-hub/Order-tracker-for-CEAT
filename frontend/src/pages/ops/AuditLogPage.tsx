@@ -45,6 +45,7 @@ const HIDDEN_FIELDS = new Set(["lineItemId", "allocationId", "customerId"])
 // anything not listed goes last.
 const FIELD_ORDER = [
   "piNumber",
+  "reason",
   "containerNumber",
   "containerLabel",
   "containerLabels",
@@ -433,6 +434,10 @@ function FieldValue({ name, value }: { name: string; value: unknown }): ReactNod
   }
   if (typeof value === "boolean") {
     return value ? t("audit.yes") : t("audit.no")
+  }
+  // pi.archived: why the upload archived the card, as words, not a code.
+  if (name === "reason" && typeof value === "string") {
+    return t(`audit.reasons.${value}`, { defaultValue: value })
   }
   if (typeof value === "string" && /FileUrl$|^fileUrl$/.test(name) && value.startsWith("/files/")) {
     return (

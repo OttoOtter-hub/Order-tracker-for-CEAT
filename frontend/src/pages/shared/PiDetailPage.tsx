@@ -35,6 +35,7 @@ import { AddAdditionalFileForm } from "@/pages/shared/AddAdditionalFileForm"
 import { PriorityInput } from "@/pages/shared/PriorityInput"
 import { PiLabelEditor } from "@/pages/shared/PiLabelEditor"
 import { PiFileHistory } from "@/pages/shared/PiFileHistory"
+import { RemainingToShip } from "@/pages/shared/RemainingToShip"
 import { useAuth } from "@/auth/AuthContext"
 import {
   usePiDetailQuery,
@@ -259,8 +260,12 @@ export function PiDetailPage() {
   )
 
   const editModeActive = isClient && isPriorityMode && !pi?.isArchivedShipped
+  // An archived card (fully shipped / gone from the backorder) is view-only:
+  // the API refuses every change (PI_ARCHIVED_READ_ONLY); downloads and the
+  // Excel stay.
+  const isArchived = !!pi?.isArchivedShipped
   // The name is the client's to set, but only until the PI is signed.
-  const canEditLabel = isClient && !!pi && !pi.signedFileUrl
+  const canEditLabel = isClient && !!pi && !pi.signedFileUrl && !isArchived
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
@@ -309,7 +314,7 @@ export function PiDetailPage() {
             {isPriorityMode ? t("piDetail.priorityDone") : t("piDetail.priorityMode")}
           </Button>
         )}
-        {isPriorityMode && (
+        {isPriorityMode && !isArchived && (
           <Button
             variant="outline"
             size="sm"
@@ -336,6 +341,23 @@ export function PiDetailPage() {
           {isExporting ? t("common.exporting") : t("piDetail.downloadExcel")}
         </Button>
       </div>
+
+      {isArchived && (
+        <p
+          className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground"
+          data-testid="pi-archived-note"
+        >
+          {t("piDetail.archivedReadOnly")}
+        </p>
+      )}
+
+      {isArchived ? (
+        <div className="text-sm font-medium text-success-text">
+          {t("piProgress.shippedAll")}
+        </div>
+      ) : (
+        <RemainingToShip value={pi.remainingPercent} className="max-w-md" />
+      )}
 
       {/* Aggregates: the same "Всего / Ожидает" as on the list card, plus what has
           already shipped (0 is shown as 0 — "nothing shipped yet" is information). */}
@@ -381,7 +403,7 @@ export function PiDetailPage() {
                   {t("common.uploadedAt", { date: formatDateTime(pi.piFileUploadedAt) })}
                   {pi.piFileUploadedBy && ` · ${pi.piFileUploadedBy.email}`}
                 </span>
-                {isOps && !pi.pendingReplacementFileUrl && (
+                {isOps && !pi.pendingReplacementFileUrl && !isArchived && (
                   <Dialog open={proposeOpen} onOpenChange={setProposeOpen}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm">
@@ -416,7 +438,7 @@ export function PiDetailPage() {
                   </Dialog>
                 )}
               </div>
-            ) : isOps ? (
+            ) : isOps && !isArchived ? (
               <FileUploadForm
                 accept=".pdf,application/pdf"
                 submitLabel={t("piDetail.files.uploadProforma")}
@@ -453,7 +475,7 @@ export function PiDetailPage() {
                 {/* The client's own action, no CEAT approval (same upload-signed
                     as before signing); the backend moves the previous signed
                     file into the file history first (Phase 19). */}
-                {!isOps && (
+                {!isOps && !isArchived && (
                   <Dialog open={replaceSignedOpen} onOpenChange={setReplaceSignedOpen}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm">
@@ -488,7 +510,7 @@ export function PiDetailPage() {
                   </Dialog>
                 )}
               </div>
-            ) : !isOps ? (
+            ) : !isOps && !isArchived ? (
               <FileUploadForm
                 accept=".pdf,application/pdf"
                 submitLabel={t("piDetail.files.uploadSigned")}
@@ -534,6 +556,7 @@ export function PiDetailPage() {
                 {t("piDetail.files.noAdditional")}
               </p>
             )}
+            {!isArchived && (
             <AddAdditionalFileForm
               isSubmitting={addAdditionalFile.isPending}
               onSubmit={(file, description) =>
@@ -549,6 +572,7 @@ export function PiDetailPage() {
                 )
               }
             />
+            )}
           </div>
         </CardContent>
       </Card>
@@ -583,7 +607,7 @@ export function PiDetailPage() {
               {pi.pendingReplacementProposedBy &&
                 ` · ${pi.pendingReplacementProposedBy.email}`}
             </p>
-            {!isOps ? (
+            {!isOps && !isArchived ? (
               <div className="flex gap-2">
                 <Button
                   disabled={replacementDecision.isPending}

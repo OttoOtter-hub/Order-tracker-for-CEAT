@@ -1035,4 +1035,153 @@ describe("ProformaInvoicesService", () => {
       expect((await service.findOne("pi-1")).totalQty).toBe("300.00");
     });
   });
+
+  describe("remaining to ship and the read-only archive", () => {
+    const readOnly = expect.objectContaining({
+      response: expect.objectContaining({ code: "PI_ARCHIVED_READ_ONLY" }),
+    });
+
+    beforeEach(() => {
+      // An archived card: fully shipped per the last backorder.
+      repo.seed(
+        Object.assign(new ProformaInvoice(), {
+          id: "pi-arch",
+          piNumber: "100037500",
+          customer: { id: "cust-1" },
+          isArchivedShipped: true,
+          label: "Старое",
+          piFileUrl: "/files/orig",
+          signedFileUrl: "/files/signed",
+          pendingReplacementFileUrl: "/files/proposed",
+          totalQty: "400.00",
+          totalContainers: "4.00",
+          qtyPending: "0.00",
+          containersPending: "0.00",
+          currentWeekPlanQty: "0.00",
+          currentWeekPlanContainers: "0.00",
+          lineItems: [
+            {
+              id: "li-a",
+              materialNum: "A",
+              quantity: "400",
+              balanceToBeDelivered: "0",
+              loadability: "100",
+              priorityQty: "0",
+            },
+          ],
+        }),
+      );
+      // An active card with 150 of 400 left.
+      repo.seed(
+        Object.assign(new ProformaInvoice(), {
+          id: "pi-act",
+          piNumber: "100037501",
+          customer: { id: "cust-1" },
+          isArchivedShipped: false,
+          totalQty: "400.00",
+          totalContainers: "4.00",
+          qtyPending: "150.00",
+          containersPending: "1.50",
+          currentWeekPlanQty: "0.00",
+          currentWeekPlanContainers: "0.00",
+          lineItems: [
+            {
+              id: "li-b",
+              materialNum: "B",
+              quantity: "400",
+              balanceToBeDelivered: "150",
+              loadability: "100",
+              priorityQty: "0",
+            },
+          ],
+        }),
+      );
+    });
+
+    it("remainingPercent / shippedPercent come with the card and the list", async () => {
+      const active = await service.findOne("pi-act");
+      expect([active.remainingPercent, active.shippedPercent]).toEqual([
+        37.5, 62.5,
+      ]);
+      const archived = (await service.findAll()).find(
+        (pi) => pi.id === "pi-arch",
+      )!;
+      expect([archived.remainingPercent, archived.shippedPercent]).toEqual([
+        0, 100,
+      ]);
+    });
+
+    it("the card's Excel has a Remaining to ship, % row", async () => {
+      const { buffer } = await service.exportXlsx("pi-act", opsActor);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as any);
+      const values: unknown[][] = [];
+      workbook.worksheets[0].eachRow((row) =>
+        values.push((row.values as unknown[]).slice(1)),
+      );
+      expect(values.find((r) => r[0] === "Remaining to ship, %")?.[1]).toBe(
+        37.5,
+      );
+    });
+
+    it("an archived card can still be read and exported by its client", async () => {
+      await expect(service.findOne("pi-arch")).resolves.toMatchObject({
+        id: "pi-arch",
+      });
+      await expect(
+        service.exportXlsx("pi-arch", clientActor),
+      ).resolves.toMatchObject({
+        fileName: expect.stringContaining("100037500"),
+      });
+    });
+
+    it("every write on an archived card is 400 PI_ARCHIVED_READ_ONLY — nothing stored, nothing journaled", async () => {
+      const pdf = { originalname: "100037500.pdf" } as Express.Multer.File;
+      await expect(
+        service.updateLabel("pi-arch", "Новое", clientActor),
+      ).rejects.toEqual(readOnly);
+      await expect(
+        service.resetPriority("pi-arch", clientActor),
+      ).rejects.toEqual(readOnly);
+      await expect(
+        service.uploadSigned("pi-arch", pdf, clientActor),
+      ).rejects.toEqual(readOnly);
+      await expect(
+        service.addAdditionalFile("pi-arch", pdf, "x", opsActor),
+      ).rejects.toEqual(readOnly);
+      await expect(
+        service.proposeReplacement("pi-arch", pdf, opsActor),
+      ).rejects.toEqual(readOnly);
+      await expect(
+        service.replacementDecision("pi-arch", true, clientActor),
+      ).rejects.toEqual(readOnly);
+      await expect(service.uploadPi(pdf, opsActor)).rejects.toEqual(readOnly);
+
+      expect(filesService.save).not.toHaveBeenCalled();
+      expect(audit.entries).toHaveLength(0);
+      const stored = repo.rows.find((r: any) => r.id === "pi-arch") as any;
+      expect([
+        stored.label,
+        stored.signedFileUrl,
+        stored.pendingReplacementFileUrl,
+      ]).toEqual(["Старое", "/files/signed", "/files/proposed"]);
+    });
+
+    it("owner-check comes first: another customer's client gets 404, not the archive's 400", async () => {
+      await expect(
+        service.updateLabel("pi-arch", "x", otherClientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.exportXlsx("pi-arch", otherClientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("an active card is still writable", async () => {
+      await expect(
+        service.updateLabel("pi-act", "Орел", clientActor),
+      ).resolves.toMatchObject({
+        label: "Орел",
+      });
+    });
+  });
 });

@@ -12,6 +12,10 @@ import {
   countPriorityLineItems,
 } from "./utils/compute-priority-aggregates";
 import type { ReconciliationRow } from "./utils/compute-reconciliation";
+import {
+  computeRemainingPercent,
+  computeShippedPercent,
+} from "./utils/remaining-percent";
 
 @Entity("proforma_invoices")
 export class ProformaInvoice extends BaseEntity {
@@ -211,6 +215,28 @@ export class ProformaInvoice extends BaseEntity {
   get priorityTotalContainers(): number {
     return computePriorityAggregates(this.lineItems ?? [])
       .priorityTotalContainers;
+  }
+
+  /**
+   * Remaining to ship, % of totalQty (one decimal; a remainder is at least
+   * 0.1; null with no line items or no total) — see utils/remaining-percent.
+   * Computed from the card as returned, so it includes fully shipped rows
+   * (applyShippedOnlyLines) wherever the response has them: list, card,
+   * Excel.
+   */
+  @Expose()
+  get remainingPercent(): number | null {
+    return computeRemainingPercent(
+      this.totalQty,
+      this.qtyPending,
+      (this.lineItems ?? []).length,
+    );
+  }
+
+  /** 100 − remainingPercent; null when that is null. */
+  @Expose()
+  get shippedPercent(): number | null {
+    return computeShippedPercent(this.remainingPercent);
   }
 
   /** Line items with a priority (priorityQty > 0), live like the two above. */

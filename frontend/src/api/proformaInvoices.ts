@@ -89,6 +89,11 @@ export interface ProformaInvoice {
   // How many line items carry a priority (priorityQty > 0) — same live getter
   // family as the two above.
   priorityLineItemsCount: number
+  // Remaining to ship, % of totalQty (fully shipped rows included): one
+  // decimal, a remainder is at least 0.1, null when there is nothing to
+  // measure (no line items / no total). shippedPercent = 100 − that.
+  remainingPercent: number | null
+  shippedPercent: number | null
   // Detail only (GET /proforma-invoices/:id and every write response on this
   // card) — the list endpoint doesn't compute it, to avoid two extra queries
   // per card on every GET /proforma-invoices.

@@ -162,7 +162,8 @@
         "additional_file_added": "Additional file added",
         "label_changed": "Name changed",
         "priority_changed": "Priority changed",
-        "priority_reset": "Priority reset"
+        "priority_reset": "Priority reset",
+        "archived": "Card archived"
       },
       "backorder": {
         "uploaded": "Backorder file uploaded"
@@ -200,6 +201,7 @@
     },
     "fields": {
       "piNumber": "PI",
+      "reason": "Reason",
       "fileName": "File",
       "fileUrl": "File",
       "previousFileUrl": "Previous file",
@@ -237,6 +239,10 @@
       "role": "Role",
       "customerName": "Customer",
       "isAdmin": "Administrator"
+    },
+    "reasons": {
+      "absent_from_backorder": "no longer in the backorder",
+      "zero_remaining": "nothing left to ship"
     }
   },
   "changePassword": {
@@ -272,10 +278,11 @@
   },
   "piList": {
     "title": "Proforma Invoices",
-    "showArchived": "Show archived",
+    "tabActive": "Active",
+    "tabArchive": "Archive",
+    "emptyArchive": "The archive is empty.",
     "exportBackorder": "Export full backorder",
     "exportFailed": "Could not export the backorder",
-    "emptyWithArchived": "No cards — enable “Show archived” to see them.",
     "empty": "No cards yet."
   },
   "piCard": {
@@ -286,6 +293,10 @@
     "weekPlan": "Week plan",
     "weekPlanValue": "{{containers}} cont. / {{qty}} pcs",
     "priorityLines": "Priority lines"
+  },
+  "piProgress": {
+    "remaining": "Remaining to ship",
+    "shippedAll": "Shipped 100%"
   },
   "uploadPi": {
     "trigger": "Upload proforma",
@@ -302,6 +313,7 @@
   },
   "piDetail": {
     "notFound": "Card not found.",
+    "archivedReadOnly": "This card is in the archive (fully shipped or no longer in the backorder) — view only: files and Excel can be downloaded, nothing can be changed.",
     "priorityMode": "Priority",
     "priorityDone": "Done",
     "reset": "Reset",
@@ -693,6 +705,7 @@
     "REPLACEMENT_ALREADY_PENDING": "A replacement is already waiting for the client's decision.",
     "NO_PENDING_REPLACEMENT": "There is no pending replacement for this PI.",
     "PI_LABEL_LOCKED_AFTER_SIGNING": "The name can only be changed before the PI is signed.",
+    "PI_ARCHIVED_READ_ONLY": "This card is in the archive — it can only be viewed and downloaded.",
     "LINE_NOT_READY_TO_SHIP": "This line isn't in the ready-to-ship list.",
     "LINE_NO_LOADABILITY": "This line has no loadability, so it can't be put into containers.",
     "MOVE_EXCEEDS_REMAINING": "Can't move {{qty, number}}: only {{remaining, number}} of this line is left unallocated.",

@@ -15,6 +15,7 @@ export const AUDIT_ACTIONS = [
   "pi.label_changed",
   "pi.priority_changed",
   "pi.priority_reset",
+  "pi.archived",
 
   // Backorder
   "backorder.uploaded",

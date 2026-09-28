@@ -4,6 +4,7 @@ import { StatusBadge } from "@/components/StatusBadge"
 import { PI_STATUS } from "@/lib/statusStyles"
 import { formatNumber, formatPiTitle } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { RemainingToShip } from "@/pages/shared/RemainingToShip"
 import type { ProformaInvoice } from "@/api/proformaInvoices"
 
 interface PiCardProps {
@@ -73,6 +74,13 @@ export function PiCard({ pi, onClick }: PiCardProps) {
             {pi.priorityLineItemsCount ?? 0}
           </div>
         </div>
+        {pi.isArchivedShipped ? (
+          <div className="text-sm font-medium text-success-text" data-testid="pi-card-shipped-all">
+            {t("piProgress.shippedAll")}
+          </div>
+        ) : (
+          <RemainingToShip value={pi.remainingPercent} />
+        )}
       </CardContent>
     </Card>
   )

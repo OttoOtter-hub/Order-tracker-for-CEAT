@@ -12,6 +12,7 @@ import { apiError } from "../common/errors/api-error";
 import { toNumberOrNull } from "../common/utils/numeric";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { PiLineItem } from "./pi-line-item.entity";
+import { assertPiWritable } from "../proforma-invoices/utils/assert-pi-writable";
 
 @Injectable()
 export class PiLineItemsService {
@@ -54,6 +55,7 @@ export class PiLineItemsService {
         apiError("NOT_FOUND", `PiLineItem ${id} not found`),
       );
     }
+    assertPiWritable(item.pi);
 
     // Repeats the DTO's @IsInt() check — real HTTP callers already get
     // rejected there before reaching this method, but this project's

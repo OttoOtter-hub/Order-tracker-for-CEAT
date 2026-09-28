@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import { makeFakeRepo } from "../common/testing/fake-repo";
 import { FakeAudit, makeFakeAudit } from "../common/testing/fake-audit";
 import { PiLineItemsService } from "./pi-line-items.service";
@@ -79,6 +83,27 @@ describe("PiLineItemsService", () => {
     it("blocks a client whose customer doesn't own the line item's PI, with 404 (not 403)", async () => {
       seedLineItem(); // pi.customer.id === "cust-1"
 
+      await expect(
+        service.updatePriority("li-1", 5, otherClientActor),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.rows[0].priorityQty).toBe("0");
+    });
+
+    it("an archived card is read-only: 400 PI_ARCHIVED_READ_ONLY for its owner, still a 404 for another customer", async () => {
+      seedLineItem({
+        pi: {
+          id: "pi-1",
+          piNumber: "100037320",
+          customer: { id: "cust-1" },
+          isArchivedShipped: true,
+        },
+      });
+
+      await expect(
+        service.updatePriority("li-1", 5, clientActor),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "PI_ARCHIVED_READ_ONLY" }),
+      });
       await expect(
         service.updatePriority("li-1", 5, otherClientActor),
       ).rejects.toBeInstanceOf(NotFoundException);

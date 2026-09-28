@@ -164,7 +164,8 @@
         "additional_file_added": "Добавлен доп. файл",
         "label_changed": "Изменено название",
         "priority_changed": "Изменён приоритет",
-        "priority_reset": "Приоритет сброшен"
+        "priority_reset": "Приоритет сброшен",
+        "archived": "Карточка в архиве"
       },
       "backorder": {
         "uploaded": "Загружен файл бэкордера"
@@ -202,6 +203,7 @@
     },
     "fields": {
       "piNumber": "Проформа",
+      "reason": "Причина",
       "fileName": "Файл",
       "fileUrl": "Файл",
       "previousFileUrl": "Прежний файл",
@@ -239,6 +241,10 @@
       "role": "Роль",
       "customerName": "Клиент",
       "isAdmin": "Администратор"
+    },
+    "reasons": {
+      "absent_from_backorder": "нет в бэкордере",
+      "zero_remaining": "остаток к отправке 0"
     }
   },
   "changePassword": {
@@ -274,10 +280,11 @@
   },
   "piList": {
     "title": "Проформа-инвойс",
-    "showArchived": "Показать архивные",
+    "tabActive": "Активные",
+    "tabArchive": "Архив",
+    "emptyArchive": "В архиве пусто.",
     "exportBackorder": "Выгрузить весь бэкордер",
     "exportFailed": "Не удалось выгрузить бэкордер",
-    "emptyWithArchived": "Нет карточек — включите «Показать архивные», чтобы увидеть их.",
     "empty": "Пока нет ни одной карточки."
   },
   "piCard": {
@@ -288,6 +295,10 @@
     "weekPlan": "План нед.",
     "weekPlanValue": "{{containers}} конт. / {{qty}} шт.",
     "priorityLines": "Приоритетных позиций"
+  },
+  "piProgress": {
+    "remaining": "Осталось отправить",
+    "shippedAll": "Отгружено 100%"
   },
   "uploadPi": {
     "trigger": "Загрузить проформу",
@@ -304,6 +315,7 @@
   },
   "piDetail": {
     "notFound": "Карточка не найдена.",
+    "archivedReadOnly": "Карточка в архиве (отгружена полностью или её больше нет в бэкордере) — только просмотр: файлы и Excel можно скачать, изменить ничего нельзя.",
     "priorityMode": "Приоритет",
     "priorityDone": "Готово",
     "reset": "Сбросить",
@@ -699,6 +711,7 @@
     "REPLACEMENT_ALREADY_PENDING": "Уже есть предложение замены, ожидающее решения клиента.",
     "NO_PENDING_REPLACEMENT": "Нет активного предложения замены для этого PI.",
     "PI_LABEL_LOCKED_AFTER_SIGNING": "Название можно менять только до подписания проформы.",
+    "PI_ARCHIVED_READ_ONLY": "Карточка в архиве — её можно только просматривать и скачивать.",
     "LINE_NOT_READY_TO_SHIP": "Строка не входит в список готового к отгрузке.",
     "LINE_NO_LOADABILITY": "У строки не задана loadability — распределить её по контейнерам нельзя.",
     "MOVE_EXCEEDS_REMAINING": "Нельзя переместить {{qty, number}}: нераспределённый остаток строки — {{remaining, number}}.",

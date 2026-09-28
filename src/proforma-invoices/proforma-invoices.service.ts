@@ -26,6 +26,7 @@ import { PiCreatedFrom } from "./enums/pi-created-from.enum";
 import { extractPiNumber } from "./utils/extract-pi-number";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
 import { buildPiExportWorkbook } from "./utils/build-pi-export-workbook";
+import { assertPiWritable } from "./utils/assert-pi-writable";
 import {
   applyShippedOnlyLines,
   DispatchLine,
@@ -269,6 +270,9 @@ export class ProformaInvoicesService {
       where: { piNumber },
       relations: ["customer"],
     });
+    if (existing) {
+      assertPiWritable(existing);
+    }
     if (existing?.piFileUrl) {
       throw new ConflictException(
         apiError(
@@ -389,6 +393,7 @@ export class ProformaInvoicesService {
     actor: RequestUser,
   ): Promise<ProformaInvoice> {
     const pi = await this.findOwnedByActor(id, actor);
+    assertPiWritable(pi);
     const fileUrl = await this.storeUploadedFile(file, actor.id);
     const previousFileUrl = pi.signedFileUrl;
     const saved = await this.repo.manager.transaction(async (em) => {
@@ -431,6 +436,7 @@ export class ProformaInvoicesService {
     actor: RequestUser,
   ): Promise<PiAdditionalFile> {
     const pi = await this.findOwnedByActor(id, actor);
+    assertPiWritable(pi);
     const fileUrl = await this.storeUploadedFile(file, actor.id);
     const additionalFile = this.additionalFilesRepo.create({
       pi,
@@ -467,6 +473,7 @@ export class ProformaInvoicesService {
   ): Promise<ProformaInvoice> {
     // loadOne, not findOne: this card is saved below — it must be the stored one.
     const pi = await this.loadOne(id);
+    assertPiWritable(pi);
     if (pi.pendingReplacementFileUrl) {
       throw new ConflictException(
         apiError(
@@ -514,6 +521,7 @@ export class ProformaInvoicesService {
     actor: RequestUser,
   ): Promise<ProformaInvoice> {
     const pi = await this.findOwnedByActor(id, actor);
+    assertPiWritable(pi);
     if (!pi.pendingReplacementFileUrl) {
       throw new BadRequestException(
         apiError(
@@ -690,6 +698,7 @@ export class ProformaInvoicesService {
       );
     }
     const pi = await this.findOwnedByActor(id, actor);
+    assertPiWritable(pi);
     if (pi.signedFileUrl) {
       throw new BadRequestException(
         apiError(
@@ -743,6 +752,7 @@ export class ProformaInvoicesService {
       );
     }
     const pi = await this.findOwnedByActor(id, actor);
+    assertPiWritable(pi);
     const linesWithPriority = (pi.lineItems ?? []).filter(
       (item) => Number(item.priorityQty) > 0,
     ).length;

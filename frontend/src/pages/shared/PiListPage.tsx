@@ -8,8 +8,10 @@ import { exportBackorderXlsx } from "@/api/backorderUploads"
 import { getErrorMessage } from "@/lib/errors"
 import { PiCard } from "@/pages/shared/PiCard"
 import { UploadPiDialog } from "@/pages/shared/UploadPiDialog"
-import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
+
+type PiTab = "active" | "archive"
 
 // Used by both /ops/pi and /client/pi — the only role-conditional content is
 // the upload button (ops-only); "Выгрузить весь бэкордер" is shown to both
@@ -19,30 +21,25 @@ export function PiListPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const { data: list, isLoading } = usePiListQuery()
-  const [showArchived, setShowArchived] = useState(false)
+  const [tab, setTab] = useState<PiTab>("active")
   const [isExporting, setIsExporting] = useState(false)
 
   const basePath = user?.role === "ops" ? "/ops" : "/client"
 
-  const visible = useMemo(() => {
-    if (!list) return []
-    return showArchived ? list : list.filter((pi) => !pi.isArchivedShipped)
-  }, [list, showArchived])
+  const { active, archived } = useMemo(() => {
+    const all = list ?? []
+    return {
+      active: all.filter((pi) => !pi.isArchivedShipped),
+      archived: all.filter((pi) => pi.isArchivedShipped),
+    }
+  }, [list])
+  const visible = tab === "active" ? active : archived
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">{t("piList.title")}</h1>
         <div className="flex items-center gap-4">
-          <Label className="flex items-center gap-2 font-normal text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              className="size-4 rounded border-input"
-            />
-            {t("piList.showArchived")}
-          </Label>
           <Button
             variant="outline"
             size="sm"
@@ -62,15 +59,46 @@ export function PiListPage() {
         </div>
       </div>
 
+      {/* Active / Archive — both roles; the archive is read-only (fully
+          shipped, or gone from the backorder) but every card opens. */}
+      <div
+        role="tablist"
+        aria-label={t("piList.title")}
+        className="flex w-fit items-center gap-1 rounded-lg border p-1"
+      >
+        {(
+          [
+            ["active", t("piList.tabActive"), active.length],
+            ["archive", t("piList.tabArchive"), archived.length],
+          ] as const
+        ).map(([key, label, count]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            data-testid={`pi-tab-${key}`}
+            onClick={() => setTab(key)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors",
+              tab === key
+                ? "bg-primary font-medium text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+          >
+            {label}
+            <span className="tabular-nums opacity-80">{count}</span>
+          </button>
+        ))}
+      </div>
+
       {isLoading && (
         <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
       )}
 
       {!isLoading && visible.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          {list && list.length > 0
-            ? t("piList.emptyWithArchived")
-            : t("piList.empty")}
+          {tab === "archive" ? t("piList.emptyArchive") : t("piList.empty")}
         </p>
       )}
 

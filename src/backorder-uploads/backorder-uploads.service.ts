@@ -41,6 +41,11 @@ function numToStr(value: number | null): string | null {
   return value === null ? null : String(value);
 }
 
+/**
+ * Why a backorder upload archived a card: it was not in the file at all, or
+ * it was, but with nothing left to deliver (Σ balance = 0).
+ */
+export type ArchiveReason = "absent_from_backorder" | "zero_remaining";
 @Injectable()
 export class BackorderUploadsService {
   constructor(
@@ -158,6 +163,9 @@ export class BackorderUploadsService {
       const snapshotRows = await this.saveSnapshot(em, upload, snapshotSheets);
 
       let newCardsCreated = 0;
+      // Cards this upload archives, with why — journaled once each below.
+      const archivedNow: Array<{ pi: ProformaInvoice; reason: ArchiveReason }> =
+        [];
       for (const [piNumber, piRows] of rowsByPiNumber) {
         let pi = await piRepo.findOne({ where: { piNumber } });
         if (!pi) {
@@ -171,9 +179,8 @@ export class BackorderUploadsService {
             }),
           );
           newCardsCreated++;
-        } else if (pi.isArchivedShipped) {
-          pi.isArchivedShipped = false;
         }
+        const wasArchived = pi.isArchivedShipped;
 
         const oldLineItems = await lineItemsRepo.find({
           where: { pi: { id: pi.id } },
@@ -224,6 +231,12 @@ export class BackorderUploadsService {
         pi.containersPending = String(agg.containersPending);
         pi.currentWeekPlanContainers = String(agg.currentWeekPlanContainers);
         pi.currentWeekPlanQty = String(agg.currentWeekPlanQty);
+        // In the file but nothing left to deliver: fully shipped -> archive.
+        // Still something left: active (a card archived earlier comes back).
+        pi.isArchivedShipped = agg.qtyPending === 0;
+        if (pi.isArchivedShipped && !wasArchived) {
+          archivedNow.push({ pi, reason: "zero_remaining" });
+        }
         await piRepo.save(pi);
       }
 
@@ -233,15 +246,35 @@ export class BackorderUploadsService {
       // touch them on archival. Pilot-scale row counts (tens of cards), so a
       // plain find + filter + bulk save is plenty — no need for a raw SQL
       // UPDATE.
+      //
+      // A card that has never had line items (created from a PI upload, not
+      // yet seen in any backorder) is not "gone from the backorder" — it
+      // isn't archived.
       const piNumbersInUpload = new Set(rowsByPiNumber.keys());
       const notYetArchived = await piRepo.find({
         where: { isArchivedShipped: false },
       });
-      const toArchive = notYetArchived.filter(
+      const absent = notYetArchived.filter(
         (candidate) => !piNumbersInUpload.has(candidate.piNumber),
+      );
+      const withLines = absent.length
+        ? new Set(
+            (
+              await lineItemsRepo.find({
+                where: {
+                  pi: { id: In(absent.map((candidate) => candidate.id)) },
+                },
+                relations: ["pi"],
+              })
+            ).map((item) => item.pi.id),
+          )
+        : new Set<string>();
+      const toArchive = absent.filter((candidate) =>
+        withLines.has(candidate.id),
       );
       for (const candidate of toArchive) {
         candidate.isArchivedShipped = true;
+        archivedNow.push({ pi: candidate, reason: "absent_from_backorder" });
       }
       if (toArchive.length > 0) {
         await piRepo.save(toArchive);
@@ -254,7 +287,7 @@ export class BackorderUploadsService {
       );
 
       upload.newCardsCreated = newCardsCreated;
-      upload.cardsArchived = toArchive.length;
+      upload.cardsArchived = archivedNow.length;
       const saved = await uploadRepo.save(upload);
 
       await this.audit.record(
@@ -275,6 +308,19 @@ export class BackorderUploadsService {
         },
         em,
       );
+      // One entry per card this upload archived, with the reason.
+      for (const { pi, reason } of archivedNow) {
+        await this.audit.record(
+          {
+            actor,
+            action: "pi.archived",
+            entityType: "pi",
+            entityId: pi.id,
+            metadata: { piNumber: pi.piNumber, reason },
+          },
+          em,
+        );
+      }
 
       return {
         id: saved.id,

@@ -46,6 +46,7 @@ export function buildPiExportWorkbook(pi: ProformaInvoice): ExcelJS.Workbook {
   sheet.addRow(["SO numbers", soNumbers.join(", ")]);
   sheet.addRow(["Total Qty", toNumberOrNull(pi.totalQty)]);
   sheet.addRow(["Qty Pending", toNumberOrNull(pi.qtyPending)]);
+  sheet.addRow(["Remaining to ship, %", pi.remainingPercent]);
   sheet.addRow(["Total Containers", toNumberOrNull(pi.totalContainers)]);
   sheet.addRow(["Containers Pending", toNumberOrNull(pi.containersPending)]);
   sheet.addRow([

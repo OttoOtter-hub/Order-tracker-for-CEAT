@@ -470,6 +470,103 @@ describe("BackorderUploadsService", () => {
     });
   });
 
+  describe("auto-archive: absent from the file, or present with nothing left", () => {
+    // row()'s Balance To be Delivered is index 5.
+    const withBalance = (piNumber: number, material: string, balance: number) =>
+      row(piNumber, material).map((v, i) => (i === 5 ? balance : v));
+    const card = (piNumber: string) =>
+      piRepo.rows.find((r) => r.piNumber === piNumber)!;
+    const archivedEntries = () =>
+      audit.entries.filter((e) => e.action === "pi.archived");
+
+    it("a card in the file whose line items add up to 0 balance is archived (zero_remaining), journaled in the transaction", async () => {
+      const file = await buildBackorderFile([
+        withBalance(100037010, "A-MAT", 0),
+        withBalance(100037010, "B-MAT", 0),
+        withBalance(100037011, "C-MAT", 5),
+      ]);
+
+      const result = await service.upload(file as any, opsActor);
+
+      expect(card("100037010").isArchivedShipped).toBe(true);
+      expect(card("100037011").isArchivedShipped).toBe(false);
+      expect(result.cardsArchived).toBe(1);
+      expect(archivedEntries()).toEqual([
+        expect.objectContaining({
+          entityType: "pi",
+          entityId: card("100037010").id,
+          metadata: { piNumber: "100037010", reason: "zero_remaining" },
+          inTransaction: true,
+        }),
+      ]);
+    });
+
+    it("a card gone from the file is archived with reason absent_from_backorder", async () => {
+      await service.upload(
+        (await buildBackorderFile([
+          row(100037020, "X"),
+          row(100037021, "Y"),
+        ])) as any,
+        opsActor,
+      );
+      audit.entries.length = 0;
+
+      await service.upload(
+        (await buildBackorderFile([row(100037020, "X")])) as any,
+        opsActor,
+      );
+
+      expect(card("100037021").isArchivedShipped).toBe(true);
+      expect(archivedEntries().map((e) => e.metadata)).toEqual([
+        { piNumber: "100037021", reason: "absent_from_backorder" },
+      ]);
+    });
+
+    it("a card with no line items (created from a PI upload, never in a backorder) is not archived", async () => {
+      piRepo.seed({
+        id: "pi-upload-card",
+        piNumber: "100037030",
+        customer: { id: "cust-1" },
+        createdFrom: PiCreatedFrom.PI_UPLOAD,
+        isArchivedShipped: false,
+      });
+
+      const result = await service.upload(
+        (await buildBackorderFile([row(100037031, "X")])) as any,
+        opsActor,
+      );
+
+      expect(card("100037030").isArchivedShipped).toBe(false);
+      expect(result.cardsArchived).toBe(0);
+      expect(archivedEntries()).toHaveLength(0);
+    });
+
+    it("an archived card that comes back with something left is un-archived; one that stays at 0 is not re-journaled", async () => {
+      await service.upload(
+        (await buildBackorderFile([
+          withBalance(100037040, "A", 0),
+          withBalance(100037041, "B", 0),
+        ])) as any,
+        opsActor,
+      );
+      expect(card("100037040").isArchivedShipped).toBe(true);
+      audit.entries.length = 0;
+
+      const result = await service.upload(
+        (await buildBackorderFile([
+          withBalance(100037040, "A", 3), // a remainder appeared
+          withBalance(100037041, "B", 0), // still nothing left
+        ])) as any,
+        opsActor,
+      );
+
+      expect(card("100037040").isArchivedShipped).toBe(false);
+      expect(card("100037041").isArchivedShipped).toBe(true);
+      expect(result.cardsArchived).toBe(0);
+      expect(archivedEntries()).toHaveLength(0);
+    });
+  });
+
   describe("exportXlsx", () => {
     it("includes only active (non-archived) cards' line items", async () => {
       piRepo.seed({
