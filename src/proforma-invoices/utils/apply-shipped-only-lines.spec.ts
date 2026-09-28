@@ -153,6 +153,88 @@ describe("applyShippedOnlyLines", () => {
     expect(pi.totalContainers).toBe("2.00");
   });
 
+  describe("a material in both the backorder and Dispatch", () => {
+    it("Dispatch shipped more than the backorder counts (quantity − balance): the excess becomes an isShippedOnly row", () => {
+      // M1: BO 100 ordered, 40 left -> 60 shipped per BO; Dispatch 95 -> 35 more.
+      const pi = card();
+      applyShippedOnlyLines(
+        pi,
+        [
+          { materialNum: "M1", materialDesc: "tyre 1", quantity: "60" },
+          { materialNum: "M1", materialDesc: "tyre 1", quantity: "35" },
+        ],
+        LOADABILITY,
+      );
+
+      const added = pi.lineItems!.filter((l) => l.isShippedOnly);
+      expect(
+        added.map((l) => [
+          l.materialNum,
+          l.quantity,
+          l.balanceToBeDelivered,
+          l.soNumber,
+          l.mt,
+          l.loadability,
+        ]),
+      ).toEqual([["M1", "35.00", "0", null, null, "100"]]);
+      expect(pi.totalQty).toBe("185.00"); // 150 + 35
+      expect(pi.totalContainers).toBe("3.35"); // 3 + 35/100
+      expect(pi.qtyPending).toBe("90.00");
+      // The card's shipped part now equals Dispatch for M1 + M2 (0).
+      expect(Number(pi.totalQty) - Number(pi.qtyPending)).toBe(95);
+    });
+
+    it("Dispatch equal to or below the backorder's shipped: nothing added", () => {
+      for (const qty of ["60", "59.99", "10"]) {
+        const pi = card();
+        applyShippedOnlyLines(
+          pi,
+          [{ materialNum: "M1", materialDesc: "tyre 1", quantity: qty }],
+          LOADABILITY,
+        );
+        expect(pi.lineItems!.some((l) => l.isShippedOnly)).toBe(false);
+        expect(pi.totalQty).toBe("150.00");
+      }
+    });
+
+    it("several backorder rows of one material (different SO) are summed before comparing", () => {
+      // M1 on two SO rows: 100/40 (60 shipped) + 50/50 (0 shipped) = 60 shipped.
+      const pi = card({
+        lineItems: [
+          line({
+            id: "li-1",
+            soNumber: "SO1",
+            materialNum: "M1",
+            quantity: "100",
+            balanceToBeDelivered: "40",
+          }),
+          line({
+            id: "li-1b",
+            soNumber: "SO2",
+            materialNum: "M1",
+            quantity: "50",
+            balanceToBeDelivered: "50",
+          }),
+        ],
+        totalQty: "150.00",
+        totalContainers: "1.50",
+        qtyPending: "90.00",
+      });
+      applyShippedOnlyLines(
+        pi,
+        [{ materialNum: "M1", materialDesc: "tyre 1", quantity: "80" }],
+        LOADABILITY,
+      );
+
+      const added = pi.lineItems!.filter((l) => l.isShippedOnly);
+      expect(added.map((l) => [l.materialNum, l.quantity])).toEqual([
+        ["M1", "20.00"],
+      ]);
+      expect(pi.totalQty).toBe("170.00");
+      expect(Number(pi.totalQty) - Number(pi.qtyPending)).toBe(80);
+    });
+  });
+
   it("no Dispatch lines, or none for new materials: the card is left exactly as stored", () => {
     const untouched = card();
     applyShippedOnlyLines(untouched, [], LOADABILITY);

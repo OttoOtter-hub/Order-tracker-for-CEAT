@@ -95,12 +95,19 @@ const containers = (materials: ShippedMaterial[]): number =>
  *
  * - **Active card:** a Dispatch material that none of the card's own line
  *   items has gets an `isShippedOnly` row: quantity = Σ Dispatch quantity,
- *   balance 0. A material in both sources is *not* added — the backorder's
- *   Quantity already includes what has shipped. totalQty grows by those
- *   quantities, totalContainers by quantity / loadability where the SKU's
- *   loadability is known (from any PiLineItem in the database); without it
- *   the row still shows but adds no containers. Pending qty/containers and
- *   the week plan don't change — those rows have nothing left.
+ *   balance 0. For a material in *both* sources the backorder's own
+ *   "shipped" is Σ (quantity − balance) over its rows (several SO rows of
+ *   one material are summed first); only what Dispatch has shipped beyond
+ *   that becomes an `isShippedOnly` row — typically an earlier SO line that
+ *   shipped in full and left the backorder while a new SO line for the same
+ *   material is still open (Dispatch carries no SO, so the material is the
+ *   only key). Equal or less: nothing is added. So the card's shipped part
+ *   (totalQty − qtyPending) equals Σ Dispatch for the PI. totalQty grows by
+ *   those quantities, totalContainers by quantity / loadability where the
+ *   SKU's loadability is known (from any PiLineItem in the database);
+ *   without it the row still shows but adds no containers. Pending
+ *   qty/containers and the week plan don't change — those rows have nothing
+ *   left.
  * - **Archived card with Dispatch lines:** its line items are the last
  *   backorder's leftovers, stale by definition. The card shows its Dispatch
  *   materials instead (all `isShippedOnly`), with totals from them and
@@ -133,12 +140,30 @@ export function applyShippedOnlyLines(
     return;
   }
 
-  const ownMaterials = new Set(
-    own.map((item) => item.materialNum).filter((m): m is string => !!m),
-  );
-  const extra = [...shipped.values()].filter(
-    (m) => !ownMaterials.has(m.materialNum),
-  );
+  // What the backorder itself counts as shipped, per material, over all of
+  // its rows for that material: Σ (quantity − balance).
+  const boShipped = new Map<string, number>();
+  for (const item of own) {
+    if (!item.materialNum) continue;
+    const shippedHere =
+      (toNumberOrNull(item.quantity) ?? 0) -
+      (toNumberOrNull(item.balanceToBeDelivered) ?? 0);
+    boShipped.set(
+      item.materialNum,
+      (boShipped.get(item.materialNum) ?? 0) + shippedHere,
+    );
+  }
+  const extra: ShippedMaterial[] = [];
+  for (const m of shipped.values()) {
+    const inBackorder = boShipped.get(m.materialNum);
+    if (inBackorder === undefined) {
+      extra.push(m);
+      continue;
+    }
+    // Compared in cents: both sides are 2-decimal quantities.
+    const excess = Math.round((m.quantity - inBackorder) * 100) / 100;
+    if (excess > 0) extra.push({ ...m, quantity: excess });
+  }
   if (extra.length === 0) return;
 
   pi.lineItems = [...own, ...extra.map((m) => toShippedOnlyLine(pi.id, m))];
