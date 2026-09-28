@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -55,6 +56,19 @@ export class UsersController {
     @CurrentUser() actor: RequestUser,
   ) {
     return this.service.setActive(id, true, actor);
+  }
+
+  /**
+   * A new temporary password for someone else, shown once in this response
+   * (no-store: not to be kept by any cache on the way).
+   */
+  @Post(":id/reset-password")
+  @Header("Cache-Control", "no-store")
+  resetPassword(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() actor: RequestUser,
+  ) {
+    return this.service.resetPassword(id, actor);
   }
 
   /** Grant or revoke admin on an ops user; the last active admin can't lose it. */

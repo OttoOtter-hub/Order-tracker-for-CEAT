@@ -49,7 +49,7 @@ function codeOf(fn: () => unknown): string | undefined {
 describe("admin-only routes (RolesGuard)", () => {
   const guard = new RolesGuard(new Reflector());
 
-  // The five routes of the spec, plus the new set-admin one.
+  // The five routes of the admin spec, plus set-admin and reset-password.
   const adminRoutes: [string, { prototype: object }, string, string][] = [
     ["GET /users", UsersController, "findAll", "GET"],
     ["POST /users", UsersController, "create", "POST"],
@@ -57,6 +57,12 @@ describe("admin-only routes (RolesGuard)", () => {
     ["PATCH /users/:id/reactivate", UsersController, "reactivate", "PATCH"],
     ["GET /audit-log", AuditLogController, "find", "GET"],
     ["PATCH /users/:id/set-admin", UsersController, "setAdmin", "PATCH"],
+    [
+      "POST /users/:id/reset-password",
+      UsersController,
+      "resetPassword",
+      "POST",
+    ],
   ];
 
   it.each(adminRoutes)(

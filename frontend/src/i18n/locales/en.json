@@ -82,6 +82,17 @@
     "adminRevoked": "{{email}} is no longer an administrator",
     "adminFailed": "Could not change administrator rights",
     "lastAdminHint": "The last active administrator — make someone else an administrator first",
+    "resetPassword": "Reset password",
+    "resetTitle": "Reset the password of {{email}}?",
+    "resetDescription": "A new temporary password will be created and the current one will stop working. Hand it to the user — after logging in they change it via “Change password”. Sessions already open are not ended.",
+    "resetConfirm": "Reset password",
+    "resetFailed": "Could not reset the password",
+    "tempTitle": "Temporary password for {{email}}",
+    "tempDescription": "It is shown only now — after closing this window it can't be viewed again. Hand it over securely; the user should change it right after logging in.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Could not copy — select the password and copy it by hand",
+    "close": "Close",
     "form": {
       "title": "Add user",
       "email": "Email",
@@ -183,7 +194,8 @@
         "deactivated": "User deactivated",
         "reactivated": "User restored",
         "admin_granted": "Administrator rights granted",
-        "admin_revoked": "Administrator rights revoked"
+        "admin_revoked": "Administrator rights revoked",
+        "password_reset": "Password reset by an administrator"
       }
     },
     "fields": {
@@ -701,6 +713,7 @@
     "CANNOT_DEACTIVATE_SELF": "You can't deactivate your own account.",
     "ADMIN_REQUIRES_OPS": "Only a CEAT (ops) user can be an administrator.",
     "LAST_ADMIN": "This is the last active administrator — make someone else an administrator first.",
+    "CANNOT_RESET_OWN_PASSWORD": "You can't reset your own password here — use “Change password”.",
     "WRONG_CURRENT_PASSWORD": "The current password is incorrect.",
     "PASSWORD_TOO_SHORT": "The password must be at least {{min}} characters long."
   }

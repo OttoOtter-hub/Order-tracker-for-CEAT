@@ -1,13 +1,15 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { UserPlus } from "lucide-react"
+import { Copy, KeyRound, UserPlus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -44,6 +46,7 @@ import { useCustomersQuery } from "@/api/customers"
 import {
   MIN_PASSWORD_LENGTH,
   useCreateUserMutation,
+  useResetPasswordMutation,
   useSetUserActiveMutation,
   useSetUserAdminMutation,
   useUsersQuery,
@@ -62,11 +65,32 @@ export function UsersPage() {
   const setActive = useSetUserActiveMutation()
   const setAdmin = useSetUserAdminMutation()
   const [toDeactivate, setToDeactivate] = useState<ManagedUser | null>(null)
+  const resetPassword = useResetPasswordMutation()
+  const [toReset, setToReset] = useState<ManagedUser | null>(null)
+  // Held only in this component's state while the window is open — never
+  // stored anywhere else; closing the window drops it.
+  const [issued, setIssued] = useState<{
+    email: string
+    password: string
+  } | null>(null)
   // The API keeps at least one active admin (LAST_ADMIN); the toggle of that
   // last one is disabled so the refusal is visible before the click.
   const activeAdmins = (users.data ?? []).filter(
     (user) => user.isAdmin && user.isActive
   ).length
+
+  function doResetPassword(user: ManagedUser) {
+    resetPassword.mutate(user.id, {
+      onSuccess: ({ temporaryPassword }) => {
+        setToReset(null)
+        setIssued({ email: user.email, password: temporaryPassword })
+      },
+      onError: (error) => {
+        toast.error(getErrorMessage(error, t("users.resetFailed")))
+        setToReset(null)
+      },
+    })
+  }
 
   function changeAdmin(user: ManagedUser, isAdmin: boolean) {
     setAdmin.mutate(
@@ -174,7 +198,21 @@ export function UsersPage() {
                     )}
                   </TableCell>
                   <TableCell>{formatDateTime(user.createdAt)}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="space-x-2 text-right whitespace-nowrap">
+                    {/* Own password: "Change password" in the menu (the API
+                        refuses a self-reset too). */}
+                    {!isMe && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1"
+                        data-testid="reset-password"
+                        onClick={() => setToReset(user)}
+                      >
+                        <KeyRound className="size-3.5" />
+                        {t("users.resetPassword")}
+                      </Button>
+                    )}
                     {user.isActive ? (
                       // The API refuses self-deactivation too; the button just
                       // isn't offered.
@@ -215,7 +253,93 @@ export function UsersPage() {
         isPending={setActive.isPending}
         onConfirm={() => toDeactivate && changeStatus(toDeactivate, false)}
       />
+
+      <ConfirmDialog
+        open={toReset !== null}
+        onOpenChange={(open) => !open && setToReset(null)}
+        title={t("users.resetTitle", { email: toReset?.email ?? "" })}
+        description={t("users.resetDescription")}
+        confirmLabel={t("users.resetConfirm")}
+        destructive
+        isPending={resetPassword.isPending}
+        onConfirm={() => toReset && doResetPassword(toReset)}
+      />
+
+      <TemporaryPasswordDialog issued={issued} onClose={() => setIssued(null)} />
     </div>
+  )
+}
+
+// The one and only view of a freshly issued temporary password.
+function TemporaryPasswordDialog({
+  issued,
+  onClose,
+}: {
+  issued: { email: string; password: string } | null
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Some browsers (locked-down or embedded ones) refuse the async clipboard;
+  // the classic copy of the selected field, still inside the same click,
+  // works there — so it goes first, the async API second.
+  async function copy() {
+    if (!issued) return
+    inputRef.current?.select()
+    let ok = false
+    try {
+      ok = document.execCommand("copy")
+    } catch {
+      ok = false
+    }
+    if (!ok) {
+      try {
+        await navigator.clipboard.writeText(issued.password)
+        ok = true
+      } catch {
+        ok = false
+      }
+    }
+    if (ok) toast.success(t("users.copied"))
+    else toast.error(t("users.copyFailed"))
+  }
+
+  return (
+    <Dialog open={issued !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="sm:max-w-md"
+        // Shown once: a stray click outside must not throw it away — only
+        // "Close" or the cross close it.
+        onInteractOutside={(e) => e.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle>
+            {t("users.tempTitle", { email: issued?.email ?? "" })}
+          </DialogTitle>
+          <DialogDescription>{t("users.tempDescription")}</DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center gap-2">
+          <Input
+            ref={inputRef}
+            readOnly
+            value={issued?.password ?? ""}
+            className="font-mono tracking-wider"
+            data-testid="temporary-password"
+            onFocus={(e) => e.target.select()}
+          />
+          <Button type="button" variant="outline" className="gap-1" onClick={copy}>
+            <Copy className="size-4" />
+            {t("users.copy")}
+          </Button>
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={onClose}>
+            {t("users.close")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

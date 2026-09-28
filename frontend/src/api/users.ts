@@ -74,6 +74,17 @@ export function useSetUserAdminMutation() {
   })
 }
 
+// POST /users/:id/reset-password — an admin gives someone else a new
+// temporary password; the response is the only place it ever appears.
+export function useResetPasswordMutation() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post<{ user: ManagedUser; temporaryPassword: string }>(
+        `/users/${id}/reset-password`
+      ),
+  })
+}
+
 // POST /auth/change-password — always the logged-in user's own password.
 export function useChangePasswordMutation() {
   return useMutation({

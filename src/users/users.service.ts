@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
 import { Repository } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { Role } from "../common/enums/role.enum";
@@ -57,6 +58,21 @@ function toView(user: User): UserView {
     isAdmin: user.role === Role.OPS && !!user.isAdmin,
     createdAt: user.createdAt,
   };
+}
+
+/**
+ * Temporary passwords from an admin reset: 16 characters of an alphabet
+ * without look-alikes (no 0/O, 1/l/I), so they can be read out or retyped.
+ */
+const TEMP_PASSWORD_ALPHABET =
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+export const TEMP_PASSWORD_LENGTH = 16;
+
+export function generateTemporaryPassword(): string {
+  return Array.from(
+    randomBytes(TEMP_PASSWORD_LENGTH),
+    (byte) => TEMP_PASSWORD_ALPHABET[byte % TEMP_PASSWORD_ALPHABET.length],
+  ).join("");
 }
 
 export function normalizeEmail(email: string): string {
@@ -324,6 +340,54 @@ export class UsersService {
 
   async isActive(id: string): Promise<boolean> {
     return (await this.getAuthStatus(id)).active;
+  }
+
+  /**
+   * An admin resets someone else's password: a random temporary one replaces
+   * it (same hashing as create) and is returned exactly once — to be handed
+   * over and changed by its owner via "Change password". It is never stored
+   * in clear, logged or journaled. Your own password goes through
+   * change-password instead (400 CANNOT_RESET_OWN_PASSWORD).
+   */
+  async resetPassword(
+    id: string,
+    actor: RequestUser,
+  ): Promise<{ user: UserView; temporaryPassword: string }> {
+    if (id === actor.id) {
+      throw new BadRequestException(
+        apiError(
+          "CANNOT_RESET_OWN_PASSWORD",
+          "use change-password for your own account",
+        ),
+      );
+    }
+    const user = await this.repo.findOne({
+      where: { id },
+      relations: ["customer"],
+    });
+    if (!user) {
+      throw new NotFoundException(
+        apiError("NOT_FOUND", `User ${id} not found`),
+      );
+    }
+    const temporaryPassword = generateTemporaryPassword();
+    await this.repo.update(
+      { id },
+      {
+        passwordHash: await bcrypt.hash(
+          temporaryPassword,
+          PASSWORD_HASH_ROUNDS,
+        ),
+      },
+    );
+    await this.audit.record({
+      actor,
+      action: "user.password_reset",
+      entityType: "user",
+      entityId: user.id,
+      metadata: { email: user.email, role: user.role },
+    });
+    return { user: toView(user), temporaryPassword };
   }
 
   async setPasswordHash(id: string, passwordHash: string): Promise<void> {
