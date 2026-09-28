@@ -13,6 +13,7 @@ import { PiFileType, PiFileVersion } from "./pi-file-version.entity";
 import { PiCreatedFrom } from "./enums/pi-created-from.enum";
 import { Role } from "../common/enums/role.enum";
 import type { RequestUser } from "../common/auth/request-user.interface";
+import * as ExcelJS from "exceljs";
 
 describe("ProformaInvoicesService", () => {
   let repo: ReturnType<typeof makeFakeRepo>;
@@ -914,6 +915,124 @@ describe("ProformaInvoicesService", () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(lineItemsRepo.update).not.toHaveBeenCalled();
       expect(lineItem1.priorityQty).toBe("5");
+    });
+  });
+
+  describe("fully shipped materials (only in Dispatch)", () => {
+    // Backorder: M1 ordered 100 (40 left). Dispatch: M1 60 (partial, in both)
+    // and M3 120 + 80 (fully shipped, gone from the backorder).
+    beforeEach(() => {
+      repo.seed({
+        id: "pi-1",
+        piNumber: "100037320",
+        customer: { id: "cust-1" },
+        isArchivedShipped: false,
+        totalQty: "100.00",
+        totalContainers: "1.00",
+        qtyPending: "40.00",
+        containersPending: "0.40",
+        currentWeekPlanQty: "0.00",
+        currentWeekPlanContainers: "0.00",
+        lineItems: [
+          {
+            id: "li-1",
+            materialNum: "M1",
+            materialDesc: "Tyre 1",
+            soNumber: "SO1",
+            quantity: "100",
+            balanceToBeDelivered: "40",
+            loadability: "100",
+            priorityQty: "0",
+          },
+        ],
+      });
+      // M3's loadability comes from another card's line item.
+      lineItemsRepo.seed({
+        id: "other-li",
+        materialNum: "M3",
+        loadability: "200",
+      });
+      for (const [id, material, qty] of [
+        ["d-1", "M1", "60"],
+        ["d-2", "M3", "120"],
+        ["d-3", "M3", "80"],
+      ]) {
+        actualLineItemsRepo.seed({
+          id,
+          piNumber: "100037320",
+          materialNum: material,
+          materialDesc: material === "M3" ? "Tyre 3" : "Tyre 1",
+          quantity: qty,
+        });
+      }
+    });
+
+    it("GET /:id: the fully shipped material is a row, the partial one isn't doubled, totals include it; the reconciliation is unchanged", async () => {
+      const pi = await service.findOne("pi-1");
+
+      expect(
+        pi.lineItems.map((l) => [
+          l.materialNum,
+          l.quantity,
+          l.balanceToBeDelivered,
+          l.isShippedOnly,
+        ]),
+      ).toEqual([
+        ["M1", "100", "40", false],
+        ["M3", "200.00", "0", true],
+      ]);
+      expect(pi.totalQty).toBe("300.00");
+      expect(pi.totalContainers).toBe("2.00"); // 1 + 200/200
+      expect(pi.qtyPending).toBe("40.00");
+      expect(pi.reconciliation!.map((r) => r.materialNum)).toEqual(["M1"]);
+    });
+
+    it("the list shows the same totals as the card", async () => {
+      const [listed] = await service.findAll();
+      const detail = await service.findOne("pi-1");
+
+      expect([listed.totalQty, listed.totalContainers]).toEqual([
+        detail.totalQty,
+        detail.totalContainers,
+      ]);
+      expect(listed.lineItems.filter((l) => l.isShippedOnly)).toHaveLength(1);
+    });
+
+    it("the card's Excel includes the row and the same totals", async () => {
+      const { buffer } = await service.exportXlsx("pi-1", opsActor);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as any);
+      const values: unknown[][] = [];
+      workbook.worksheets[0].eachRow((row) =>
+        values.push((row.values as unknown[]).slice(1)),
+      );
+
+      expect(values.find((r) => r[0] === "Total Qty")?.[1]).toBe(300);
+      expect(values.find((r) => r[0] === "Total Containers")?.[1]).toBe(2);
+      expect(values.find((r) => r[0] === "M3")?.slice(0, 5)).toEqual([
+        "M3",
+        "Tyre 3",
+        undefined,
+        0,
+        200,
+      ]);
+      expect(values.find((r) => r[0] === "Total")?.[4]).toBe(300);
+    });
+
+    it("a write that saves the card never stores the added row or the enriched totals", async () => {
+      await service.proposeReplacement(
+        "pi-1",
+        { originalname: "100037320_v2.pdf" } as Express.Multer.File,
+        opsActor,
+      );
+      await service.updateLabel("pi-1", "Орел", clientActor);
+
+      const stored = repo.rows.find((r: any) => r.id === "pi-1") as any;
+      expect(stored.totalQty).toBe("100.00");
+      expect(stored.totalContainers).toBe("1.00");
+      expect(stored.lineItems.map((l: any) => l.id)).toEqual(["li-1"]);
+      // …and the next read is still computed once, not twice.
+      expect((await service.findOne("pi-1")).totalQty).toBe("300.00");
     });
   });
 });

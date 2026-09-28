@@ -21,6 +21,10 @@ export interface PiLineItem {
   // Never null — defaults to "0" — unlike the columns above, which come
   // from the backorder file and can be genuinely absent.
   priorityQty: string
+  // A read-only row the card adds for a material that is only in Dispatch —
+  // fully shipped, no longer in the backorder (balance 0, no priority). Its
+  // id is synthetic; it is never editable. Absent on older responses.
+  isShippedOnly?: boolean
 }
 
 // Plan-vs-actual per material within this one PI card (Phase 12), quantities

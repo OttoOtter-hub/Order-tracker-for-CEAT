@@ -369,6 +369,8 @@
         "priority": "Priority"
       },
       "total": "Total",
+      "fullyShipped": "Fully shipped",
+      "fullyShippedHint": "No longer in the backorder: shipped in full, according to Dispatch. Quantity = everything shipped; nothing is left.",
       "priorityRow": "Priority",
       "priorityTotal": "{{qty}} / {{n}} cont.",
       "fullBalance": "Full balance",

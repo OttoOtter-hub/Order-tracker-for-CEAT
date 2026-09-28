@@ -27,6 +27,11 @@ import { extractPiNumber } from "./utils/extract-pi-number";
 import { isUniqueViolation } from "../common/utils/is-unique-violation";
 import { buildPiExportWorkbook } from "./utils/build-pi-export-workbook";
 import {
+  applyShippedOnlyLines,
+  DispatchLine,
+  loadabilityByMaterial,
+} from "./utils/apply-shipped-only-lines";
+import {
   computeReconciliation,
   ReconciliationRow,
 } from "./utils/compute-reconciliation";
@@ -87,8 +92,8 @@ export class ProformaInvoicesService {
     private readonly audit: AuditLogService,
   ) {}
 
-  findAll(): Promise<ProformaInvoice[]> {
-    return this.repo.find({
+  async findAll(): Promise<ProformaInvoice[]> {
+    const pis = await this.repo.find({
       relations: [
         "customer",
         "lineItems",
@@ -97,9 +102,27 @@ export class ProformaInvoicesService {
       ],
       order: { createdAt: "DESC" },
     });
+    await this.withShippedOnlyLines(pis);
+    return pis;
   }
 
+  /**
+   * GET /:id and every write's reply: the card as stored plus its fully
+   * shipped materials (withShippedOnlyLines). Writes themselves load through
+   * loadOne() — never this — so the added rows and totals can't be saved.
+   */
   async findOne(id: string): Promise<ProformaInvoice> {
+    const pi = await this.loadOne(id);
+    await this.withShippedOnlyLines([pi]);
+    return pi;
+  }
+
+  /**
+   * The card exactly as stored (plus the Phase 12 reconciliation, which
+   * stays computed from the card's own line items). What writes load and
+   * may save.
+   */
+  private async loadOne(id: string): Promise<ProformaInvoice> {
     const pi = await this.repo.findOne({
       where: { id },
       relations: [
@@ -119,6 +142,52 @@ export class ProformaInvoicesService {
     }
     pi.reconciliation = await this.buildReconciliation(pi);
     return pi;
+  }
+
+  /**
+   * Adds fully shipped materials (Dispatch only, gone from the backorder) to
+   * cards about to be returned, and folds them into totalQty /
+   * totalContainers — see applyShippedOnlyLines. Two queries for any number
+   * of cards: their Dispatch lines, then the loadability of the materials
+   * that need one. Response-only: the cards passed in must not be saved
+   * afterwards.
+   */
+  private async withShippedOnlyLines(pis: ProformaInvoice[]): Promise<void> {
+    if (pis.length === 0) return;
+    const dispatch = await this.actualLineItemsRepo.find({
+      where: { piNumber: In(pis.map((pi) => pi.piNumber)) },
+      select: {
+        piNumber: true,
+        materialNum: true,
+        materialDesc: true,
+        quantity: true,
+      },
+    });
+    const byPi = new Map<string, DispatchLine[]>();
+    for (const line of dispatch) {
+      if (!line.piNumber) continue;
+      const list = byPi.get(line.piNumber) ?? [];
+      list.push(line);
+      byPi.set(line.piNumber, list);
+    }
+    const materials = [
+      ...new Set(
+        dispatch
+          .map((line) => line.materialNum)
+          .filter((m): m is string => !!m),
+      ),
+    ];
+    const loadability = loadabilityByMaterial(
+      materials.length
+        ? await this.lineItemsRepo.find({
+            where: { materialNum: In(materials) },
+            select: { materialNum: true, loadability: true },
+          })
+        : [],
+    );
+    for (const pi of pis) {
+      applyShippedOnlyLines(pi, byPi.get(pi.piNumber) ?? [], loadability);
+    }
   }
 
   /**
@@ -160,7 +229,7 @@ export class ProformaInvoicesService {
     id: string,
     actor: RequestUser,
   ): Promise<ProformaInvoice> {
-    const pi = await this.findOne(id);
+    const pi = await this.loadOne(id);
     if (actor.role === Role.CLIENT && pi.customer.id !== actor.customerId) {
       throw new NotFoundException(
         apiError("NOT_FOUND", `ProformaInvoice ${id} not found`),
@@ -396,7 +465,8 @@ export class ProformaInvoicesService {
     file: Express.Multer.File,
     actor: RequestUser,
   ): Promise<ProformaInvoice> {
-    const pi = await this.findOne(id);
+    // loadOne, not findOne: this card is saved below — it must be the stored one.
+    const pi = await this.loadOne(id);
     if (pi.pendingReplacementFileUrl) {
       throw new ConflictException(
         apiError(
@@ -593,6 +663,8 @@ export class ProformaInvoicesService {
     actor: RequestUser,
   ): Promise<{ buffer: Buffer; fileName: string }> {
     const pi = await this.findOwnedByActor(id, actor);
+    // The same card the screen shows, fully shipped materials included.
+    await this.withShippedOnlyLines([pi]);
     const workbook = buildPiExportWorkbook(pi);
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const fileName = `PI_${pi.piNumber}_export_${formatDateForFilename(new Date())}.xlsx`;

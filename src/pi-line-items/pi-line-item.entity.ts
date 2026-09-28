@@ -82,4 +82,12 @@ export class PiLineItem extends BaseEntity {
     default: 0,
   })
   priorityQty: string;
+
+  /**
+   * Not a column: true on a read-only row the PI card responses add for a
+   * material that is only in Dispatch (fully shipped, gone from the
+   * backorder) — see proforma-invoices/utils/apply-shipped-only-lines.
+   * false on the card's own rows in those responses; absent elsewhere.
+   */
+  isShippedOnly?: boolean;
 }

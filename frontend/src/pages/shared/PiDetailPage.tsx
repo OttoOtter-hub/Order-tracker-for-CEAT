@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -712,6 +713,16 @@ export function PiDetailPage() {
                       <TableCell>{item.materialNum ?? "—"}</TableCell>
                       <TableCell className="whitespace-normal">
                         {item.materialDesc ?? "—"}
+                        {item.isShippedOnly && (
+                          <Badge
+                            variant="outline"
+                            className="ml-2 border-transparent bg-success/10 text-success-text dark:bg-success/20"
+                            title={t("piDetail.lines.fullyShippedHint")}
+                            data-testid="fully-shipped"
+                          >
+                            {t("piDetail.lines.fullyShipped")}
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         {formatNumber(item.balanceToBeDelivered)}
@@ -725,7 +736,10 @@ export function PiDetailPage() {
                         {formatNumber(item.currentWeekDispatchQty)}
                       </TableCell>
                       <TableCell>
-                        {editModeActive ? (
+                        {item.isShippedOnly ? (
+                          // Fully shipped: nothing left to prioritise.
+                          "—"
+                        ) : editModeActive ? (
                           <PriorityInput
                             value={draftValue}
                             max={Number(item.balanceToBeDelivered ?? 0)}
