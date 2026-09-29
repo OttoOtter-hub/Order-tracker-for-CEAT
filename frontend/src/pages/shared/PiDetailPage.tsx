@@ -662,6 +662,9 @@ export function PiDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10 text-right text-muted-foreground">
+                    {t("common.rowNumber")}
+                  </TableHead>
                   {LINE_ITEM_COLUMNS.map((col) => (
                     <SortableHead
                       key={col.key}
@@ -676,6 +679,7 @@ export function PiDetailPage() {
               </TableHeader>
               <TableBody>
                 <TableRow className="bg-muted/50 font-semibold hover:bg-muted/50">
+                  <TableCell />
                   <TableCell>{t("piDetail.lines.total")}</TableCell>
                   <TableCell />
                   <TableCell>{formatNumber(pi.qtyPending)}</TableCell>
@@ -705,6 +709,7 @@ export function PiDetailPage() {
                   <TableCell />
                 </TableRow>
                 <TableRow className="bg-muted/50 font-semibold hover:bg-muted/50">
+                  <TableCell />
                   <TableCell>{t("piDetail.lines.priorityRow")}</TableCell>
                   <TableCell />
                   <TableCell />
@@ -720,7 +725,7 @@ export function PiDetailPage() {
                     })}
                   </TableCell>
                 </TableRow>
-                {sortedLineItems.map((item) => {
+                {sortedLineItems.map((item, index) => {
                   const draftValue =
                     priorityDrafts[item.id] ?? Number(item.priorityQty)
                   return (
@@ -734,6 +739,9 @@ export function PiDetailPage() {
                           "bg-highlight hover:bg-highlight-hover"
                       )}
                     >
+                      <TableCell className="w-10 text-right text-muted-foreground tabular-nums">
+                        {index + 1}
+                      </TableCell>
                       <TableCell>{item.materialNum ?? "—"}</TableCell>
                       <TableCell className="whitespace-normal">
                         {item.materialDesc ?? "—"}

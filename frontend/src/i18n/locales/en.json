@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Loading...",
+    "rowNumber": "#",
     "cancel": "Cancel",
     "close": "Close",
     "backToList": "Back to list",

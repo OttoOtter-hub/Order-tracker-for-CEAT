@@ -8,6 +8,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
@@ -244,6 +245,9 @@ export function ActualContainerDetailPage() {
             <Table data-testid="container-lines-table">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10 text-right text-muted-foreground">
+                    {t("common.rowNumber")}
+                  </TableHead>
                   {LINE_COLUMNS.map((col) => (
                     <SortableHead
                       key={col.key}
@@ -258,6 +262,7 @@ export function ActualContainerDetailPage() {
               </TableHeader>
               <TableBody>
                 <TableRow className="bg-muted/50 font-semibold hover:bg-muted/50">
+                  <TableCell />
                   <TableCell>{t("shipped.detail.lines.total")}</TableCell>
                   <TableCell />
                   <TableCell />
@@ -267,11 +272,14 @@ export function ActualContainerDetailPage() {
                   <TableCell />
                   <TableCell />
                 </TableRow>
-                {lines.map((line) => {
+                {lines.map((line, index) => {
                   const pi = line.piNumber ? piByNumber.get(line.piNumber) : undefined
                   const piId = pi?.id
                   return (
                     <TableRow key={line.id}>
+                      <TableCell className="w-10 text-right text-muted-foreground tabular-nums">
+                        {index + 1}
+                      </TableCell>
                       <TableCell className="tabular-nums">
                         {line.piNumber === null ? (
                           "—"

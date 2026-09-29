@@ -3,7 +3,13 @@ import { useTranslation } from "react-i18next"
 import { Search, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { SortableHead } from "@/components/SortableHead"
 import { useTableSort } from "@/hooks/useTableSort"
 import { formatNumber, formatPiTitle } from "@/lib/format"
@@ -25,6 +31,8 @@ function sortValue(line: UnallocatedLine, key: SortKey): string | number | null 
 
 interface LineRowProps {
   line: UnallocatedLine
+  // 1-based position in the list as displayed (after sort and search).
+  rowNumber: number
   canMove: boolean
   onMove: (line: UnallocatedLine) => void
 }
@@ -33,11 +41,19 @@ interface LineRowProps {
 // re-renders the page, and only the rows whose line object actually changed
 // (a fresh view replaces all of them, but identical rows bail out here on
 // the local-state re-renders in between) need to be diffed again.
-const LineRow = memo(function LineRow({ line, canMove, onMove }: LineRowProps) {
+const LineRow = memo(function LineRow({
+  line,
+  rowNumber,
+  canMove,
+  onMove,
+}: LineRowProps) {
   const { t } = useTranslation()
   const placeable = isPlaceable(line)
   return (
     <TableRow data-line-id={line.piLineItemId}>
+      <TableCell className="w-10 text-right text-xs text-muted-foreground tabular-nums">
+        {rowNumber}
+      </TableCell>
       <TableCell className="text-xs">
         <div className="break-words">
           {formatPiTitle(line.piNumber, line.piLabel)}
@@ -169,6 +185,9 @@ export function ReadyLinesTable({
           <table className="w-full text-sm" data-testid="ready-lines-table">
             <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_var(--color-border)]">
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-10 text-right text-muted-foreground">
+                  {t("common.rowNumber")}
+                </TableHead>
                 <SortableHead {...headProps("piNumber")}>
                   {t("readyToShip.list.colPiSo")}
                 </SortableHead>
@@ -187,10 +206,11 @@ export function ReadyLinesTable({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visible.map((line) => (
+              {visible.map((line, index) => (
                 <LineRow
                   key={line.piLineItemId}
                   line={line}
+                  rowNumber={index + 1}
                   canMove={canMove}
                   onMove={onMove}
                 />

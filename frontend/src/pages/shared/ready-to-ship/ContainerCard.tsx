@@ -369,7 +369,7 @@ export function ContainerCard({
 
       <CardContent>
         <ul className="divide-y">
-          {container.allocations.map((allocation) => {
+          {container.allocations.map((allocation, index) => {
             const showMarking = allocation.isLocked || allocation.markingFile !== null
             return (
               <li
@@ -379,7 +379,15 @@ export function ContainerCard({
                 data-locked={allocation.isLocked}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                  <div className="flex min-w-0 gap-2">
+                    {/* Row number in the order shown — display only. */}
+                    <span
+                      className="w-6 shrink-0 pt-0.5 text-right text-xs text-muted-foreground tabular-nums"
+                      data-testid="allocation-row-number"
+                    >
+                      {index + 1}
+                    </span>
+                    <div className="min-w-0">
                     <div className="font-medium">{allocation.materialNum ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">
                       {allocation.materialDesc ?? "—"}
@@ -391,6 +399,7 @@ export function ContainerCard({
                       {allocation.soNumber
                         ? t("readyToShip.card.piSo", { so: allocation.soNumber })
                         : ""}
+                    </div>
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">

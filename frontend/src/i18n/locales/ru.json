@@ -1,6 +1,7 @@
 {
   "common": {
     "loading": "Загрузка...",
+    "rowNumber": "№",
     "cancel": "Отмена",
     "close": "Закрыть",
     "backToList": "К списку",
