@@ -5,7 +5,7 @@ import { FindOperator } from "typeorm";
  * this project's service specs instead of a real DB or a heavy mocking
  * framework. Understands the `where` shapes those services actually use:
  * flat ({ id }, { piNumber }), nested relations ({ pi: { customer: { id } } })
- * the `In([...])`, `MoreThanOrEqual`, `LessThan` and `And(...)` operators at
+ * the `In([...])`, `MoreThanOrEqual`, `LessThan`, `And(...)`, `Like` and `ILike` operators at
  * any depth, and an array of those (OR) for find/findOne/count. find and
  * findAndCount also honour order (several keys), skip and take.
  *
@@ -17,6 +17,27 @@ import { FindOperator } from "typeorm";
  * first segment of a dotted path ("piLineItem.pi") is resolved; deeper
  * levels are whatever the referenced row already embeds.
  */
+/**
+ * A SQL LIKE pattern as a RegExp, the way Postgres reads it: % is any run,
+ * _ any one character, a backslash makes the next character literal.
+ */
+function likePattern(pattern: string, caseInsensitive: boolean): RegExp {
+  let source = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === "\\" && i + 1 < pattern.length) {
+      source += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    } else if (char === "%") {
+      source += ".*";
+    } else if (char === "_") {
+      source += ".";
+    } else {
+      source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${source}$`, caseInsensitive ? "is" : "s");
+}
+
 export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
   relationRepos: Record<string, () => { rows: any[] }> = {},
 ) {
@@ -69,6 +90,14 @@ export function makeFakeRepo<T extends { id?: string } & Record<string, any>>(
       case "and":
         return (operator.value as unknown as FindOperator<unknown>[]).every(
           (inner) => matchesOperator(actual, inner),
+        );
+      case "like":
+      case "ilike":
+        return (
+          typeof actual === "string" &&
+          likePattern(operator.value as string, operator.type === "ilike").test(
+            actual,
+          )
         );
       default:
         throw new Error(

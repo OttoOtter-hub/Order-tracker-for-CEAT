@@ -12,7 +12,7 @@ import { apiError } from "../common/errors/api-error";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { DownloadableFile, FilesService } from "../files/files.service";
 import { User } from "../users/user.entity";
-import { ActualContainer } from "./actual-container.entity";
+import { ActualContainer, ContainerMaterial } from "./actual-container.entity";
 import { ActualContainerFile } from "./actual-container-file.entity";
 import { UpdateContainerDatesDto } from "./dto/update-container-dates.dto";
 
@@ -28,6 +28,20 @@ function byEffectiveEtdDesc(a: ActualContainer, b: ActualContainer): number {
     return ae < be ? 1 : -1;
   }
   return a.containerNumber < b.containerNumber ? -1 : 1;
+}
+
+/** One entry per material, in material order. */
+function distinctMaterials(
+  lines: { materialNum: string | null; materialDesc: string | null }[],
+): ContainerMaterial[] {
+  const byKey = new Map<string, ContainerMaterial>();
+  for (const { materialNum, materialDesc } of lines) {
+    const key = `${materialNum ?? ""}|${materialDesc ?? ""}`;
+    if (!byKey.has(key)) byKey.set(key, { materialNum, materialDesc });
+  }
+  return [...byKey.values()].sort((a, b) =>
+    (a.materialNum ?? "").localeCompare(b.materialNum ?? ""),
+  );
 }
 
 /**
@@ -53,12 +67,15 @@ export class ActualContainersService {
     }
     const containers = await this.containerRepo.find({
       where,
-      relations: ["files", "arrivalConfirmedByUser"],
+      relations: ["files", "arrivalConfirmedByUser", "lineItems"],
     });
-    // The list needs only "is there a file", so the rows themselves stay home.
+    // The list needs only "is there a file", so the rows themselves stay home;
+    // of the lines only which materials are aboard (the list's search).
     for (const container of containers) {
       container.filesCount = container.files?.length ?? 0;
+      container.materials = distinctMaterials(container.lineItems ?? []);
       delete (container as { files?: unknown }).files;
+      delete (container as { lineItems?: unknown }).lineItems;
     }
     return containers.sort(byEffectiveEtdDesc);
   }

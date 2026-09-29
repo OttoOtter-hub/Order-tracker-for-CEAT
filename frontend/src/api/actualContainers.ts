@@ -64,6 +64,8 @@ export interface ActualContainer {
   // When it was confirmed by hand; null for an automatic "arrived" (and
   // whenever arrivalConfirmedBy is null too).
   arrivalConfirmedAt: string | null
+  // List only: which materials are aboard, once each (for the list's search).
+  materials?: { materialNum: string | null; materialDesc: string | null }[]
   // Detail only.
   lineItems?: ActualContainerLineItem[]
   files?: ActualContainerFile[]

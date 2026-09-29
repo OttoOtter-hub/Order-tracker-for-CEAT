@@ -48,6 +48,21 @@
     "changePassword": "Change password",
     "logout": "Log out"
   },
+  "search": {
+    "placeholder": "Search by material number or size",
+    "aria": "Search materials in all sections",
+    "searching": "Searching…",
+    "nothingFound": "Nothing found",
+    "failed": "Search failed",
+    "truncated": "Not every match is shown — narrow the search",
+    "fullyShipped": "fully shipped",
+    "confirmed": "confirmed",
+    "sections": {
+      "pi": "Proforma",
+      "readyToShip": "Ready to ship",
+      "shipped": "Shipped"
+    }
+  },
   "users": {
     "title": "Users",
     "description": "Logins for CEAT staff and client employees. Users are never deleted — deactivate them instead.",
@@ -284,7 +299,10 @@
     "emptyArchive": "The archive is empty.",
     "exportBackorder": "Export full backorder",
     "exportFailed": "Could not export the backorder",
-    "empty": "No cards yet."
+    "empty": "No cards yet.",
+    "searchPlaceholder": "Search: PI, name, material, description",
+    "searchAria": "Search PI cards",
+    "emptySearch": "No cards match the search."
   },
   "piCard": {
     "so": "SO",
@@ -390,7 +408,11 @@
       "confirmReset": "Reset all priority for this proforma?",
       "resetDone": "Priority reset",
       "resetFailed": "Could not reset the priority",
-      "saveFailed": "Could not save the priority"
+      "saveFailed": "Could not save the priority",
+      "searchPlaceholder": "Search: material, description, SO",
+      "searchAria": "Search line items",
+      "found": "Found {{n}} of {{total}}",
+      "emptySearch": "No line items match the search."
     },
     "reconciliation": {
       "title": "Reconciliation: planned vs shipped",
@@ -564,7 +586,7 @@
   "shipped": {
     "title": "Shipped",
     "description": "Shipped, based on the weekly file.",
-    "searchPlaceholder": "Search: container, vessel, port, invoice, B/L",
+    "searchPlaceholder": "Search: container, material, size, vessel, port, invoice, B/L",
     "searchAria": "Search containers",
     "loadFailed": "Could not load containers",
     "empty": "There are no containers yet — they will appear after the weekly backorder file with the shipment sheets is uploaded.",
@@ -702,6 +724,7 @@
     "DATE_OVERRIDE_EMPTY": "Specify an ETD and/or ETA date.",
     "CUSTOMER_ID_REQUIRED": "Select a customer.",
     "PI_NUMBER_NOT_IN_FILENAME": "Couldn't find a PI number in the file name.",
+    "SEARCH_QUERY_TOO_LONG": "The search text is too long (at most {{max}} characters).",
     "PI_ALREADY_EXISTS": "PI {{piNumber}} has already been uploaded — use “Propose replacement” instead.",
     "REPLACEMENT_ALREADY_PENDING": "A replacement is already waiting for the client's decision.",
     "NO_PENDING_REPLACEMENT": "There is no pending replacement for this PI.",

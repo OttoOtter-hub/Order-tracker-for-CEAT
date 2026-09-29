@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
 import { ThemeSwitcher } from "@/components/ThemeSwitcher"
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
+import { GlobalSearch } from "@/components/GlobalSearch"
 import { useAuth } from "@/auth/AuthContext"
 
 const NAV_ITEMS = [
@@ -71,9 +72,16 @@ export function OpsLayout() {
           </Button>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto p-6">
-        <Outlet />
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* The header search stays in view on every page (the page scrolls
+            underneath it). */}
+        <header className="sticky top-0 z-30 flex h-(--app-header-height) shrink-0 items-center border-b bg-background/95 px-6 backdrop-blur">
+          <GlobalSearch />
+        </header>
+        <main className="flex-1 overflow-auto p-6">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

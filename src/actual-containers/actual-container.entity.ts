@@ -16,6 +16,12 @@ const AUTO_ARRIVED_AFTER_DAYS = 7;
 // The "expected" marker starts showing this many days before the effective ETA.
 const EXPECTED_FROM_DAYS_BEFORE = 10;
 
+/** One material aboard a container, as the list carries it. */
+export interface ContainerMaterial {
+  materialNum: string | null;
+  materialDesc: string | null;
+}
+
 /**
  * A container CEAT has actually shipped (or is shipping), known from the
  * weekly file — NOT the client's planning ShippingContainer of the
@@ -126,6 +132,10 @@ export class ActualContainer extends BaseEntity {
   // Not a column: the service fills it in on every read (the list carries only
   // this number, not the files themselves; the detail has both).
   filesCount?: number;
+
+  // Not a column either: the list's stand-in for lineItems — which
+  // materials are aboard, once each — so it can be searched by material.
+  materials?: ContainerMaterial[];
 
   /** What to show: CEAT's manual date if set, otherwise the file's. */
   @Expose()

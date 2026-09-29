@@ -68,6 +68,13 @@ function setup() {
               ),
             }
           : {}),
+        ...(options.relations?.includes("lineItems")
+          ? {
+              lineItems: lineRepo.rows.filter(
+                (l) => l.actualContainer.id === row.id,
+              ),
+            }
+          : {}),
       })),
     findOne: async (options: { where: Record<string, any> }) => {
       const row = await containerRepo.findOne({ where: options.where });
@@ -185,6 +192,33 @@ describe("ActualContainersService", () => {
         "AAAA1111111",
         "CCCC3333333",
       ]);
+    });
+
+    it("the list carries each container's materials once each, not its line items", async () => {
+      const { service, lineRepo } = setup();
+      const inContainer = { id: "ct-1" };
+      for (const [id, materialNum, materialDesc] of [
+        ["l1", "300", "Tube 16"],
+        ["l2", "107071", "205/55 R16"],
+        ["l3", "107071", "205/55 R16"],
+      ]) {
+        lineRepo.seed({
+          id,
+          actualContainer: inContainer,
+          materialNum,
+          materialDesc,
+        });
+      }
+
+      const list = await service.findAll(ops);
+      const ct1 = list.find((c) => c.id === "ct-1")!;
+
+      expect(ct1.materials).toEqual([
+        { materialNum: "107071", materialDesc: "205/55 R16" },
+        { materialNum: "300", materialDesc: "Tube 16" },
+      ]);
+      expect(ct1).not.toHaveProperty("lineItems");
+      expect(list.find((c) => c.id === "ct-2")!.materials).toEqual([]);
     });
 
     it("returns line items ordered by PI, invoice, material and files newest first", async () => {

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, Search } from "lucide-react"
 import {
   Card,
   CardContent,
@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -54,6 +55,8 @@ import { formatDateTime, formatNumber, formatPiTitle } from "@/lib/format"
 import { openFile } from "@/lib/download"
 import { getErrorMessage } from "@/lib/errors"
 import { useTableSort } from "@/hooks/useTableSort"
+import { useDebouncedValue } from "@/hooks/useDebouncedValue"
+import { matchesSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { sumByLoadabilityGroups } from "@/lib/sumByLoadability"
 
@@ -153,6 +156,25 @@ export function PiDetailPage() {
       lineItemSortValue,
       "materialNum"
     )
+
+  // The lines' own search. The header search opens a card with "?q=<material>"
+  // and it starts out filtered to that material (cleared like any search).
+  const [searchParams] = useSearchParams()
+  const searchedMaterial = searchParams.get("q") ?? ""
+  const [lineQuery, setLineQuery] = useState(searchedMaterial)
+  useEffect(() => setLineQuery(searchedMaterial), [searchedMaterial, id])
+  const debouncedLineQuery = useDebouncedValue(lineQuery)
+  const visibleLineItems = useMemo(
+    () =>
+      sortedLineItems.filter((item) =>
+        matchesSearch(debouncedLineQuery, [
+          item.materialNum,
+          item.materialDesc,
+          item.soNumber,
+        ])
+      ),
+    [sortedLineItems, debouncedLineQuery]
+  )
 
   // Seeds the draft map from the server once per PI, not on every
   // background refetch of the *same* PI (e.g. one triggered by another
@@ -650,8 +672,32 @@ export function PiDetailPage() {
 
       {/* Line items */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-wrap items-center gap-3">
           <CardTitle>{t("piDetail.lines.title")}</CardTitle>
+          {sortedLineItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative w-72 max-w-full">
+                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={lineQuery}
+                  onChange={(e) => setLineQuery(e.target.value)}
+                  placeholder={t("piDetail.lines.searchPlaceholder")}
+                  aria-label={t("piDetail.lines.searchAria")}
+                  className="pl-8"
+                  data-testid="pi-lines-search"
+                />
+              </div>
+              {debouncedLineQuery.trim() && (
+                <span className="text-xs text-muted-foreground">
+                  {t("piDetail.lines.found", {
+                    n: visibleLineItems.length,
+                    total: sortedLineItems.length,
+                  })}
+                </span>
+              )}
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {sortedLineItems.length === 0 ? (
@@ -725,7 +771,17 @@ export function PiDetailPage() {
                     })}
                   </TableCell>
                 </TableRow>
-                {sortedLineItems.map((item, index) => {
+                {visibleLineItems.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={LINE_ITEM_COLUMNS.length + 1}
+                      className="text-muted-foreground"
+                    >
+                      {t("piDetail.lines.emptySearch")}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {visibleLineItems.map((item, index) => {
                   const draftValue =
                     priorityDrafts[item.id] ?? Number(item.priorityQty)
                   return (

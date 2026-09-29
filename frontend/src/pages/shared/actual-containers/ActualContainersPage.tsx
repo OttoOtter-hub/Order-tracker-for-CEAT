@@ -20,6 +20,8 @@ import { DateCell } from "@/pages/shared/actual-containers/DateCell"
 import { useTableSort } from "@/hooks/useTableSort"
 import { getErrorMessage } from "@/lib/errors"
 import { cn } from "@/lib/utils"
+import { useDebouncedValue } from "@/hooks/useDebouncedValue"
+import { matchesSearch } from "@/lib/search"
 
 type SortKey =
   | "containerNumber"
@@ -49,17 +51,16 @@ function sortValue(container: ActualContainer, key: SortKey): string | null {
   return container[key]
 }
 
-function searchText(container: ActualContainer): string {
+// Also by what's aboard: the list carries each container's materials.
+function searchFields(container: ActualContainer): (string | null)[] {
   return [
     container.containerNumber,
     container.port,
     container.vesselName,
     container.commercialInvoiceNumber,
     container.blNumber,
+    ...(container.materials ?? []).flatMap((m) => [m.materialNum, m.materialDesc]),
   ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
 }
 
 // Used by /ops/actual-containers and /client/actual-containers — the same
@@ -79,10 +80,11 @@ export function ActualContainersPage() {
     SortKey
   >(data, sortValue, "eta")
 
-  const visible = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return needle ? sorted.filter((c) => searchText(c).includes(needle)) : sorted
-  }, [sorted, query])
+  const needle = useDebouncedValue(query)
+  const visible = useMemo(
+    () => sorted.filter((c) => matchesSearch(needle, searchFields(c))),
+    [sorted, needle]
+  )
 
   return (
     <div className="flex flex-col gap-4">

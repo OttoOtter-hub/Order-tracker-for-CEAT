@@ -56,6 +56,7 @@ export const ERROR_CODES = [
   "DATE_OVERRIDE_EMPTY",
   "CUSTOMER_ID_REQUIRED",
   "PI_NUMBER_NOT_IN_FILENAME",
+  "SEARCH_QUERY_TOO_LONG",
 
   // --- Proforma invoices ---
   "PI_ALREADY_EXISTS",

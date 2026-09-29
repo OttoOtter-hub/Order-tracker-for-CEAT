@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import { Download, LockOpen, PackageOpen } from "lucide-react"
@@ -53,12 +54,26 @@ export function ReadyToShipPage() {
 
 // ops must name the customer (the API has no "current customer" for them).
 // The pilot has exactly one, which is then picked automatically; a picker
-// appears as soon as a second one exists.
+// appears as soon as a second one exists. The choice lives in the URL
+// (?customerId=) so the header search can open a given customer's plan.
 function OpsReadyToShip() {
   const { t } = useTranslation()
   const { data: customers, isLoading } = useCustomersQuery()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const customerId = selectedId ?? customers?.[0]?.id
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedId = searchParams.get("customerId")
+  const customerId =
+    customers?.find((customer) => customer.id === requestedId)?.id ??
+    customers?.[0]?.id
+
+  function setSelectedId(id: string) {
+    setSearchParams(
+      (params) => {
+        params.set("customerId", id)
+        return params
+      },
+      { replace: true }
+    )
+  }
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
@@ -123,6 +138,7 @@ function ReadyToShipContent({
   const [confirmUnlockAll, setConfirmUnlockAll] = useState(false)
 
   const view = query.data
+  useScrollToSearchedContainer(!!view)
 
   const summary = useMemo(() => {
     if (!view) return null
@@ -499,4 +515,31 @@ function ReadyToShipContent({
       )}
     </div>
   )
+}
+
+// The header search opens "?container=<id>": once the plan is on screen,
+// bring that container into view and outline it for a moment. The parameter
+// is dropped afterwards, so the same search result works again next time.
+function useScrollToSearchedContainer(isLoaded: boolean) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const containerId = searchParams.get("container")
+
+  useEffect(() => {
+    if (!isLoaded || !containerId) return
+    const card = document.querySelector<HTMLElement>(
+      `[data-container-id="${CSS.escape(containerId)}"]`
+    )
+    card?.scrollIntoView({ behavior: "smooth", block: "center" })
+    card?.setAttribute("data-search-hit", "true")
+    // Not cleared on cleanup: dropping the parameter below re-runs this
+    // effect, and the outline must still go away.
+    setTimeout(() => card?.removeAttribute("data-search-hit"), 2500)
+    setSearchParams(
+      (params) => {
+        params.delete("container")
+        return params
+      },
+      { replace: true }
+    )
+  }, [isLoaded, containerId, setSearchParams])
 }

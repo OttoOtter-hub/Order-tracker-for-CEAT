@@ -252,6 +252,7 @@ export function ContainerCard({
   )
 
   const cardProps = {
+    "data-container-id": container.id,
     "data-container-label": container.label,
     "data-ok-to-mix": isOkToMix,
     "data-confirmed": container.isConfirmed,

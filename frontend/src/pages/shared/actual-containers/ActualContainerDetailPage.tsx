@@ -1,5 +1,5 @@
-import { useMemo } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useEffect, useMemo } from "react"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,7 @@ import { useTableSort } from "@/hooks/useTableSort"
 import { formatDay, formatNumber, formatPiTitle } from "@/lib/format"
 import { formatStatusValue, sumQuantities } from "@/lib/actualContainers"
 import { getErrorMessage } from "@/lib/errors"
+import { cn } from "@/lib/utils"
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -96,6 +97,18 @@ export function ActualContainerDetailPage() {
     ActualContainerLineItem,
     LineSortKey
   >(container?.lineItems, lineSortValue, "piNumber")
+
+  // Opened from the header search ("?q=<material>"): that material's lines
+  // are marked, and the first of them scrolled into view.
+  const [searchParams] = useSearchParams()
+  const searchedMaterial = searchParams.get("q")
+  const hasLines = !!container?.lineItems?.length
+  useEffect(() => {
+    if (!hasLines || !searchedMaterial) return
+    document
+      .querySelector("[data-search-match=\"true\"]")
+      ?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }, [hasLines, searchedMaterial, id])
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
@@ -275,8 +288,14 @@ export function ActualContainerDetailPage() {
                 {lines.map((line, index) => {
                   const pi = line.piNumber ? piByNumber.get(line.piNumber) : undefined
                   const piId = pi?.id
+                  const isSearched =
+                    !!searchedMaterial && line.materialNum === searchedMaterial
                   return (
-                    <TableRow key={line.id}>
+                    <TableRow
+                      key={line.id}
+                      data-search-match={isSearched}
+                      className={cn(isSearched && "bg-highlight hover:bg-highlight-hover")}
+                    >
                       <TableCell className="w-10 text-right text-muted-foreground tabular-nums">
                         {index + 1}
                       </TableCell>

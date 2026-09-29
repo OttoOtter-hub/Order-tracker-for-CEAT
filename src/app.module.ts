@@ -22,6 +22,7 @@ import { ReadyToShipModule } from "./ready-to-ship/ready-to-ship.module";
 import { ActualContainersModule } from "./actual-containers/actual-containers.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { AuditLogModule } from "./audit-log/audit-log.module";
+import { SearchModule } from "./search/search.module";
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { AuditLogModule } from "./audit-log/audit-log.module";
     ActualContainersModule,
     NotificationsModule,
     AuditLogModule,
+    SearchModule,
   ],
   providers: [
     // Order matters: JwtAuthGuard authenticates (populates request.user),
