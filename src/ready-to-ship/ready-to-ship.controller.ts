@@ -101,6 +101,26 @@ export class ReadyToShipController {
     return this.service.moveRemainingToMix(user);
   }
 
+  /**
+   * One more numbered container, by hand, when the plan's slots ran out
+   * before the unallocated lines did. No body; the client's own customer
+   * (naming another one is a 404, as on GET).
+   */
+  @ApiQuery({
+    name: "customerId",
+    required: false,
+    description: "optional; must be the client's own customer",
+  })
+  @ClientWriteAllowed()
+  @Post("add-container")
+  addContainer(
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.addContainer(user, customerId);
+  }
+
   @ClientWriteAllowed()
   @Post("remove")
   remove(@Body() dto: RemoveAllocationDto, @CurrentUser() user: RequestUser) {

@@ -255,6 +255,7 @@ export function ContainerCard({
     "data-container-id": container.id,
     "data-container-label": container.label,
     "data-ok-to-mix": isOkToMix,
+    "data-manual": container.isManual,
     "data-confirmed": container.isConfirmed,
     "data-partially-unlocked": container.isPartiallyUnlocked,
     "data-collapsed": collapsed,
@@ -315,6 +316,11 @@ export function ContainerCard({
                 </Badge>
               ) : (
                 <Badge variant="secondary">{t("readyToShip.card.draft")}</Badge>
+              )}
+              {container.isManual && (
+                <Badge variant="outline" data-testid="manual-container">
+                  {t("readyToShip.card.manual")}
+                </Badge>
               )}
               {container.isOverfilled && (
                 <Badge variant="destructive">{t("readyToShip.card.overfilled")}</Badge>

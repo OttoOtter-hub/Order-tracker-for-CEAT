@@ -40,6 +40,8 @@ export interface ContainerView {
    * never overfilled; totalQty/totalLines are its whole summary.
    */
   isOkToMix: boolean;
+  /** Added by the client by hand — not one of the plan's slots. */
+  isManual: boolean;
   /** Σ allocatedQty over the container's positions. */
   totalQty: number;
   /** How many positions (allocation rows) the container holds. */
@@ -60,6 +62,11 @@ export interface ContainerView {
 export interface ReadyToShipView {
   customerId: string;
   totalPossibleContainers: number;
+  /**
+   * Containers the client added by hand, on top of the plan's slots —
+   * counted apart from totalPossibleContainers, never as part of it.
+   */
+  manualContainers: number;
   /** True when there is something to confirm and no unconfirmed container is over 100%. */
   canConfirm: boolean;
   /**

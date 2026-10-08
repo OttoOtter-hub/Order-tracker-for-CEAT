@@ -61,10 +61,24 @@ function byLabel(a: ShippingContainer, b: ShippingContainer): number {
   );
 }
 
-/** The plan's numbered slots — everything but "OK to mix". */
+/** Every numbered container — everything but "OK to mix". */
 function numberedOnly(containers: ShippingContainer[]): ShippingContainer[] {
   return containers.filter((c) => !c.isOkToMix);
 }
+
+/**
+ * The plan's own slots: numbered, and not added by hand. Only these are
+ * measured against totalPossibleContainers — a manual container must not
+ * take the place of a slot the plan is owed.
+ */
+function plannedOnly(containers: ShippingContainer[]): ShippingContainer[] {
+  return numberedOnly(containers).filter((c) => !c.isManual);
+}
+
+/** A stray click can't pile up containers: this many by hand per customer. */
+export const MAX_MANUAL_CONTAINERS = 20;
+
+const ADD_CONTAINER_ATTEMPTS = 3;
 
 function allocationKey(containerId: string, piLineItemId: string): string {
   return `${containerId}:${piLineItemId}`;
@@ -406,6 +420,137 @@ export class ReadyToShipService {
   }
 
   /**
+   * One more numbered container, added by the client by hand: the plan's
+   * slots (totalPossibleContainers) are an estimate from loadability, and
+   * real containers are rarely filled to exactly 100%, so the slots can run
+   * out while lines are still unallocated.
+   *
+   * The new container is "Контейнер N", N one above the highest number in
+   * use (the same numbering as the plan's slots), flagged isManual so it
+   * never counts as a slot of the plan. Refused when there is nothing left
+   * to allocate, or when the customer already has MAX_MANUAL_CONTAINERS of
+   * them. "Undo all" drops it again while it is empty.
+   */
+  async addContainer(
+    actor: RequestUser,
+    requestedCustomerId?: string,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.requireClient(actor);
+    if (requestedCustomerId && requestedCustomerId !== customerId) {
+      throw new NotFoundException(apiError("NOT_FOUND", "Customer not found"));
+    }
+
+    // Two clicks at once both pick the same next number; the
+    // (customer_id, label) unique constraint fails the loser, which then
+    // simply takes the number after it.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.dataSource.transaction((em) =>
+          this.addManualContainer(em, customerId, actor),
+        );
+        break;
+      } catch (err) {
+        if (!isUniqueViolation(err) || attempt >= ADD_CONTAINER_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    return this.loadView(customerId);
+  }
+
+  private async addManualContainer(
+    em: EntityManager,
+    customerId: string,
+    actor: RequestUser,
+  ): Promise<void> {
+    const containerRepo = em.getRepository(ShippingContainer);
+    const lines = await this.loadActiveLines(em, customerId);
+    const lineIds = lines.map((line) => line.item.id);
+    const allocations = lineIds.length
+      ? await em.getRepository(ContainerLineAllocation).find({
+          where: { piLineItem: { id: In(lineIds) } },
+          relations: ["piLineItem"],
+        })
+      : [];
+    const placedByLine = new Map<string, number>();
+    for (const allocation of allocations) {
+      placedByLine.set(
+        allocation.piLineItem.id,
+        (placedByLine.get(allocation.piLineItem.id) ?? 0) +
+          (toNumberOrNull(allocation.allocatedQty) ?? 0),
+      );
+    }
+    const hasUnallocated = lines.some(
+      (line) => line.dispatchQty - (placedByLine.get(line.item.id) ?? 0) > 0,
+    );
+    if (!hasUnallocated) {
+      throw new BadRequestException(
+        apiError(
+          "NOTHING_TO_ALLOCATE",
+          "нераспределённых строк нет — добавлять контейнер не для чего",
+        ),
+      );
+    }
+
+    let numbered = numberedOnly(
+      await containerRepo.find({ where: { customer: { id: customerId } } }),
+    );
+    const manualCount = numbered.filter((c) => c.isManual).length;
+    if (manualCount >= MAX_MANUAL_CONTAINERS) {
+      throw new BadRequestException(
+        apiError(
+          "MANUAL_CONTAINER_LIMIT",
+          `вручную можно добавить не более ${MAX_MANUAL_CONTAINERS} контейнеров`,
+          { max: MAX_MANUAL_CONTAINERS },
+        ),
+      );
+    }
+
+    // The plan's own slots first (normally they exist already — the page
+    // makes them on every read), so the manual one is numbered after them
+    // and not in their place.
+    const missingPlanned =
+      computeTotalPossibleContainers(lines) - plannedOnly(numbered).length;
+    if (missingPlanned > 0) {
+      await this.createEmptyContainers(
+        em,
+        customerId,
+        missingPlanned,
+        numbered,
+      );
+      numbered = numberedOnly(
+        await containerRepo.find({ where: { customer: { id: customerId } } }),
+      );
+    }
+
+    const next =
+      numbered.reduce((max, c) => Math.max(max, labelNumber(c.label)), 0) + 1;
+    const container = await containerRepo.save(
+      containerRepo.create({
+        customer: { id: customerId } as Customer,
+        label: `Контейнер ${next}`,
+        name: null,
+        isOkToMix: false,
+        isManual: true,
+        confirmedAt: null,
+        confirmedBy: null,
+      }),
+    );
+
+    await this.audit.record(
+      {
+        actor,
+        action: "rts.container_added",
+        entityType: "shipping_container",
+        entityId: container.id,
+        metadata: { containerLabel: container.label, isManual: true },
+      },
+      em,
+    );
+  }
+
+  /**
    * Takes `qty` units of one allocation back out of a draft container (all of
    * them deletes the row) and returns them to the unallocated list. Logged as
    * a negative action, so "undo last" can put it back and the actions of a
@@ -578,7 +723,10 @@ export class ReadyToShipService {
   /**
    * Rolls back every move on this client's currently-unlocked positions,
    * drops the containers that end up with nothing left at all, and
-   * recreates slots so the client again sees the full set. A locked
+   * recreates slots so the client again sees the full set. A container added
+   * by hand (isManual) is rolled back like any other and, once empty, dropped
+   * with the other empty drafts — but never recreated: only the plan's own
+   * slots come back. A locked
    * position is never touched, even sitting right next to an unlocked one
    * in the same partially-unlocked container (Phase 16) — and a container
    * keeps its slot, un-recycled, as long as even one locked position of its
@@ -684,19 +832,25 @@ export class ReadyToShipService {
       );
       // Phase 22: a recycled slot that comes back under the same label keeps
       // the name the client gave it.
+      const manualRemoved = emptyContainers.filter((c) => c.isManual).length;
+      // A manual container is not recreated, so its name isn't carried over.
       const names = new Map(
         emptyContainers
-          .filter((c) => c.name)
+          .filter((c) => c.name && !c.isManual)
           .map((c) => [c.label, c.name as string]),
       );
 
       const total = computeTotalPossibleContainers(
         await this.loadActiveLines(em, customerId),
       );
+      // Only the plan's own slots are topped up: an emptied manual
+      // container is gone for good (it was deleted above with the other
+      // empty drafts), and one that survives — it holds a locked position —
+      // doesn't stand in for a slot of the plan.
       await this.createEmptyContainers(
         em,
         customerId,
-        total - kept.length,
+        total - plannedOnly(kept).length,
         kept,
         names,
       );
@@ -707,7 +861,12 @@ export class ReadyToShipService {
           action: "rts.undone_all",
           entityType: "customer",
           entityId: customerId,
-          metadata: { positionsRolledBack: unlockedAllocations.length },
+          metadata: {
+            positionsRolledBack: unlockedAllocations.length,
+            ...(manualRemoved > 0
+              ? { manualContainersRemoved: manualRemoved }
+              : {}),
+          },
         },
         em,
       );
@@ -1389,6 +1548,7 @@ export class ReadyToShipService {
         label,
         name: names?.get(label) ?? null,
         isOkToMix: false,
+        isManual: false,
         confirmedAt: null,
         confirmedBy: null,
       });
@@ -1419,6 +1579,7 @@ export class ReadyToShipService {
         customer: { id: customerId } as Customer,
         label: OK_TO_MIX,
         isOkToMix: true,
+        isManual: false,
         confirmedAt: null,
         confirmedBy: null,
       }),
@@ -1440,6 +1601,10 @@ export class ReadyToShipService {
    *
    * Phase 21: only numbered slots count toward `total`; the "OK to mix"
    * container is made here too (once), whatever the total.
+   *
+   * Containers added by hand don't count toward `total` either (a growing
+   * plan still gets every slot it is owed), but they do hold a number: new
+   * slots are numbered after the highest one in use, manual ones included.
    */
   private async ensureContainerSlots(
     customerId: string,
@@ -1455,7 +1620,7 @@ export class ReadyToShipService {
         await this.createEmptyContainers(
           em,
           customerId,
-          total - existing.length,
+          total - plannedOnly(existing).length,
           existing,
         );
         await this.ensureOkToMix(em, customerId);
@@ -1485,10 +1650,11 @@ export class ReadyToShipService {
       findContainers(),
     ]);
     // "OK to mix" is not a slot of the plan: it neither counts toward nor
-    // is counted against totalPossibleContainers.
+    // is counted against totalPossibleContainers. Neither do the containers
+    // the client added by hand.
     const totalPossibleContainers = computeTotalPossibleContainers(lines);
     const needsTopUp =
-      numberedOnly(existingContainers).length < totalPossibleContainers ||
+      plannedOnly(existingContainers).length < totalPossibleContainers ||
       !existingContainers.some((c) => c.isOkToMix);
     const containers = (
       needsTopUp
@@ -1617,6 +1783,7 @@ export class ReadyToShipService {
         label: container.label,
         name: container.name ?? null,
         isOkToMix,
+        isManual: container.isManual ?? false,
         totalQty: allocationViews.reduce((sum, a) => sum + a.allocatedQty, 0),
         totalLines: allocationViews.length,
         isConfirmed,
@@ -1638,6 +1805,7 @@ export class ReadyToShipService {
     return {
       customerId,
       totalPossibleContainers,
+      manualContainers: containerViews.filter((c) => c.isManual).length,
       canConfirm: drafts.length > 0 && drafts.every((c) => !c.isOverfilled),
       undoableActions,
       unallocatedLines,

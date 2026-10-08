@@ -16,7 +16,8 @@ import { getErrorMessage } from "@/lib/errors"
 // Client-only panel, shown while there is anything not yet confirmed: either
 // draft containers holding positions, or logged actions to roll back (which
 // stays true after everything was taken out again, so an accidental "remove"
-// can still be undone).
+// can still be undone), or an empty container added by hand — "Undo all" is
+// what takes that one away again.
 export function ActionsBar({ view }: { view: ReadyToShipView }) {
   const { t } = useTranslation()
   const containerTitle = useContainerTitle()
@@ -30,8 +31,11 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
     (c) => !c.isConfirmed && c.allocations.length > 0
   )
   const overfilled = drafts.filter((c) => c.isOverfilled)
+  const hasEmptyManual = view.containers.some(
+    (c) => c.isManual && c.allocations.length === 0
+  )
 
-  if (view.undoableActions === 0 && drafts.length === 0) {
+  if (view.undoableActions === 0 && drafts.length === 0 && !hasEmptyManual) {
     return null
   }
 
@@ -84,7 +88,10 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
           type="button"
           variant="outline"
           size="sm"
-          disabled={undoAll.isPending || view.undoableActions === 0}
+          disabled={
+            undoAll.isPending || (view.undoableActions === 0 && !hasEmptyManual)
+          }
+          data-testid="undo-all"
           onClick={() => setUndoAllOpen(true)}
         >
           {t("readyToShip.actions.undoAll")}
@@ -103,7 +110,9 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
         </span>
       </div>
 
-      {confirmBlockedReason && (
+      {/* With nothing but an empty manual container on the table the bar is
+          only here for "Undo all" — no warning about confirming then. */}
+      {confirmBlockedReason && (drafts.length > 0 || view.undoableActions > 0) && (
         <p
           className="mt-2 text-xs text-destructive"
           data-testid="confirm-blocked-reason"

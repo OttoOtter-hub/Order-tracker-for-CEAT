@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
-import { Download, LockOpen, PackageOpen } from "lucide-react"
+import { Download, LockOpen, PackageOpen, Plus } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import { useAuth } from "@/auth/AuthContext"
 import { useCustomersQuery } from "@/api/customers"
 import {
   exportReadyToShipXlsx,
+  useAddContainerMutation,
   useMoveRemainingToMixMutation,
   useReadyToShipQuery,
   useUnlockAllMutation,
@@ -126,6 +127,7 @@ function ReadyToShipContent({
   const unlockAllocation = useUnlockAllocationMutation()
   const moveRemaining = useMoveRemainingToMixMutation(customerId)
   const unlockAll = useUnlockAllMutation(customerId)
+  const addContainer = useAddContainerMutation(customerId)
 
   const [moveLine, setMoveLine] = useState<UnallocatedLine | null>(null)
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null)
@@ -156,18 +158,31 @@ function ReadyToShipContent({
     // needs: totalPossibleContainers (already rounded up) minus the containers
     // that hold something. Containers with positions are never hidden, so the
     // count can exceed the need only when the client has filled more than it.
-    const emptySlots = numbered.filter(
-      (c) => !c.isConfirmed && c.allocations.length === 0
-    )
-    const free = emptySlots.slice(
-      0,
-      Math.max(0, view.totalPossibleContainers - working.length - confirmed.length)
-    )
-    const shown = new Set([...working, ...confirmed, ...free, okToMix])
+    //
+    // A container the client added by hand is not one of those slots: it
+    // neither uses up the plan's need nor is hidden by it — while empty it is
+    // always offered, in its own list.
+    const isEmpty = (c: ShippingContainer) =>
+      !c.isConfirmed && c.allocations.length === 0
+    const plannedInUse = [...working, ...confirmed].filter((c) => !c.isManual)
+    const free = numbered
+      .filter((c) => !c.isManual && isEmpty(c))
+      .slice(0, Math.max(0, view.totalPossibleContainers - plannedInUse.length))
+    const manualEmpty = numbered.filter((c) => c.isManual && isEmpty(c))
+    const shown = new Set([
+      ...working,
+      ...confirmed,
+      ...free,
+      ...manualEmpty,
+      okToMix,
+    ])
     return {
       working,
       confirmed,
       free,
+      manualEmpty,
+      // The plan's own containers on screen — manual ones are counted apart.
+      plannedShown: plannedInUse.length + free.length,
       okToMix,
       // Anything "Unlock all" would reopen ("OK to mix" included).
       hasLocked: view.containers.some(
@@ -228,9 +243,14 @@ function ReadyToShipContent({
             </Badge>
             <Badge variant="secondary">
               {t("readyToShip.badgeContainers", {
-                n: summary.visibleContainers.length - (summary.okToMix ? 1 : 0),
+                n: summary.plannedShown,
               })}
             </Badge>
+            {view.manualContainers > 0 && (
+              <Badge variant="secondary" data-testid="manual-count">
+                {t("readyToShip.badgeManual", { n: view.manualContainers })}
+              </Badge>
+            )}
           </div>
           <Button
             variant="outline"
@@ -299,6 +319,57 @@ function ReadyToShipContent({
                   free: summary.free.length,
                 })}
               </span>
+              {isClient && (
+                // When the plan's slots ran out before the lines did. No
+                // confirmation: an empty one goes away with "Undo all".
+                <span
+                  title={
+                    view.unallocatedLines.length === 0
+                      ? t("readyToShip.addContainer.nothingToAllocate")
+                      : undefined
+                  }
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      view.unallocatedLines.length === 0 || addContainer.isPending
+                    }
+                    data-testid="add-container"
+                    onClick={() =>
+                      addContainer.mutate(undefined, {
+                        onSuccess: (next) => {
+                          // The new one is the manual container this view
+                          // didn't have yet.
+                          const known = new Set(view.containers.map((c) => c.id))
+                          const added = next.containers.find(
+                            (c) => c.isManual && !known.has(c.id)
+                          )
+                          // The next "Move" offers it first.
+                          if (added) setLastContainerId(added.id)
+                          toast.success(
+                            t("readyToShip.addContainer.done", {
+                              container: added
+                                ? containerTitle(added)
+                                : t("readyToShip.containers.title"),
+                            })
+                          )
+                        },
+                        onError: (error) =>
+                          toast.error(
+                            getErrorMessage(
+                              error,
+                              t("readyToShip.addContainer.failed")
+                            )
+                          ),
+                      })
+                    }
+                  >
+                    <Plus /> {t("readyToShip.addContainer.button")}
+                  </Button>
+                </span>
+              )}
               {!isClient && (
                 // Next to the per-container "Unlock" on the cards: the same
                 // thing for every container that has a locked line.
@@ -355,6 +426,25 @@ function ReadyToShipContent({
               </CardHeader>
               <CardContent className="flex flex-wrap gap-1.5">
                 {summary.free.map((container) => (
+                  <Badge key={container.id} variant="outline">
+                    {containerTitle(container)}
+                  </Badge>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {summary.manualEmpty.length > 0 && (
+            <Card size="sm" data-testid="manual-slots">
+              <CardHeader>
+                <CardTitle className="text-sm">
+                  {t("readyToShip.containers.manualSlots", {
+                    n: summary.manualEmpty.length,
+                  })}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-1.5">
+                {summary.manualEmpty.map((container) => (
                   <Badge key={container.id} variant="outline">
                     {containerTitle(container)}
                   </Badge>

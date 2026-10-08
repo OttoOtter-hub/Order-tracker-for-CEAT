@@ -52,6 +52,9 @@ export interface ShippingContainer {
   // Phase 21: the customer's one "OK to mix" container — always last, no
   // fill percent (0) and never overfilled; totalQty/totalLines summarise it.
   isOkToMix: boolean
+  // Added by the client by hand ("Add container"), on top of the plan's
+  // slots: works like any numbered container, never counted as a slot.
+  isManual: boolean
   totalQty: number
   totalLines: number
   // Derived (see backend ReadyToShipService.loadView): true only once every
@@ -71,6 +74,8 @@ export interface ShippingContainer {
 export interface ReadyToShipView {
   customerId: string
   totalPossibleContainers: number
+  // Containers added by hand — apart from totalPossibleContainers.
+  manualContainers: number
   canConfirm: boolean
   // Logged actions that "undo" can still roll back (containers not confirmed).
   // Non-zero even when every container looks empty, e.g. after removing all.
@@ -129,6 +134,14 @@ export function useMoveMutation(customerId?: string) {
 export function useMoveRemainingToMixMutation(customerId?: string) {
   return useViewMutation(customerId, () =>
     apiClient.post<ReadyToShipView>("/ready-to-ship/move-remaining-to-mix")
+  )
+}
+
+// One more numbered container, by hand, when the plan's slots ran out
+// before the unallocated lines did. Client-only; no body.
+export function useAddContainerMutation(customerId?: string) {
+  return useViewMutation(customerId, () =>
+    apiClient.post<ReadyToShipView>("/ready-to-ship/add-container")
   )
 }
 

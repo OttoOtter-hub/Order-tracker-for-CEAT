@@ -45,6 +45,15 @@ export class ShippingContainer extends BaseEntity {
   @Column({ name: "is_ok_to_mix", type: "boolean", default: false })
   isOkToMix: boolean;
 
+  /**
+   * Added by the client by hand (POST /ready-to-ship/add-container) when the
+   * plan's slots ran out before the unallocated lines did. Numbered like any
+   * other slot and works like one, but it is not a slot of the plan: it never
+   * counts toward totalPossibleContainers, and "undo all" drops it while empty.
+   */
+  @Column({ name: "is_manual", type: "boolean", default: false })
+  isManual: boolean;
+
   /** Stamped by the last confirm() that touched (any of) this container's positions. */
   @Column({ name: "confirmed_at", type: "timestamptz", nullable: true })
   confirmedAt: Date | null;
