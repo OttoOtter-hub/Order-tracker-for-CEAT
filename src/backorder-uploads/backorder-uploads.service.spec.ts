@@ -1,8 +1,13 @@
+import { ContainerLineAllocation } from "../ready-to-ship/container-line-allocation.entity";
+import { AllocationAction } from "../ready-to-ship/allocation-action.entity";
 import * as ExcelJS from "exceljs";
 import { makeFakeRepo } from "../common/testing/fake-repo";
 import { makeFakeDataSource } from "../common/testing/fake-data-source";
 import { FakeAudit, makeFakeAudit } from "../common/testing/fake-audit";
-import { BackorderUploadsService } from "./backorder-uploads.service";
+import {
+  BACKORDER_UPLOAD_LOCK_KEY,
+  BackorderUploadsService,
+} from "./backorder-uploads.service";
 import { BackorderUpload } from "./backorder-upload.entity";
 import { BackorderUploadSnapshot } from "./backorder-upload-snapshot.entity";
 import { ActualContainersImportService } from "../actual-containers/actual-containers-import.service";
@@ -81,6 +86,9 @@ describe("BackorderUploadsService", () => {
   let customersService: { findFirst: jest.Mock; findAll: jest.Mock };
   let filesService: { save: jest.Mock };
   let allocationRelink: { relink: jest.Mock };
+  let allocationsRepo: ReturnType<typeof makeFakeRepo>;
+  let actionsRepo: ReturnType<typeof makeFakeRepo>;
+  let dataSource: ReturnType<typeof makeFakeDataSource>;
   let audit: FakeAudit;
   let service: BackorderUploadsService;
 
@@ -109,6 +117,8 @@ describe("BackorderUploadsService", () => {
     backorderRepo = makeFakeRepo();
     piRepo = makeFakeRepo();
     lineItemsRepo = makeFakeRepo();
+    allocationsRepo = makeFakeRepo();
+    actionsRepo = makeFakeRepo();
     const customer = {
       id: "cust-1",
       name: "MTK ROSBERG LLC",
@@ -123,7 +133,7 @@ describe("BackorderUploadsService", () => {
     };
     allocationRelink = { relink: jest.fn(async () => undefined) };
     audit = makeFakeAudit();
-    const dataSource = makeFakeDataSource(
+    dataSource = makeFakeDataSource(
       new Map<unknown, unknown>([
         [BackorderUpload, backorderRepo],
         [ProformaInvoice, piRepo],
@@ -131,6 +141,8 @@ describe("BackorderUploadsService", () => {
         [BackorderUploadSnapshot, makeFakeRepo()],
         [ActualContainer, makeFakeRepo()],
         [ActualContainerLineItem, makeFakeRepo()],
+        [ContainerLineAllocation, allocationsRepo],
+        [AllocationAction, actionsRepo],
       ]),
     );
     service = new BackorderUploadsService(
@@ -246,7 +258,7 @@ describe("BackorderUploadsService", () => {
     expect(finalLineItems[0].materialNum).toBe("107071");
   });
 
-  it("re-points ready-to-ship allocations at the new rows before deleting the old ones, and leaves other cards' rows alone", async () => {
+  it("re-points ready-to-ship allocations at the new rows before deleting the old ones — one relink for the whole upload", async () => {
     await service.upload(
       (await buildBackorderFile([
         row(100037320, "107071"),
@@ -264,11 +276,21 @@ describe("BackorderUploadsService", () => {
 
     // The relink must run while the old rows still exist — it's what lets
     // the FK from allocations to line items survive the delete that follows.
+    // Both cards' rows in one call; each row knows its card (the relink
+    // pairs rows card by card).
     allocationRelink.relink.mockImplementationOnce(
       async (oldItems: any[], newItems: any[]) => {
-        expect(oldItems.map((i) => i.id)).toEqual([oldItem.id]);
-        expect(newItems).toHaveLength(1);
-        expect(newItems[0].id).not.toBe(oldItem.id);
+        expect(oldItems.map((i) => i.id).sort()).toEqual(
+          [oldItem.id, otherCardItem.id].sort(),
+        );
+        expect(oldItems.map((i) => i.pi.id).sort()).toEqual(
+          [pi.id, otherPi.id].sort(),
+        );
+        expect(newItems).toHaveLength(2);
+        expect(newItems.map((i) => i.pi.id).sort()).toEqual(
+          [pi.id, otherPi.id].sort(),
+        );
+        expect(newItems.map((i) => i.id)).not.toContain(oldItem.id);
         expect(lineItemsRepo.rows.some((li) => li.id === oldItem.id)).toBe(
           true,
         );
@@ -283,7 +305,7 @@ describe("BackorderUploadsService", () => {
       opsActor,
     );
 
-    expect(allocationRelink.relink).toHaveBeenCalledTimes(2); // once per card in the file
+    expect(allocationRelink.relink).toHaveBeenCalledTimes(1); // once per upload, not per card
     expect(lineItemsRepo.rows.some((li) => li.id === oldItem.id)).toBe(false);
     expect(lineItemsRepo.rows.some((li) => li.id === otherCardItem.id)).toBe(
       false,
@@ -394,6 +416,194 @@ describe("BackorderUploadsService", () => {
       /^2907_MTK_ROSBERG_INR_\d{4}-\d{2}-\d{2}\.xlsx$/,
     );
     expect(uploadedById).toBe(opsActor.id);
+  });
+
+  it("takes the upload lock first, so a second upload waits for the first to commit", async () => {
+    await service.upload(
+      (await buildBackorderFile([row(100037320, "107071")])) as any,
+      opsActor,
+    );
+    await service.upload(
+      (await buildBackorderFile([row(100037320, "107071")])) as any,
+      opsActor,
+    );
+
+    const locks = dataSource.queries.filter((q) =>
+      q.sql.startsWith("SELECT pg_advisory_xact_lock("),
+    );
+    expect(locks).toHaveLength(2);
+    expect(locks.every((q) => q.params[0] === BACKORDER_UPLOAD_LOCK_KEY)).toBe(
+      true,
+    );
+    // Before anything else in the transaction: the first raw query of each.
+    expect(dataSource.manager.query.mock.calls[0][0]).toMatch(
+      /^SELECT pg_advisory_xact_lock\(/,
+    );
+    // And the second upload's rows replaced the first's — one set, not two.
+    const pi = piRepo.rows.find((r) => r.piNumber === "100037320")!;
+    expect(lineItemsRepo.rows.filter((li) => li.pi.id === pi.id)).toHaveLength(
+      1,
+    );
+  });
+
+  it("writes every card's figures in one statement, not one per card", async () => {
+    await service.upload(
+      (await buildBackorderFile([
+        row(100037320, "107071"),
+        row(100037321, "107072"),
+        row(100037322, "107073"),
+      ])) as any,
+      opsActor,
+    );
+
+    const cardUpdates = dataSource.queries.filter((q) =>
+      q.sql.startsWith('UPDATE "proforma_invoices"'),
+    );
+    expect(cardUpdates).toHaveLength(1);
+    expect(
+      piRepo.rows.map((r) => [r.piNumber, r.totalQty, r.isArchivedShipped]),
+    ).toEqual([
+      ["100037320", expect.any(String), false],
+      ["100037321", expect.any(String), false],
+      ["100037322", expect.any(String), false],
+    ]);
+    expect(piRepo.rows.every((r) => Number(r.totalQty) > 0)).toBe(true);
+  });
+
+  describe("archiving a card that still has ready-to-ship positions", () => {
+    // Card Y (100037021) has two lines; X (100037020) stays in the file.
+    async function uploadBoth() {
+      await service.upload(
+        (await buildBackorderFile([
+          row(100037020, "X"),
+          row(100037021, "Y1"),
+          row(100037021, "Y2"),
+        ])) as any,
+        opsActor,
+      );
+      const cardY = piRepo.rows.find((r) => r.piNumber === "100037021")!;
+      const cardX = piRepo.rows.find((r) => r.piNumber === "100037020")!;
+      const lineOf = (material: string) =>
+        lineItemsRepo.rows.find((li) => li.materialNum === material)!
+          .id as string;
+      return {
+        cardX,
+        cardY,
+        y1: lineOf("Y1"),
+        y2: lineOf("Y2"),
+        x: lineOf("X"),
+      };
+    }
+
+    function allocation(
+      id: string,
+      container: string,
+      line: string,
+      qty: string,
+      locked = false,
+    ) {
+      allocationsRepo.seed({
+        id,
+        container: { id: container },
+        piLineItem: { id: line },
+        allocatedQty: qty,
+        isLocked: locked,
+      } as any);
+    }
+    function action(
+      id: string,
+      container: string,
+      line: string,
+      delta: string,
+    ) {
+      actionsRepo.seed({
+        id,
+        container: { id: container },
+        piLineItem: { id: line },
+        deltaQty: delta,
+      } as any);
+    }
+
+    it("drops the undo entries that net to zero or whose position is gone, keeps those of positions in containers, and leaves the positions alone", async () => {
+      const { y1, y2, x } = await uploadBoth();
+      // In a container now, with its move logged: kept.
+      allocation("al-live", "c-1", y1, "10");
+      action("act-live", "c-1", y1, "10");
+      // Moved in, then taken out again: no position, nets to zero.
+      action("act-zero-in", "c-2", y1, "5");
+      action("act-zero-out", "c-2", y1, "-5");
+      // Confirmed position, logged move: kept.
+      allocation("al-locked", "c-3", y2, "4", true);
+      action("act-locked", "c-3", y2, "4");
+      // Position there, but its log nets to zero (in and out again): dropped.
+      allocation("al-net0", "c-1", y2, "3");
+      action("act-net0-in", "c-1", y2, "3");
+      action("act-net0-out", "c-1", y2, "-3");
+      // Position already gone (log not netting to zero): dropped.
+      action("act-gone", "c-4", y2, "7");
+      // A card that is NOT archived keeps even a zero-netting log.
+      action("act-x-in", "c-2", x, "2");
+      action("act-x-out", "c-2", x, "-2");
+
+      await service.upload(
+        (await buildBackorderFile([row(100037020, "X")])) as any,
+        opsActor,
+      );
+
+      expect(actionsRepo.rows.map((a) => a.id).sort()).toEqual([
+        "act-live",
+        "act-locked",
+        "act-x-in",
+        "act-x-out",
+      ]);
+      expect(allocationsRepo.rows.map((a) => a.id).sort()).toEqual([
+        "al-live",
+        "al-locked",
+        "al-net0",
+      ]);
+    });
+
+    it("pi.archived says how many positions are left in containers and how many of them are confirmed", async () => {
+      const { y1, y2 } = await uploadBoth();
+      allocation("al-1", "c-1", y1, "10");
+      allocation("al-2", "c-2", y1, "5", true);
+      allocation("al-3", "c-1", y2, "1");
+      audit.entries.length = 0;
+
+      await service.upload(
+        (await buildBackorderFile([row(100037020, "X")])) as any,
+        opsActor,
+      );
+
+      expect(audit.entries.filter((e) => e.action === "pi.archived")).toEqual([
+        expect.objectContaining({
+          action: "pi.archived",
+          inTransaction: true,
+          metadata: {
+            piNumber: "100037021",
+            reason: "absent_from_backorder",
+            allocationsInContainers: 3,
+            allocationsLocked: 1,
+          },
+        }),
+      ]);
+    });
+
+    it("a card archived with nothing in containers is journaled as before, without the counts", async () => {
+      await uploadBoth();
+      audit.entries.length = 0;
+
+      await service.upload(
+        (await buildBackorderFile([row(100037020, "X")])) as any,
+        opsActor,
+      );
+
+      expect(
+        audit.entries
+          .filter((e) => e.action === "pi.archived")
+          .map((e) => e.metadata),
+      ).toEqual([{ piNumber: "100037021", reason: "absent_from_backorder" }]);
+    });
   });
 
   describe("priorityQty carry-over on re-upload", () => {

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { EntityManager, In } from "typeorm";
 import { BackorderUpload } from "../backorder-uploads/backorder-upload.entity";
 import { apiError } from "../common/errors/api-error";
+import { bulkUpdateById } from "../common/utils/bulk-update";
 import { ParsedActualContainersData } from "../backorder-uploads/utils/parse-actual-containers";
 import { Customer } from "../customers/customer.entity";
 import { CustomersService } from "../customers/customers.service";
@@ -258,15 +259,21 @@ export class ActualContainersImportService {
     const cards = await piRepo.find({
       select: { id: true, piNumber: true, shippedQty: true },
     });
-    let changed = 0;
-    for (const card of cards) {
-      const target = round2(sumByPi.get(card.piNumber) ?? 0).toFixed(2);
-      if (Number(card.shippedQty ?? 0).toFixed(2) !== target) {
-        await piRepo.update({ id: card.id }, { shippedQty: target });
-        changed++;
-      }
-    }
-    return changed;
+    // All changed cards in one statement, not an UPDATE each (each one a
+    // round trip to the database).
+    const changed = cards
+      .map((card) => ({
+        id: card.id,
+        current: Number(card.shippedQty ?? 0).toFixed(2),
+        target: round2(sumByPi.get(card.piNumber) ?? 0).toFixed(2),
+      }))
+      .filter(({ current, target }) => current !== target);
+    await bulkUpdateById(
+      em,
+      ProformaInvoice,
+      changed.map(({ id, target }) => ({ id, values: { shippedQty: target } })),
+    );
+    return changed.length;
   }
 
   /**

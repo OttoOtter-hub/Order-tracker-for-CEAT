@@ -73,7 +73,19 @@ export function ActionsBar({ view }: { view: ReadyToShipView }) {
           disabled={undoLast.isPending || view.undoableActions === 0}
           onClick={() =>
             undoLast.mutate(undefined, {
-              onSuccess: () => toast.success(t("readyToShip.actions.undoneOne")),
+              onSuccess: (next) => {
+                toast.success(t("readyToShip.actions.undoneOne"))
+                // Passed over, not undone: the removal of a line whose
+                // proforma is archived stays as it is.
+                for (const skipped of next.undoSkipped ?? []) {
+                  toast.warning(
+                    t("errors.UNDO_SKIPPED_ARCHIVED_PI", {
+                      ...skipped,
+                      materialNum: skipped.materialNum ?? "—",
+                    })
+                  )
+                }
+              },
               onError: (error) =>
                 toast.error(
                   getErrorMessage(error, t("readyToShip.actions.undoOneFailed"))

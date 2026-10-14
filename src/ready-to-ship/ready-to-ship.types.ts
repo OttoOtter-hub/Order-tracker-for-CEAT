@@ -26,6 +26,12 @@ export interface AllocationView {
   allocatedQty: number;
   /** Phase 16: locked/unlocked lives per position now, not on the whole container. */
   isLocked: boolean;
+  /**
+   * The line's card is archived (fully shipped, or gone from the backorder):
+   * the position stays until the client removes it — marked "Proforma
+   * archived" on screen.
+   */
+  piArchived: boolean;
   fillContribution: number;
   markingFile: { id: string; uploadedAt: Date } | null;
 }
@@ -77,6 +83,20 @@ export interface ReadyToShipView {
   undoableActions: number;
   unallocatedLines: UnallocatedLineView[];
   containers: ContainerView[];
+  /**
+   * Only on the reply to "undo last": removals that were passed over because
+   * their card is archived (still in the log, not undone), newest first.
+   */
+  undoSkipped?: UndoSkippedView[];
+}
+
+export interface UndoSkippedView {
+  code: "UNDO_SKIPPED_ARCHIVED_PI";
+  piNumber: string;
+  materialNum: string | null;
+  /** The container's number ("3"), or "OK to mix". */
+  container: string;
+  qty: number;
 }
 
 export interface UnlockedContainerView {

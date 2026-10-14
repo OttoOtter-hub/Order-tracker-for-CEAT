@@ -155,4 +155,46 @@ describe("AllocationRelinkService", () => {
 
     expect(h.dataSource.transaction).not.toHaveBeenCalled();
   });
+  it("pairs rows card by card: the same material + SO on two cards stays on its own card", async () => {
+    seedAllocation("al-1", "old-1");
+    seedAllocation("al-2", "old-2");
+    const onCard = (id: string, card: string) =>
+      ({ ...oldItem(id, "MAT-1", "SO-1"), pi: { id: card } }) as any;
+
+    await h.relink.relink(
+      [onCard("old-1", "pi-1"), onCard("old-2", "pi-2")],
+      // New rows listed the other way round: order must not matter.
+      [onCard("new-2", "pi-2"), onCard("new-1", "pi-1")],
+    );
+
+    expect(
+      h.allocations.rows.map((a) => [a.id, a.piLineItem.id]).sort(),
+    ).toEqual([
+      ["al-1", "new-1"],
+      ["al-2", "new-2"],
+    ]);
+  });
+
+  it("moves any number of allocations and log entries with one statement each", async () => {
+    for (let i = 0; i < 30; i++) {
+      seedAllocation(`al-${i}`, `old-${i}`);
+    }
+
+    await h.relink.relink(
+      Array.from({ length: 30 }, (_, i) => oldItem(`old-${i}`, `MAT-${i}`)),
+      Array.from({ length: 30 }, (_, i) => oldItem(`new-${i}`, `MAT-${i}`)),
+    );
+
+    const updates = h.dataSource.queries.map((q) => q.sql.split(" AS t")[0]);
+    expect(updates).toEqual([
+      'UPDATE "container_line_allocations"',
+      'UPDATE "allocation_actions"',
+    ]);
+    expect(
+      h.allocations.rows.every((a) => a.piLineItem.id.startsWith("new-")),
+    ).toBe(true);
+    expect(
+      h.actions.rows.every((a) => a.piLineItem.id.startsWith("new-")),
+    ).toBe(true);
+  });
 });

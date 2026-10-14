@@ -28,6 +28,7 @@ import {
   UnlockedAllocationView,
   UnlockedAllView,
   UnlockedContainerView,
+  UndoSkippedView,
 } from "./ready-to-ship.types";
 import {
   buildReadyToShipExportWorkbook,
@@ -82,6 +83,19 @@ const ADD_CONTAINER_ATTEMPTS = 3;
 
 function allocationKey(containerId: string, piLineItemId: string): string {
   return `${containerId}:${piLineItemId}`;
+}
+
+/** A removal "undo" passed over: which line, where, how many units. */
+function describeSkippedUndo(action: AllocationAction): UndoSkippedView {
+  const number = labelNumber(action.container.label);
+  return {
+    code: "UNDO_SKIPPED_ARCHIVED_PI",
+    piNumber: action.piLineItem.pi?.piNumber ?? "",
+    materialNum: action.piLineItem.materialNum,
+    // A number ("3") or the fixed "OK to mix" — the frontend names it.
+    container: number > 0 ? String(number) : action.container.label,
+    qty: -(toNumberOrNull(action.deltaQty) ?? 0),
+  };
 }
 
 /**
@@ -653,6 +667,7 @@ export class ReadyToShipService {
   /** Rolls back the newest move among this client's currently-unlocked positions. */
   async undoLast(actor: RequestUser): Promise<ReadyToShipView> {
     const customerId = this.requireClient(actor);
+    let undoSkipped: UndoSkippedView[] = [];
 
     await this.dataSource.transaction(async (em) => {
       const containers = await em
@@ -672,10 +687,49 @@ export class ReadyToShipService {
       // also covers a position that was moved in and then fully removed
       // again (no allocation row left at all): it's simply absent from
       // lockedKeys, same as one that's still there and unlocked.
-      const last = candidates.find(
-        (a) => !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
-      );
+      //
+      // Undoing a removal would put the units back into the container. For a
+      // line whose card is archived that is wrong (it is no longer in the
+      // plan), so such entries are skipped — left in the log, not undone —
+      // and the next older one is undone instead; the reply says what was
+      // skipped. Undoing a move of such a line (taking it out) is fine.
+      const skipped: AllocationAction[] = [];
+      let last: AllocationAction | undefined;
+      for (const candidate of candidates) {
+        if (
+          lockedKeys.has(
+            allocationKey(candidate.container.id, candidate.piLineItem.id),
+          )
+        ) {
+          continue;
+        }
+        if (
+          (toNumberOrNull(candidate.deltaQty) ?? 0) < 0 &&
+          candidate.piLineItem.pi?.isArchivedShipped
+        ) {
+          skipped.push(candidate);
+          continue;
+        }
+        last = candidate;
+        break;
+      }
+      undoSkipped = skipped.map(describeSkippedUndo);
       if (!last) {
+        if (skipped.length > 0) {
+          const first = undoSkipped[0];
+          throw new BadRequestException(
+            apiError(
+              "UNDO_SKIPPED_ARCHIVED_PI",
+              `удаление ${first.materialNum ?? "—"} (PI ${first.piNumber}) из контейнера ${first.container} не отменено: проформа в архиве`,
+              {
+                materialNum: first.materialNum ?? "—",
+                piNumber: first.piNumber,
+                container: first.container,
+                qty: first.qty,
+              },
+            ),
+          );
+        }
         throw new NotFoundException(
           apiError("NOTHING_TO_UNDO", "нет действий для отмены"),
         );
@@ -717,7 +771,8 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    const view = await this.loadView(customerId);
+    return undoSkipped.length > 0 ? { ...view, undoSkipped } : view;
   }
 
   /**
@@ -1755,6 +1810,7 @@ export class ReadyToShipService {
             loadability,
             allocatedQty,
             isLocked: allocation.isLocked,
+            piArchived: line.pi.isArchivedShipped ?? false,
             // "OK to mix" has no capacity, so no share of it either.
             fillContribution: container.isOkToMix
               ? 0

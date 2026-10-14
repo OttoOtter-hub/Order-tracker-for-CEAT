@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { DataSource, EntityManager, In } from "typeorm";
+import { bulkUpdateById } from "../common/utils/bulk-update";
 import { PiLineItem } from "../pi-line-items/pi-line-item.entity";
 import { AllocationAction } from "./allocation-action.entity";
 import { ContainerLineAllocation } from "./container-line-allocation.entity";
@@ -17,6 +18,12 @@ import { pairLineItems } from "./utils/pair-line-items";
  * files and actions.
  * Quantities are left as they are even if the new dispatch qty is smaller;
  * the ready-to-ship view then just shows no remainder for that line.
+ *
+ * One call covers a whole upload: rows are paired card by card (by the
+ * line item's pi), and every move is one bulk statement rather than a
+ * save() per allocation — each of those was a SELECT plus an UPDATE, and
+ * at ~110 ms per round trip to Neon a few hundred allocations alone took
+ * the upload past the proxy timeout.
  */
 @Injectable()
 export class AllocationRelinkService {
@@ -37,7 +44,7 @@ export class AllocationRelinkService {
       return;
     }
 
-    const newIdByOldId = pairLineItems(oldItems, newItems);
+    const newIdByOldId = pairByCard(oldItems, newItems);
 
     const run = (work: (em: EntityManager) => Promise<void>) =>
       manager ? work(manager) : this.dataSource.transaction(work);
@@ -56,27 +63,69 @@ export class AllocationRelinkService {
         relations: ["piLineItem"],
       });
 
-      for (const allocation of allocations) {
-        const newId = newIdByOldId.get(allocation.piLineItem.id);
-        if (newId) {
-          allocation.piLineItem = { id: newId } as PiLineItem;
-          await allocationRepo.save(allocation);
-        } else {
-          await em
-            .getRepository(MarkingFile)
-            .delete({ allocation: { id: allocation.id } });
-          await allocationRepo.delete({ id: allocation.id });
-        }
+      const relinked = allocations.filter((a) =>
+        newIdByOldId.get(a.piLineItem.id),
+      );
+      const goneAllocationIds = allocations
+        .filter((a) => !newIdByOldId.get(a.piLineItem.id))
+        .map((a) => a.id);
+      await bulkUpdateById(
+        em,
+        ContainerLineAllocation,
+        relinked.map((a) => ({
+          id: a.id,
+          values: { piLineItem: newIdByOldId.get(a.piLineItem.id)! },
+        })),
+      );
+      if (goneAllocationIds.length > 0) {
+        await em
+          .getRepository(MarkingFile)
+          .delete({ allocation: { id: In(goneAllocationIds) } });
+        await allocationRepo.delete({ id: In(goneAllocationIds) });
       }
-      for (const action of actions) {
-        const newId = newIdByOldId.get(action.piLineItem.id);
-        if (newId) {
-          action.piLineItem = { id: newId } as PiLineItem;
-          await actionRepo.save(action);
-        } else {
-          await actionRepo.delete({ id: action.id });
-        }
+
+      await bulkUpdateById(
+        em,
+        AllocationAction,
+        actions
+          .filter((a) => newIdByOldId.get(a.piLineItem.id))
+          .map((a) => ({
+            id: a.id,
+            values: { piLineItem: newIdByOldId.get(a.piLineItem.id)! },
+          })),
+      );
+      const goneActionIds = actions
+        .filter((a) => !newIdByOldId.get(a.piLineItem.id))
+        .map((a) => a.id);
+      if (goneActionIds.length > 0) {
+        await actionRepo.delete({ id: In(goneActionIds) });
       }
     });
   }
+}
+
+/** pairLineItems card by card: keys only mean "the same line" within one card. */
+function pairByCard(
+  oldItems: PiLineItem[],
+  newItems: PiLineItem[],
+): Map<string, string | null> {
+  const cardOf = (item: PiLineItem) => item.pi?.id ?? "";
+  const newByCard = new Map<string, PiLineItem[]>();
+  for (const item of newItems) {
+    newByCard.set(cardOf(item), [...(newByCard.get(cardOf(item)) ?? []), item]);
+  }
+  const oldByCard = new Map<string, PiLineItem[]>();
+  for (const item of oldItems) {
+    oldByCard.set(cardOf(item), [...(oldByCard.get(cardOf(item)) ?? []), item]);
+  }
+  const paired = new Map<string, string | null>();
+  for (const [card, olds] of oldByCard) {
+    for (const [oldId, newId] of pairLineItems(
+      olds,
+      newByCard.get(card) ?? [],
+    )) {
+      paired.set(oldId, newId);
+    }
+  }
+  return paired;
 }

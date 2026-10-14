@@ -34,8 +34,18 @@ import { buildBackorderExportWorkbook } from "./utils/build-backorder-export-wor
 import { buildSnapshotWorkbook, SnapshotSheet } from "./utils/snapshot-sheets";
 import { formatDateForFilename } from "../common/utils/format-date";
 import { toNumberOrNull } from "../common/utils/numeric";
+import { bulkUpdateById } from "../common/utils/bulk-update";
+import { AllocationAction } from "../ready-to-ship/allocation-action.entity";
+import { ContainerLineAllocation } from "../ready-to-ship/container-line-allocation.entity";
 
 const SNAPSHOT_INSERT_CHUNK = 500;
+const LINE_ITEM_INSERT_CHUNK = 500;
+
+/**
+ * Key of the transaction-level advisory lock that lets one backorder upload
+ * run at a time (any constant works; it only has to be the same for all).
+ */
+export const BACKORDER_UPLOAD_LOCK_KEY = 4_202_610;
 
 function numToStr(value: number | null): string | null {
   return value === null ? null : String(value);
@@ -108,6 +118,22 @@ export class BackorderUploadsService {
    * The raw copy of the file (StoredFile) is written before the transaction
    * and stays even if the import then fails — it is the audit trail of what
    * was sent, not part of the imported state.
+   *
+   * One upload at a time: the transaction first takes an advisory lock, so a
+   * second upload (a retry after a proxy timeout, say) waits for the first
+   * to commit and then works on its result. Without it, two overlapping
+   * transactions each read the other's line items as not there yet and
+   * both sets survived (2026-10-14, card 100040091).
+   *
+   * Every step works on all cards at once — one query for all cards, one
+   * for all old rows, one bulk insert, one relink, one delete, one update —
+   * not a few queries per card: each query is a ~110 ms round trip from the
+   * VPS to Neon.
+   *
+   * A card this upload archives keeps whatever positions it has in "Ready
+   * to ship" containers (the client removes them; confirmed ones after ops
+   * unlocks); only the undo log entries that no longer matter are dropped —
+   * see dropStaleUndoEntries. pi.archived says how many positions are left.
    */
   async upload(
     file: Express.Multer.File,
@@ -144,6 +170,9 @@ export class BackorderUploadsService {
     }
 
     return this.dataSource.transaction(async (em) => {
+      await em.query("SELECT pg_advisory_xact_lock($1)", [
+        BACKORDER_UPLOAD_LOCK_KEY,
+      ]);
       const uploadRepo = em.getRepository(BackorderUpload);
       const piRepo = em.getRepository(ProformaInvoice);
       const lineItemsRepo = em.getRepository(PiLineItem);
@@ -162,69 +191,99 @@ export class BackorderUploadsService {
 
       const snapshotRows = await this.saveSnapshot(em, upload, snapshotSheets);
 
-      let newCardsCreated = 0;
-      // Cards this upload archives, with why — journaled once each below.
-      const archivedNow: Array<{ pi: ProformaInvoice; reason: ArchiveReason }> =
-        [];
-      for (const [piNumber, piRows] of rowsByPiNumber) {
-        let pi = await piRepo.findOne({ where: { piNumber } });
-        if (!pi) {
-          const customer = await this.customersService.findFirst();
-          pi = await piRepo.save(
+      // Every card of the file: the existing ones in one query, the new ones
+      // in one insert.
+      const piNumbers = [...rowsByPiNumber.keys()];
+      const cardByNumber = new Map(
+        (piNumbers.length
+          ? await piRepo.find({ where: { piNumber: In(piNumbers) } })
+          : []
+        ).map((card) => [card.piNumber, card]),
+      );
+      const missing = piNumbers.filter((n) => !cardByNumber.has(n));
+      if (missing.length > 0) {
+        const customer = await this.customersService.findFirst();
+        const created = await piRepo.save(
+          missing.map((piNumber) =>
             piRepo.create({
               piNumber,
               customer,
               createdFrom: PiCreatedFrom.BACKORDER_ROW,
               isArchivedShipped: false,
             }),
-          );
-          newCardsCreated++;
+          ),
+        );
+        for (const card of created) {
+          cardByNumber.set(card.piNumber, card);
         }
-        const wasArchived = pi.isArchivedShipped;
+      }
+      const newCardsCreated = missing.length;
+      const cards = piNumbers.map((n) => cardByNumber.get(n)!);
 
-        const oldLineItems = await lineItemsRepo.find({
-          where: { pi: { id: pi.id } },
-        });
+      const oldLineItems = cards.length
+        ? await lineItemsRepo.find({
+            where: { pi: { id: In(cards.map((card) => card.id)) } },
+            relations: ["pi"],
+          })
+        : [];
+      const oldByCard = new Map<string, PiLineItem[]>();
+      for (const old of oldLineItems) {
+        oldByCard.set(old.pi.id, [...(oldByCard.get(old.pi.id) ?? []), old]);
+      }
+
+      const newLineItems: PiLineItem[] = [];
+      for (const pi of cards) {
         const oldPriorityByKey = new Map<string, number>();
-        for (const old of oldLineItems) {
+        for (const old of oldByCard.get(pi.id) ?? []) {
           oldPriorityByKey.set(
             lineItemKey(old.materialNum, old.soNumber),
             toNumberOrNull(old.priorityQty) ?? 0,
           );
         }
-
-        const lineItems = piRows.map((row) => {
+        for (const row of rowsByPiNumber.get(pi.piNumber)!) {
           const newBalance = row.balanceToBeDelivered ?? 0;
           const carriedPriority =
             oldPriorityByKey.get(lineItemKey(row.materialNum, row.soNumber)) ??
             0;
-          const priorityQty = Math.min(carriedPriority, newBalance);
-          return lineItemsRepo.create({
-            pi,
-            soNumber: row.soNumber,
-            materialNum: row.materialNum,
-            materialDesc: row.materialDesc,
-            balanceToBeDelivered: numToStr(row.balanceToBeDelivered),
-            quantity: numToStr(row.quantity),
-            mt: numToStr(row.mt),
-            loadFactor: numToStr(row.loadFactor),
-            loadability: numToStr(row.loadability),
-            currentWeekDispatchLoadFactor: numToStr(
-              row.currentWeekDispatchLoadFactor,
-            ),
-            currentWeekDispatchQty: numToStr(row.currentWeekDispatchQty),
-            priorityQty: String(priorityQty),
-          });
-        });
-        const savedLineItems = await lineItemsRepo.save(lineItems);
-        await this.allocationRelink.relink(oldLineItems, savedLineItems, em);
-        if (oldLineItems.length > 0) {
-          await lineItemsRepo.delete({
-            id: In(oldLineItems.map((old) => old.id)),
-          });
+          newLineItems.push(
+            lineItemsRepo.create({
+              pi,
+              soNumber: row.soNumber,
+              materialNum: row.materialNum,
+              materialDesc: row.materialDesc,
+              balanceToBeDelivered: numToStr(row.balanceToBeDelivered),
+              quantity: numToStr(row.quantity),
+              mt: numToStr(row.mt),
+              loadFactor: numToStr(row.loadFactor),
+              loadability: numToStr(row.loadability),
+              currentWeekDispatchLoadFactor: numToStr(
+                row.currentWeekDispatchLoadFactor,
+              ),
+              currentWeekDispatchQty: numToStr(row.currentWeekDispatchQty),
+              priorityQty: String(Math.min(carriedPriority, newBalance)),
+            }),
+          );
         }
+      }
+      const savedLineItems = newLineItems.length
+        ? await lineItemsRepo.save(newLineItems, {
+            chunk: LINE_ITEM_INSERT_CHUNK,
+          })
+        : [];
+      // While the old rows still exist: allocations move over to the new ones.
+      await this.allocationRelink.relink(oldLineItems, savedLineItems, em);
+      if (oldLineItems.length > 0) {
+        await lineItemsRepo.delete({
+          id: In(oldLineItems.map((old) => old.id)),
+        });
+      }
 
-        const agg = computePiAggregates(piRows);
+      // Cards this upload archives, with why — journaled once each below.
+      const archivedNow: Array<{ pi: ProformaInvoice; reason: ArchiveReason }> =
+        [];
+      for (const pi of cards) {
+        const wasArchived = pi.isArchivedShipped;
+        const agg = computePiAggregates(rowsByPiNumber.get(pi.piNumber)!);
         pi.totalQty = String(agg.totalQty);
         pi.totalContainers = String(agg.totalContainers);
         pi.qtyPending = String(agg.qtyPending);
@@ -237,20 +296,33 @@ export class BackorderUploadsService {
         if (pi.isArchivedShipped && !wasArchived) {
           archivedNow.push({ pi, reason: "zero_remaining" });
         }
-        await piRepo.save(pi);
       }
+      await bulkUpdateById(
+        em,
+        ProformaInvoice,
+        cards.map((pi) => ({
+          id: pi.id,
+          values: {
+            totalQty: pi.totalQty,
+            totalContainers: pi.totalContainers,
+            qtyPending: pi.qtyPending,
+            containersPending: pi.containersPending,
+            currentWeekPlanContainers: pi.currentWeekPlanContainers,
+            currentWeekPlanQty: pi.currentWeekPlanQty,
+            isArchivedShipped: pi.isArchivedShipped,
+          },
+        })),
+      );
 
       // Cards missing from this upload's snapshot (and not already
       // archived) are presumed fully shipped. Line items are left alone —
       // they stay as the last known state, per the pilot's own call not to
-      // touch them on archival. Pilot-scale row counts (tens of cards), so a
-      // plain find + filter + bulk save is plenty — no need for a raw SQL
-      // UPDATE.
+      // touch them on archival.
       //
       // A card that has never had line items (created from a PI upload, not
       // yet seen in any backorder) is not "gone from the backorder" — it
       // isn't archived.
-      const piNumbersInUpload = new Set(rowsByPiNumber.keys());
+      const piNumbersInUpload = new Set(piNumbers);
       const notYetArchived = await piRepo.find({
         where: { isArchivedShipped: false },
       });
@@ -277,8 +349,16 @@ export class BackorderUploadsService {
         archivedNow.push({ pi: candidate, reason: "absent_from_backorder" });
       }
       if (toArchive.length > 0) {
-        await piRepo.save(toArchive);
+        await piRepo.update(
+          { id: In(toArchive.map((candidate) => candidate.id)) },
+          { isArchivedShipped: true },
+        );
       }
+
+      const positionsByCard = await this.dropStaleUndoEntries(
+        em,
+        archivedNow.map(({ pi }) => pi.id),
+      );
 
       const importResult = await this.actualContainersImport.import(
         em,
@@ -308,15 +388,27 @@ export class BackorderUploadsService {
         },
         em,
       );
-      // One entry per card this upload archived, with the reason.
+      // One entry per card this upload archived, with the reason — and, when
+      // it still has positions in "Ready to ship" containers, how many and
+      // how many of them are confirmed (locked).
       for (const { pi, reason } of archivedNow) {
+        const positions = positionsByCard.get(pi.id);
         await this.audit.record(
           {
             actor,
             action: "pi.archived",
             entityType: "pi",
             entityId: pi.id,
-            metadata: { piNumber: pi.piNumber, reason },
+            metadata: {
+              piNumber: pi.piNumber,
+              reason,
+              ...(positions
+                ? {
+                    allocationsInContainers: positions.total,
+                    allocationsLocked: positions.locked,
+                  }
+                : {}),
+            },
           },
           em,
         );
@@ -335,6 +427,80 @@ export class BackorderUploadsService {
         actualContainers: importResult,
       };
     });
+  }
+
+  /**
+   * For cards this upload archives: drops the undo log entries
+   * (allocation_actions) on their lines that can no longer do anything
+   * useful — those of a (container, line) pair that nets out to zero, and
+   * those of a position no longer in any container. Entries of positions
+   * still in a container stay: "undo all" needs them to roll those back.
+   *
+   * Returns, per archived card that still has positions in containers, how
+   * many there are and how many are locked. The positions themselves are
+   * never touched here.
+   */
+  private async dropStaleUndoEntries(
+    em: EntityManager,
+    archivedCardIds: string[],
+  ): Promise<Map<string, { total: number; locked: number }>> {
+    const positionsByCard = new Map<
+      string,
+      { total: number; locked: number }
+    >();
+    if (archivedCardIds.length === 0) {
+      return positionsByCard;
+    }
+    const lines = await em.getRepository(PiLineItem).find({
+      where: { pi: { id: In(archivedCardIds) } },
+      relations: ["pi"],
+    });
+    if (lines.length === 0) {
+      return positionsByCard;
+    }
+    const cardOfLine = new Map(lines.map((line) => [line.id, line.pi.id]));
+    const lineIds = [...cardOfLine.keys()];
+    // One after the other: both run on the transaction's single connection.
+    const [allocations, actions] = [
+      await em.getRepository(ContainerLineAllocation).find({
+        where: { piLineItem: { id: In(lineIds) } },
+        relations: ["container", "piLineItem"],
+      }),
+      await em.getRepository(AllocationAction).find({
+        where: { piLineItem: { id: In(lineIds) } },
+        relations: ["container", "piLineItem"],
+      }),
+    ];
+
+    const pair = (containerId: string, lineId: string) =>
+      `${containerId}:${lineId}`;
+    const placed = new Set<string>();
+    for (const allocation of allocations) {
+      placed.add(pair(allocation.container.id, allocation.piLineItem.id));
+      const card = cardOfLine.get(allocation.piLineItem.id)!;
+      const counts = positionsByCard.get(card) ?? { total: 0, locked: 0 };
+      counts.total++;
+      if (allocation.isLocked) counts.locked++;
+      positionsByCard.set(card, counts);
+    }
+    const netByPair = new Map<string, number>();
+    for (const action of actions) {
+      const key = pair(action.container.id, action.piLineItem.id);
+      netByPair.set(
+        key,
+        (netByPair.get(key) ?? 0) + (toNumberOrNull(action.deltaQty) ?? 0),
+      );
+    }
+    const stale = actions.filter((action) => {
+      const key = pair(action.container.id, action.piLineItem.id);
+      return !placed.has(key) || netByPair.get(key) === 0;
+    });
+    if (stale.length > 0) {
+      await em
+        .getRepository(AllocationAction)
+        .delete({ id: In(stale.map((action) => action.id)) });
+    }
+    return positionsByCard;
   }
 
   /** Writes every parsed row of every sheet; returns how many rows were archived. */

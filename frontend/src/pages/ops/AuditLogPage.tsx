@@ -46,6 +46,8 @@ const HIDDEN_FIELDS = new Set(["lineItemId", "allocationId", "customerId"])
 const FIELD_ORDER = [
   "piNumber",
   "reason",
+  "allocationsInContainers",
+  "allocationsLocked",
   "containerNumber",
   "containerLabel",
   "containerLabels",

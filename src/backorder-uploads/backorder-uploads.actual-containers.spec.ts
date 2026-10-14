@@ -1,3 +1,5 @@
+import { ContainerLineAllocation } from "../ready-to-ship/container-line-allocation.entity";
+import { AllocationAction } from "../ready-to-ship/allocation-action.entity";
 import * as ExcelJS from "exceljs";
 import { NotFoundException } from "@nestjs/common";
 import { ActualContainer } from "../actual-containers/actual-container.entity";
@@ -51,6 +53,8 @@ function setup() {
       [BackorderUploadSnapshot, snapshotRepo],
       [ActualContainer, containerRepo],
       [ActualContainerLineItem, containerLineRepo],
+      [ContainerLineAllocation, makeFakeRepo()],
+      [AllocationAction, makeFakeRepo()],
     ]),
   );
   const uploads = new BackorderUploadsService(

@@ -39,6 +39,8 @@ export interface ContainerAllocation {
   // container — a client-editable line inside an otherwise-confirmed
   // container is exactly one with isLocked: false.
   isLocked: boolean
+  // The line's proforma is archived: the position stays until removed.
+  piArchived: boolean
   fillContribution: number
   markingFile: MarkingFileRef | null
 }
@@ -82,6 +84,18 @@ export interface ReadyToShipView {
   undoableActions: number
   unallocatedLines: UnallocatedLine[]
   containers: ShippingContainer[]
+  // Only on the "undo last" reply: removals passed over because their
+  // proforma is archived (still in the log, not undone).
+  undoSkipped?: UndoSkipped[]
+}
+
+export interface UndoSkipped {
+  code: "UNDO_SKIPPED_ARCHIVED_PI"
+  piNumber: string
+  materialNum: string | null
+  // The container's number ("3"), or "OK to mix".
+  container: string
+  qty: number
 }
 
 const READY_TO_SHIP_KEY = "ready-to-ship"

@@ -407,6 +407,16 @@ export function ContainerCard({
                         ? t("readyToShip.card.piSo", { so: allocation.soNumber })
                         : ""}
                     </div>
+                    {allocation.piArchived && (
+                      <Badge
+                        variant="outline"
+                        className="mt-1 border-transparent bg-archived/10 text-archived-text dark:bg-archived/20"
+                        title={t("readyToShip.card.piArchivedHint")}
+                        data-testid="pi-archived"
+                      >
+                        {t("readyToShip.card.piArchived")}
+                      </Badge>
+                    )}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
