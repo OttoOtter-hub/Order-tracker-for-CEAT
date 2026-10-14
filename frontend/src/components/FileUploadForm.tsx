@@ -7,6 +7,8 @@ interface FileUploadFormProps {
   onSubmit: (file: File) => void
   isSubmitting: boolean
   submitLabel: string
+  // The button's text while submitting (default "Uploading...").
+  pendingLabel?: string
   accept?: string
   className?: string
 }
@@ -16,6 +18,7 @@ export function FileUploadForm({
   onSubmit,
   isSubmitting,
   submitLabel,
+  pendingLabel,
   accept,
   className,
 }: FileUploadFormProps) {
@@ -24,20 +27,23 @@ export function FileUploadForm({
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    if (file) {
+    if (file && !isSubmitting) {
       onSubmit(file)
     }
   }
 
   return (
     <form onSubmit={handleSubmit} className={className ?? "flex flex-col gap-3"}>
+      {/* Locked while a file is on its way: no other file can be picked
+          and the button can't be pressed again until the answer is in. */}
       <Input
         type="file"
         accept={accept}
+        disabled={isSubmitting}
         onChange={(e) => setFile(e.target.files?.[0] ?? null)}
       />
-      <Button type="submit" disabled={!file || isSubmitting}>
-        {isSubmitting ? t("common.uploading") : submitLabel}
+      <Button type="submit" disabled={!file || isSubmitting} aria-busy={isSubmitting}>
+        {isSubmitting ? (pendingLabel ?? t("common.uploading")) : submitLabel}
       </Button>
     </form>
   )

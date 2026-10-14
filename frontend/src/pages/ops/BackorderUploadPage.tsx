@@ -1,6 +1,7 @@
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
-import { Download } from "lucide-react"
+import { Download, Loader2, TriangleAlert } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   Card,
   CardContent,
@@ -25,7 +26,8 @@ import {
 } from "@/api/backorderUploads"
 import { formatDateTime } from "@/lib/format"
 import { getErrorMessage } from "@/lib/errors"
-import { useState } from "react"
+import { isOutcomeUnknown } from "@/lib/uploadOutcome"
+import { useRef, useState } from "react"
 
 function ResultCard({ result }: { result: BackorderUploadResult }) {
   const { t } = useTranslation()
@@ -72,6 +74,49 @@ export function BackorderUploadPage() {
     null
   )
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+  // Set synchronously on submit: a second click that lands before React has
+  // re-rendered the disabled button is still refused.
+  const inFlight = useRef(false)
+  // No answer came (gateway timeout, dropped connection): the upload may
+  // have gone through, so the page says to check the history, not to retry.
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false)
+  const historyRef = useRef<HTMLDivElement>(null)
+
+  function refreshHistory() {
+    queryClient.invalidateQueries({ queryKey: ["backorder-uploads"] })
+    queryClient.invalidateQueries({ queryKey: ["proforma-invoices"] })
+  }
+
+  function handleUpload(file: File) {
+    if (inFlight.current) return
+    inFlight.current = true
+    setOutcomeUnknown(false)
+    mutation.mutate(file, {
+      onSuccess: (result) => {
+        setLastResult(result)
+        toast.success(
+          t("backorder.success", {
+            rows: result.rowsProcessed,
+            created: result.newCardsCreated,
+            updated: result.cardsUpdated,
+            archived: result.cardsArchived,
+          })
+        )
+      },
+      onError: (error) => {
+        if (isOutcomeUnknown(error)) {
+          setOutcomeUnknown(true)
+          refreshHistory()
+          return
+        }
+        toast.error(getErrorMessage(error, t("backorder.failed")))
+      },
+      onSettled: () => {
+        inFlight.current = false
+      },
+    })
+  }
 
   function handleExportSnapshot(id: string) {
     setExportingId(id)
@@ -94,34 +139,57 @@ export function BackorderUploadPage() {
           <FileUploadForm
             accept=".xlsx"
             submitLabel={t("backorder.submit")}
+            pendingLabel={t("backorder.uploading")}
             isSubmitting={mutation.isPending}
             className="flex flex-col gap-3 sm:max-w-sm"
-            onSubmit={(file) =>
-              mutation.mutate(file, {
-                onSuccess: (result) => {
-                  setLastResult(result)
-                  toast.success(
-                    t("backorder.success", {
-                      rows: result.rowsProcessed,
-                      created: result.newCardsCreated,
-                      updated: result.cardsUpdated,
-                      archived: result.cardsArchived,
-                    })
-                  )
-                },
-                onError: (error) =>
-                  toast.error(
-                    getErrorMessage(error, t("backorder.failed"))
-                  ),
-              })
-            }
+            onSubmit={handleUpload}
           />
+          {mutation.isPending && (
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="backorder-uploading"
+              className="mt-3 flex items-start gap-2 text-sm"
+            >
+              <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+              <div>
+                <p className="font-medium">{t("backorder.uploading")}</p>
+                <p className="text-muted-foreground">
+                  {t("backorder.uploadingHint")}
+                </p>
+              </div>
+            </div>
+          )}
+          {outcomeUnknown && !mutation.isPending && (
+            <div
+              role="alert"
+              data-testid="backorder-outcome-unknown"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-warning/50 bg-warning/10 p-3 text-sm"
+            >
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+              <div className="flex flex-col items-start gap-2">
+                <p className="font-medium">{t("backorder.noAnswerTitle")}</p>
+                <p>{t("backorder.noAnswerText")}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    refreshHistory()
+                    historyRef.current?.scrollIntoView({ behavior: "smooth" })
+                  }}
+                >
+                  {t("backorder.refreshHistory")}
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {lastResult && <ResultCard result={lastResult} />}
 
-      <Card>
+      <Card ref={historyRef}>
         <CardHeader>
           <CardTitle>{t("backorder.history")}</CardTitle>
         </CardHeader>
