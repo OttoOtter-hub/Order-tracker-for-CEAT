@@ -9,6 +9,10 @@ import { ShippingContainer } from "./shipping-container.entity";
  * roll allocations back. Undoing deletes the action row rather than logging
  * a compensating negative one, so the actions of a container always sum to
  * its allocations' quantities.
+ *
+ * Phase 23: entries written by one user action that touches several lines
+ * at once ("clear container") share a groupId, and "undo last" takes the
+ * whole group back as one step. A single move or removal has none.
  */
 @Entity("allocation_actions")
 export class AllocationAction extends BaseEntity {
@@ -26,4 +30,7 @@ export class AllocationAction extends BaseEntity {
 
   @Column({ name: "delta_qty", type: "numeric", precision: 14, scale: 2 })
   deltaQty: string;
+
+  @Column({ name: "group_id", type: "uuid", nullable: true })
+  groupId: string | null;
 }

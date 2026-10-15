@@ -159,6 +159,14 @@ export function useAddContainerMutation(customerId?: string) {
   )
 }
 
+// Phase 23: every position of one container back to the list at once
+// (client-only; the container itself stays). One "undo last" puts it back.
+export function useClearContainerMutation(customerId?: string) {
+  return useViewMutation(customerId, (containerId: string) =>
+    apiClient.post<ReadyToShipView>(`/containers/${containerId}/clear`)
+  )
+}
+
 // Same limit as the backend's UpdateContainerNameDto.
 export const CONTAINER_NAME_MAX_LENGTH = 30
 

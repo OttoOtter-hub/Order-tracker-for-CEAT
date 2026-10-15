@@ -26,6 +26,7 @@ export const AUDIT_ACTIONS = [
   "rts.removed",
   "rts.container_renamed",
   "rts.container_added",
+  "rts.container_cleared",
   "rts.undone_last",
   "rts.undone_all",
   "rts.confirmed",

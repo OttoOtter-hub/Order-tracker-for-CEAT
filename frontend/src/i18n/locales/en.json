@@ -190,6 +190,7 @@
         "removed": "Removed from a container",
         "container_renamed": "Container name changed",
         "container_added": "Container added manually",
+        "container_cleared": "Container cleared",
         "undone_last": "Last action undone",
         "undone_all": "All unsaved changes undone",
         "confirmed": "Containers confirmed",
@@ -501,6 +502,15 @@
       "failed": "Could not add the container",
       "nothingToAllocate": "There are no unallocated lines"
     },
+    "clear": {
+      "button": "Clear container",
+      "emptyHint": "The container is empty",
+      "confirmTitle": "Return every position of this container to the ready list?",
+      "confirmDescription": "{{container}}: {{lines}} positions, {{qty}} pcs. The container itself stays, empty. “Undo one action” brings them all back.",
+      "confirm": "Clear",
+      "done": "{{container}} cleared: {{lines}} positions are back in the list",
+      "failed": "Could not clear the container"
+    },
     "card": {
       "confirmed": "Confirmed",
       "partiallyUnlocked": "Partially unlocked",
@@ -757,6 +767,7 @@
     "REMOVE_EXCEEDS_ALLOCATED": "Can't remove {{qty, number}}: the container holds only {{current, number}}.",
     "ALLOCATION_LOCKED": "This position is locked — it can only be changed after CEAT unlocks it.",
     "CONTAINER_LOCKED": "This container is confirmed — it can only be changed after CEAT unlocks it.",
+    "CONTAINER_EMPTY": "The container is empty — there is nothing to clear.",
     "NOTHING_TO_CONFIRM": "There are no containers with unconfirmed positions to confirm.",
     "CONTAINER_OVERFILLED": "Overfilled containers: {{containers}}.",
     "CONTAINER_NOT_LOCKED": "This container isn't confirmed — there's nothing to unlock.",

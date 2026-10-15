@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Eraser,
   FileCheck,
   FileX,
   LockOpen,
@@ -19,6 +20,7 @@ import { ContainerNameEditor } from "@/pages/shared/ready-to-ship/ContainerNameE
 import { FillMeter } from "@/pages/shared/ready-to-ship/FillMeter"
 import type { RemoveTarget } from "@/pages/shared/ready-to-ship/RemoveDialog"
 import {
+  useClearContainerMutation,
   downloadMarkingFile,
   useDeleteMarkingMutation,
   useUploadMarkingMutation,
@@ -251,6 +253,12 @@ export function ContainerCard({
     </Button>
   )
 
+  // Phase 23: only the client, and only while none of the positions is
+  // locked (a draft, or a container ops has unlocked as a whole). With
+  // nothing in it the button is there but off.
+  const canClear =
+    isClient && !container.isConfirmed && !container.isPartiallyUnlocked
+
   const cardProps = {
     "data-container-id": container.id,
     "data-container-label": container.label,
@@ -327,16 +335,21 @@ export function ContainerCard({
               )}
             </div>
           </div>
-          {isOkToMix ? (
-            <span
-              className="shrink-0 text-sm font-medium tabular-nums"
-              data-testid="ok-to-mix-summary"
-            >
-              {okToMixSummary}
-            </span>
-          ) : (
-            <FillMeter percent={container.fillPercent} large className="w-44 shrink-0" />
-          )}
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            {isOkToMix ? (
+              <span
+                className="text-sm font-medium tabular-nums"
+                data-testid="ok-to-mix-summary"
+              >
+                {okToMixSummary}
+              </span>
+            ) : (
+              <FillMeter percent={container.fillPercent} large className="w-44" />
+            )}
+            {canClear && (
+              <ClearContainerButton container={container} />
+            )}
+          </div>
         </div>
 
         {(showCounter || (isOps && hasAnyLockedPosition)) && (
@@ -475,5 +488,63 @@ export function ContainerCard({
         </ul>
       </CardContent>
     </Card>
+  )
+}
+
+// Phase 23: "Clear container" — every position back to the list, after a
+// confirmation; one "undo last" brings them back.
+// Client-only, so the view to refresh is the client's own (no customerId).
+function ClearContainerButton({ container }: { container: ShippingContainer }) {
+  const { t } = useTranslation()
+  const containerTitle = useContainerTitle()
+  const clear = useClearContainerMutation()
+  const [open, setOpen] = useState(false)
+  const isEmpty = container.allocations.length === 0
+
+  return (
+    <>
+      <span title={isEmpty ? t("readyToShip.clear.emptyHint") : undefined}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={isEmpty || clear.isPending}
+          data-testid="clear-container"
+          onClick={() => setOpen(true)}
+        >
+          <Eraser /> {t("readyToShip.clear.button")}
+        </Button>
+      </span>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={t("readyToShip.clear.confirmTitle")}
+        description={t("readyToShip.clear.confirmDescription", {
+          container: containerTitle(container),
+          lines: container.allocations.length,
+          qty: formatNumber(String(container.totalQty)),
+        })}
+        confirmLabel={t("readyToShip.clear.confirm")}
+        destructive
+        isPending={clear.isPending}
+        onConfirm={() =>
+          clear.mutate(container.id, {
+            onSuccess: () => {
+              setOpen(false)
+              toast.success(
+                t("readyToShip.clear.done", {
+                  container: containerTitle(container),
+                  lines: container.allocations.length,
+                })
+              )
+            },
+            onError: (error) => {
+              setOpen(false)
+              toast.error(getErrorMessage(error, t("readyToShip.clear.failed")))
+            },
+          })
+        }
+      />
+    </>
   )
 }

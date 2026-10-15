@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
+import { randomUUID } from "node:crypto";
 import { DataSource, EntityManager, In } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
 import { apiError } from "../common/errors/api-error";
@@ -571,6 +572,107 @@ export class ReadyToShipService {
    * container keep summing to its allocations' quantities. Changing the
    * quantity drops that row's marking file, like any other change.
    */
+  /**
+   * Phase 23: every position of one container back to the unallocated list
+   * in one go — the client's own container only (another customer's: 404),
+   * and only while none of its positions is locked (a confirmed or partly
+   * confirmed container: 400 CONTAINER_LOCKED; ops unlocks first). An empty
+   * container is a 400 CONTAINER_EMPTY. The container itself stays — slot,
+   * manual container and "OK to mix" keep their label, name and flags.
+   *
+   * Marking files of the removed positions go with them, as on any change of
+   * quantity. Each removed position is logged as a negative undo entry; all
+   * of them share one groupId, so "undo last" puts the whole container back
+   * with one press, and "undo all" rolls it back like any removal.
+   */
+  async clearContainer(
+    containerId: string,
+    actor: RequestUser,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.requireClient(actor);
+
+    await this.dataSource.transaction(async (em) => {
+      const container = await this.findOwnedContainer(
+        em,
+        containerId,
+        customerId,
+      );
+      const allocationRepo = em.getRepository(ContainerLineAllocation);
+      const found = await allocationRepo.find({
+        where: { container: { id: container.id } },
+        relations: ["piLineItem"],
+      });
+      if (found.length === 0) {
+        throw new BadRequestException(
+          apiError(
+            "CONTAINER_EMPTY",
+            "в контейнере нет позиций — очищать нечего",
+          ),
+        );
+      }
+      // Re-read under row locks: a concurrent move/remove/confirm on these
+      // positions waits, and what is cleared is what is there now.
+      const locked = await allocationRepo.find({
+        where: { id: In(found.map((a) => a.id)) },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (locked.some((a) => a.isLocked)) {
+        throw new BadRequestException(
+          apiError(
+            "CONTAINER_LOCKED",
+            "контейнер подтверждён — состав можно менять только после разблокировки CEAT",
+          ),
+        );
+      }
+      const qtyById = new Map(
+        locked.map((a) => [a.id, toNumberOrNull(a.allocatedQty) ?? 0]),
+      );
+      const positions = found.filter((a) => qtyById.has(a.id));
+      const ids = positions.map((a) => a.id);
+
+      await em
+        .getRepository(MarkingFile)
+        .delete({ allocation: { id: In(ids) } });
+      await allocationRepo.delete({ id: In(ids) });
+
+      const actionRepo = em.getRepository(AllocationAction);
+      const groupId = randomUUID();
+      const now = new Date();
+      await actionRepo.save(
+        positions.map((a) =>
+          actionRepo.create({
+            customer: { id: customerId } as Customer,
+            container: { id: container.id } as ShippingContainer,
+            piLineItem: { id: a.piLineItem.id } as PiLineItem,
+            deltaQty: String(-(qtyById.get(a.id) ?? 0)),
+            groupId,
+            createdAt: now,
+          }),
+        ),
+      );
+
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.container_cleared",
+          entityType: "shipping_container",
+          entityId: container.id,
+          metadata: {
+            containerLabel: container.label,
+            lines: positions.length,
+            qty: positions.reduce(
+              (sum, a) => sum + (qtyById.get(a.id) ?? 0),
+              0,
+            ),
+          },
+        },
+        em,
+      );
+    });
+
+    return this.loadView(customerId);
+  }
+
   async remove(
     dto: { allocationId: string; qty: number },
     actor: RequestUser,
@@ -735,37 +837,77 @@ export class ReadyToShipService {
         );
       }
 
-      const delta = toNumberOrNull(last.deltaQty) ?? 0;
-      if (delta < 0) {
-        await this.restoreRemoved(em, last, -delta);
-      } else {
-        const allocation = await em
-          .getRepository(ContainerLineAllocation)
-          .findOne({
-            where: {
-              container: { id: last.container.id },
-              piLineItem: { id: last.piLineItem.id },
-            },
-          });
-        if (allocation) {
-          await this.reduceAllocation(em, allocation, delta);
+      // Phase 23: one press undoes a whole group ("clear container") — its
+      // other entries too, except those the rules above pass over (a locked
+      // position, a removal of an archived line), which stay in the log.
+      const group = last.groupId
+        ? candidates.filter((c) => {
+            if (c.groupId !== last.groupId) return false;
+            if (
+              lockedKeys.has(allocationKey(c.container.id, c.piLineItem.id))
+            ) {
+              return false;
+            }
+            if (
+              (toNumberOrNull(c.deltaQty) ?? 0) < 0 &&
+              c.piLineItem.pi?.isArchivedShipped
+            ) {
+              if (!skipped.includes(c)) {
+                skipped.push(c);
+                undoSkipped.push(describeSkippedUndo(c));
+              }
+              return false;
+            }
+            return true;
+          })
+        : [last];
+
+      for (const entry of group) {
+        const delta = toNumberOrNull(entry.deltaQty) ?? 0;
+        if (delta < 0) {
+          await this.restoreRemoved(em, entry, -delta);
+        } else {
+          const allocation = await em
+            .getRepository(ContainerLineAllocation)
+            .findOne({
+              where: {
+                container: { id: entry.container.id },
+                piLineItem: { id: entry.piLineItem.id },
+              },
+            });
+          if (allocation) {
+            await this.reduceAllocation(em, allocation, delta);
+          }
         }
       }
-      await em.getRepository(AllocationAction).delete({ id: last.id });
+      await em
+        .getRepository(AllocationAction)
+        .delete({ id: In(group.map((entry) => entry.id)) });
 
-      // What was undone: a move (positive delta) or a removal (negative).
+      // What was undone: a move (positive delta) or a removal (negative);
+      // for a group, the container's total and how many lines.
       await this.audit.record(
         {
           actor,
           action: "rts.undone_last",
           entityType: "shipping_container",
           entityId: last.container.id,
-          metadata: {
-            containerLabel: last.container.label,
-            piNumber: last.piLineItem.pi?.piNumber ?? null,
-            materialNum: last.piLineItem.materialNum,
-            undoneDelta: delta,
-          },
+          metadata:
+            group.length > 1 || last.groupId
+              ? {
+                  containerLabel: last.container.label,
+                  lines: group.length,
+                  undoneDelta: group.reduce(
+                    (sum, entry) => sum + (toNumberOrNull(entry.deltaQty) ?? 0),
+                    0,
+                  ),
+                }
+              : {
+                  containerLabel: last.container.label,
+                  piNumber: last.piLineItem.pi?.piNumber ?? null,
+                  materialNum: last.piLineItem.materialNum,
+                  undoneDelta: toNumberOrNull(last.deltaQty) ?? 0,
+                },
         },
         em,
       );
@@ -1751,9 +1893,15 @@ export class ReadyToShipService {
           })
         : Promise.resolve([] as MarkingFile[]),
     ]);
-    const undoableActions = actionRows.filter(
-      (a) => !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
-    ).length;
+    // A group ("clear container") is one step for "undo last", so it counts once.
+    const undoableActions = new Set(
+      actionRows
+        .filter(
+          (a) =>
+            !lockedKeys.has(allocationKey(a.container.id, a.piLineItem.id)),
+        )
+        .map((a) => a.groupId ?? a.id),
+    ).size;
     const markingByAllocation = new Map(
       markings.map((m) => [m.allocation.id, m]),
     );

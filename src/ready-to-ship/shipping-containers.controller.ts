@@ -45,4 +45,18 @@ export class ShippingContainersController {
   ) {
     return this.service.rename(id, dto.name, user);
   }
+
+  /**
+   * Phase 23: every position of one of the client's own containers back to
+   * the unallocated list at once (the container itself stays). Answers with
+   * the fresh ready-to-ship view; ops is rejected with a 403 in the service.
+   */
+  @ClientWriteAllowed()
+  @Post(":id/clear")
+  clear(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.clearContainer(id, user);
+  }
 }
