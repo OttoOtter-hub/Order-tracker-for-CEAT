@@ -546,6 +546,13 @@
       "deleteTitle": "Delete the marking file?",
       "deleteDescription": "{{material}} in “{{container}}”: the file will be deleted and will need to be uploaded again."
     },
+    "markingZip": {
+      "button_one": "Download marking (ZIP) · {{count}} file",
+      "button_other": "Download marking (ZIP) · {{count}} files",
+      "none": "No marking files in this container yet",
+      "downloading": "Downloading…",
+      "failed": "Could not download the marking archive"
+    },
     "move": {
       "title": "Move to container",
       "info": "PI {{title}} · SO {{so}} · balance {{qty}} pcs",
@@ -742,6 +749,7 @@
     "NOT_FOUND": "Not found — it may have been deleted, or it isn't available to you.",
     "NO_CUSTOMER_EXISTS": "No customer exists yet — create one before uploading files.",
     "NO_MARKING_FILE": "This position has no marking file.",
+    "NO_MARKING_FILES": "This container has no marking files yet.",
     "NOTHING_TO_UNDO": "Nothing to undo.",
     "FILE_REQUIRED": "Choose a file to upload.",
     "QTY_NOT_POSITIVE_INTEGER": "Quantity must be a whole number greater than zero.",

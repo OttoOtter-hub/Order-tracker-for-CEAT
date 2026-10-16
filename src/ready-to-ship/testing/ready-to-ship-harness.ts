@@ -84,12 +84,34 @@ export function makeHarness() {
   );
 
   let storedFileCounter = 0;
+  const storedFiles = new Map<
+    string,
+    { originalName: string; onDisk?: boolean }
+  >();
   const filesService = {
     save: jest.fn(async () => ({ id: `stored-${++storedFileCounter}` })),
     openStoredFile: jest.fn(async (id: string) => ({
       file: { id, mimeType: "application/pdf", originalName: "marking.pdf" },
       stream: `stream-of-${id}`,
     })),
+    // stored_files as far as a spec registered them (storedFiles below);
+    // onDisk: false is a record whose bytes are gone.
+    locateStoredFiles: jest.fn(async (ids: string[]) => {
+      const found = new Map<
+        string,
+        { file: { id: string; originalName: string }; fullPath: string | null }
+      >();
+      for (const id of ids) {
+        const stored = storedFiles.get(id);
+        if (stored) {
+          found.set(id, {
+            file: { id, originalName: stored.originalName },
+            fullPath: stored.onDisk === false ? null : `/uploads/${id}`,
+          });
+        }
+      }
+      return found;
+    }),
   };
   const eventEmitter = { emit: jest.fn() };
   const audit = makeFakeAudit();
@@ -102,6 +124,7 @@ export function makeHarness() {
     lines,
     dataSource,
     filesService,
+    storedFiles,
     eventEmitter,
     audit,
     service: new ReadyToShipService(

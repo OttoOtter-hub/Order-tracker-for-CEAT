@@ -296,6 +296,11 @@ export function exportReadyToShipXlsx(customerId?: string): Promise<void> {
   )
 }
 
+// Phase 24: every marking file of a container as one ZIP (both roles).
+export function downloadMarkingZip(containerId: string): Promise<void> {
+  return downloadFile(`/containers/${containerId}/marking-zip`, "marking.zip")
+}
+
 export function downloadMarkingFile(allocationId: string): Promise<void> {
   return downloadFile(
     `/container-allocations/${allocationId}/marking-file/download`,

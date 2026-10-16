@@ -41,6 +41,7 @@ export const ERROR_CODES = [
   "NOT_FOUND",
   "NO_CUSTOMER_EXISTS",
   "NO_MARKING_FILE",
+  "NO_MARKING_FILES",
   "NOTHING_TO_UNDO",
 
   // --- Input ---

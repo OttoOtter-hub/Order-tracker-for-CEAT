@@ -2,6 +2,7 @@ import { ApiError, apiErrorFromBody } from "@/api/client"
 import i18n from "@/i18n"
 import { resolveFileUrl } from "@/lib/fileUrl"
 import { getStoredToken } from "@/auth/storage"
+import { filenameFromDisposition } from "@/lib/contentDisposition"
 
 // A failed download carries the server's own explanation (code + message) in
 // its JSON body; parse it the same way as any other API error, so
@@ -71,18 +72,11 @@ export async function downloadFile(
   if (!response.ok) {
     throw await downloadError(response)
   }
-  const disposition = response.headers.get("content-disposition")
-  const match = disposition?.match(/filename="?([^";]+)"?/)
-  // The backend percent-encodes the name ("packing%20list.pdf"), so a name
-  // with spaces or Cyrillic would otherwise be saved as-is, escapes included.
-  let filename = fallbackFilename
-  if (match?.[1]) {
-    try {
-      filename = decodeURIComponent(match[1])
-    } catch {
-      filename = match[1]
-    }
-  }
+  // RFC 5987 filename* first (exact, any script), then the plain name.
+  const filename = filenameFromDisposition(
+    response.headers.get("content-disposition"),
+    fallbackFilename
+  )
 
   const blob = await response.blob()
   const objectUrl = URL.createObjectURL(blob)

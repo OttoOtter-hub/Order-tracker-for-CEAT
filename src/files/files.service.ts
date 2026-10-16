@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { In, Repository } from "typeorm";
 import {
   createReadStream,
   existsSync,
@@ -102,6 +102,29 @@ export class FilesService {
       );
     }
     return this.openFromDisk(file);
+  }
+
+  /**
+   * Where stored files are on disk, for callers that stream several at once
+   * (and have authorized the request themselves, like openStoredFile).
+   * fullPath is null for a file whose record exists but whose bytes are gone
+   * from disk; an unknown id is simply absent from the map.
+   */
+  async locateStoredFiles(
+    ids: string[],
+  ): Promise<Map<string, { file: StoredFile; fullPath: string | null }>> {
+    const files = ids.length
+      ? await this.repo.find({ where: { id: In(ids) } })
+      : [];
+    return new Map(
+      files.map((file) => {
+        const fullPath = join(this.uploadDir, file.storageKey);
+        return [
+          file.id,
+          { file, fullPath: existsSync(fullPath) ? fullPath : null },
+        ];
+      }),
+    );
   }
 
   private openFromDisk(file: StoredFile): DownloadableFile {

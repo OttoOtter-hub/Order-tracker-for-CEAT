@@ -6,9 +6,11 @@ import {
   ChevronRight,
   Download,
   Eraser,
+  FileArchive,
   FileCheck,
   FileX,
   LockOpen,
+  Loader2,
   Trash2,
   Upload,
 } from "lucide-react"
@@ -22,6 +24,7 @@ import type { RemoveTarget } from "@/pages/shared/ready-to-ship/RemoveDialog"
 import {
   useClearContainerMutation,
   downloadMarkingFile,
+  downloadMarkingZip,
   useDeleteMarkingMutation,
   useUploadMarkingMutation,
   type ContainerAllocation,
@@ -352,7 +355,9 @@ export function ContainerCard({
           </div>
         </div>
 
-        {(showCounter || (isOps && hasAnyLockedPosition)) && (
+        {(showCounter ||
+          (isOps && hasAnyLockedPosition) ||
+          container.allocations.length > 0) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             {showCounter ? (
               <span
@@ -367,16 +372,21 @@ export function ContainerCard({
             ) : (
               <span />
             )}
-            {isOps && hasAnyLockedPosition && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => onUnlock(container)}
-              >
-                <LockOpen /> {t("readyToShip.card.unlock")}
-              </Button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {container.allocations.length > 0 && (
+                <MarkingZipButton container={container} />
+              )}
+              {isOps && hasAnyLockedPosition && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onUnlock(container)}
+                >
+                  <LockOpen /> {t("readyToShip.card.unlock")}
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
@@ -546,5 +556,40 @@ function ClearContainerButton({ container }: { container: ShippingContainer }) {
         }
       />
     </>
+  )
+}
+
+// Phase 24: every marking file of the container in one ZIP — both roles.
+// An authorized fetch saved as a blob (the token isn't in a cookie, so a
+// plain link would be a 401). Off when there's no file yet.
+function MarkingZipButton({ container }: { container: ShippingContainer }) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const count = container.markingFilesUploaded
+
+  return (
+    <span title={count === 0 ? t("readyToShip.markingZip.none") : undefined}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={count === 0 || busy}
+        aria-busy={busy}
+        data-testid="marking-zip"
+        onClick={() => {
+          setBusy(true)
+          downloadMarkingZip(container.id)
+            .catch((error) =>
+              toast.error(getErrorMessage(error, t("readyToShip.markingZip.failed")))
+            )
+            .finally(() => setBusy(false))
+        }}
+      >
+        {busy ? <Loader2 className="animate-spin" /> : <FileArchive />}
+        {busy
+          ? t("readyToShip.markingZip.downloading")
+          : t("readyToShip.markingZip.button", { count })}
+      </Button>
+    </span>
   )
 }
