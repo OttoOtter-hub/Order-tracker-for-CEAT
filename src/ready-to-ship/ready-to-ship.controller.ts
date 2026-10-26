@@ -22,9 +22,10 @@ import { ReadyToShipService } from "./ready-to-ship.service";
  * customer-owned entity, so the interceptor has no path to check. Scoping
  * is done in the service (client -> own customer_id; ops must name one).
  *
- * Every POST here is @ClientWriteAllowed() to get a client past
- * RolesGuard's read-only rule; ops also reaches the handlers ("ops always
- * allowed") and is rejected explicitly in ReadyToShipService.
+ * Every editing POST here is @ClientWriteAllowed() to get a client past
+ * RolesGuard's read-only rule; who may edit right now is the load list's
+ * status (Phase 25 — ops in draft_ceat, the client in client_editing),
+ * checked in the service. Ops names the customer with ?customerId=.
  */
 @ApiBearerAuth()
 @ApiTags("ready-to-ship")
@@ -71,8 +72,13 @@ export class ReadyToShipController {
 
   @ClientWriteAllowed()
   @Post("move")
-  move(@Body() dto: MoveAllocationDto, @CurrentUser() user: RequestUser) {
-    return this.service.move(dto, user);
+  move(
+    @Body() dto: MoveAllocationDto,
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.move(dto, user, customerId);
   }
 
   /** Phase 21: every line's whole remainder into "OK to mix", all or nothing. */
@@ -97,20 +103,20 @@ export class ReadyToShipController {
 
   @ClientWriteAllowed()
   @Post("move-remaining-to-mix")
-  moveRemainingToMix(@CurrentUser() user: RequestUser) {
-    return this.service.moveRemainingToMix(user);
+  moveRemainingToMix(
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.moveRemainingToMix(user, customerId);
   }
 
   /**
    * One more numbered container, by hand, when the plan's slots ran out
-   * before the unallocated lines did. No body; the client's own customer
-   * (naming another one is a 404, as on GET).
+   * before the unallocated lines did. No body. Phase 25: CEAT's, in
+   * draft_ceat (the client moves lines between existing containers).
    */
-  @ApiQuery({
-    name: "customerId",
-    required: false,
-    description: "optional; must be the client's own customer",
-  })
+  @ApiQuery({ name: "customerId", required: true })
   @ClientWriteAllowed()
   @Post("add-container")
   addContainer(
@@ -123,25 +129,32 @@ export class ReadyToShipController {
 
   @ClientWriteAllowed()
   @Post("remove")
-  remove(@Body() dto: RemoveAllocationDto, @CurrentUser() user: RequestUser) {
-    return this.service.remove(dto, user);
+  remove(
+    @Body() dto: RemoveAllocationDto,
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.remove(dto, user, customerId);
   }
 
   @ClientWriteAllowed()
   @Post("undo-last")
-  undoLast(@CurrentUser() user: RequestUser) {
-    return this.service.undoLast(user);
+  undoLast(
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.undoLast(user, customerId);
   }
 
   @ClientWriteAllowed()
   @Post("undo-all")
-  undoAll(@CurrentUser() user: RequestUser) {
-    return this.service.undoAll(user);
-  }
-
-  @ClientWriteAllowed()
-  @Post("confirm")
-  confirm(@CurrentUser() user: RequestUser) {
-    return this.service.confirm(user);
+  undoAll(
+    @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
+  ) {
+    return this.service.undoAll(user, customerId);
   }
 }

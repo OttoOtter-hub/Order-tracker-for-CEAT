@@ -1,3 +1,4 @@
+import { LoadListStatus } from "./load-list.entity";
 import {
   BadRequestException,
   ForbiddenException,
@@ -67,6 +68,7 @@ describe("ReadyToShipService", () => {
     return h.service.move(
       { piLineItemId, containerId: containerId(index), qty },
       actor,
+      actor.role === "ops" ? "cust-1" : undefined,
     );
   }
 
@@ -180,7 +182,7 @@ describe("ReadyToShipService", () => {
       it("counts confirmed containers toward the total, and tops up beyond them", async () => {
         await h.service.getView(clientActor);
         await move("li-A", 0, 100);
-        await h.service.confirm(clientActor);
+        await h.confirm(clientActor);
 
         const same = await h.service.getView(clientActor);
         expect(slots(same.containers)).toHaveLength(2);
@@ -408,7 +410,7 @@ describe("ReadyToShipService", () => {
 
     it("rejects a move into a confirmed container", async () => {
       await move("li-A", 0, 100);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
 
       await expect(move("li-B", 0, 10)).rejects.toBeInstanceOf(
         BadRequestException,
@@ -470,10 +472,11 @@ describe("ReadyToShipService", () => {
       expect(h.allocations.rows).toHaveLength(0);
     });
 
-    it("is client-only: ops is rejected with 403", async () => {
-      await expect(move("li-A", 0, 10, opsActor)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+    it("Phase 25: while the client edits, ops can't — 400 LOAD_LIST_NOT_EDITABLE", async () => {
+      expect(await rejectionBody(move("li-A", 0, 10, opsActor))).toMatchObject({
+        code: "LOAD_LIST_NOT_EDITABLE",
+        params: { status: "client_editing" },
+      });
       expect(h.allocations.rows).toHaveLength(0);
     });
   });
@@ -517,7 +520,8 @@ describe("ReadyToShipService", () => {
 
     it("never undoes moves inside a confirmed container", async () => {
       await move("li-A", 0, 100);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
+      h.clientEditing(); // a next round the client edits
 
       await expect(h.service.undoLast(clientActor)).rejects.toBeInstanceOf(
         NotFoundException,
@@ -534,10 +538,10 @@ describe("ReadyToShipService", () => {
       expect(h.allocations.rows).toHaveLength(1);
     });
 
-    it("is client-only", async () => {
-      await expect(h.service.undoLast(opsActor)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+    it("Phase 25: not for ops while the client edits", async () => {
+      expect(
+        await rejectionBody(h.service.undoLast(opsActor, "cust-1")),
+      ).toMatchObject({ code: "LOAD_LIST_NOT_EDITABLE" });
     });
   });
 
@@ -566,7 +570,8 @@ describe("ReadyToShipService", () => {
 
     it("leaves out actions on confirmed containers and is back to 0 after undo-all", async () => {
       await move("li-A", 0, 100);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
+      h.clientEditing();
       await move("li-B", 1, 100);
 
       const view = await h.service.getView(clientActor);
@@ -587,6 +592,7 @@ describe("ReadyToShipService", () => {
       return h.service.remove(
         { allocationId: id ?? allocationId(), qty },
         actor,
+        actor.role === "ops" ? "cust-1" : undefined,
       );
     };
 
@@ -657,7 +663,8 @@ describe("ReadyToShipService", () => {
 
     it("refuses a confirmed container", async () => {
       await move("li-A", 0, 100);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
+      h.clientEditing();
 
       await expect(removeQty(10)).rejects.toBeInstanceOf(BadRequestException);
       expect(await rejectionBody(removeQty(10))).toMatchObject({
@@ -666,7 +673,7 @@ describe("ReadyToShipService", () => {
       expect(h.allocations.rows[0].allocatedQty).toBe("100");
     });
 
-    it("404s another customer's allocation and an unknown one; ops gets 403", async () => {
+    it("404s another customer's allocation and an unknown one; ops can't edit while the client does", async () => {
       await move("li-A", 0, 60);
 
       await expect(removeQty(5, otherClientActor)).rejects.toBeInstanceOf(
@@ -675,9 +682,9 @@ describe("ReadyToShipService", () => {
       await expect(removeQty(5, clientActor, "nope")).rejects.toBeInstanceOf(
         NotFoundException,
       );
-      await expect(removeQty(5, opsActor)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      expect(await rejectionBody(removeQty(5, opsActor))).toMatchObject({
+        code: "LOAD_LIST_NOT_EDITABLE",
+      });
       expect(h.allocations.rows[0].allocatedQty).toBe("60");
     });
 
@@ -711,7 +718,8 @@ describe("ReadyToShipService", () => {
       await move("li-B", 0, 100); // C1 = B x100 (0.5)
       await removeQty(100); // C1 empty again
       await move("li-B", 1, 100); // the same units go to C2
-      await h.service.confirm(clientActor); // C2 confirmed, no longer undoable
+      await h.confirm(clientActor); // C2 confirmed, no longer undoable
+      h.clientEditing();
 
       let error: BadRequestException | undefined;
       await h.service.undoLast(clientActor).catch((e) => (error = e));
@@ -743,13 +751,14 @@ describe("ReadyToShipService", () => {
       await h.service.getView(clientActor);
     });
 
-    it("rolls every move back, drops the emptied containers and recreates the full slot set", async () => {
+    it("CEAT's undo-all (draft_ceat) rolls every move back, drops the emptied containers and recreates the full slot set", async () => {
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT);
       const oldIds = h.containers.rows.map((c) => c.id);
-      await move("li-A", 0, 100);
-      await move("li-A", 1, 50);
-      await move("li-B", 1, 100);
+      await move("li-A", 0, 100, opsActor);
+      await move("li-A", 1, 50, opsActor);
+      await move("li-B", 1, 100, opsActor);
 
-      const view = await h.service.undoAll(clientActor);
+      const view = await h.service.undoAll(opsActor, "cust-1");
 
       expect(h.allocations.rows).toHaveLength(0);
       expect(h.actions.rows).toHaveLength(0);
@@ -768,12 +777,25 @@ describe("ReadyToShipService", () => {
       ]);
     });
 
-    it("leaves confirmed containers alone and recreates only the missing slots", async () => {
-      await move("li-A", 0, 100); // C1 = 1.0
-      await h.service.confirm(clientActor); // C1 confirmed; C2 stays an empty draft
-      await move("li-A", 1, 50); // C2 = 0.5, draft
+    it("the client's undo-all (client_editing) takes positions back but leaves every container be", async () => {
+      const oldIds = h.containers.rows.map((c) => c.id);
+      await move("li-A", 0, 100);
+      await move("li-B", 1, 100);
 
       const view = await h.service.undoAll(clientActor);
+
+      expect(h.allocations.rows).toHaveLength(0);
+      expect(view.containers.map((c) => c.id)).toEqual(oldIds);
+    });
+
+    it("leaves confirmed containers alone and recreates only the missing slots", async () => {
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT);
+      await move("li-A", 0, 100, opsActor); // C1 = 1.0
+      await h.confirm(opsActor); // C1 confirmed; C2 stays an empty draft
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT); // CEAT's next round
+      await move("li-A", 1, 50, opsActor); // C2 = 0.5, draft
+
+      const view = await h.service.undoAll(opsActor, "cust-1");
 
       // Total need is 2; one is confirmed, so exactly one draft slot comes
       // back — numbered after the highest label still in use.
@@ -793,10 +815,10 @@ describe("ReadyToShipService", () => {
       expect(slots(view.containers)).toHaveLength(2);
     });
 
-    it("is client-only", async () => {
-      await expect(h.service.undoAll(opsActor)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+    it("Phase 25: not for ops while the client edits", async () => {
+      expect(
+        await rejectionBody(h.service.undoAll(opsActor, "cust-1")),
+      ).toMatchObject({ code: "LOAD_LIST_NOT_EDITABLE" });
     });
   });
 
@@ -808,7 +830,7 @@ describe("ReadyToShipService", () => {
     it("confirms every non-empty draft together, stamping who and when, and leaves empty slots unconfirmed", async () => {
       await move("li-A", 0, 100);
 
-      const view = await h.service.confirm(clientActor);
+      const view = await h.confirm(clientActor);
 
       const [first, second] = view.containers;
       expect(first.isConfirmed).toBe(true);
@@ -823,7 +845,7 @@ describe("ReadyToShipService", () => {
       await move("li-A", 1, 50); // C2 = 50%, fine on its own
 
       let error: BadRequestException | undefined;
-      await h.service.confirm(clientActor).catch((e) => (error = e));
+      await h.confirm(clientActor).catch((e) => (error = e));
 
       expect(error).toBeInstanceOf(BadRequestException);
       const body = error!.getResponse() as any;
@@ -840,7 +862,7 @@ describe("ReadyToShipService", () => {
     it("counts exactly 100% as fine", async () => {
       await move("li-A", 0, 100);
 
-      const view = await h.service.confirm(clientActor);
+      const view = await h.confirm(clientActor);
 
       expect(view.containers[0]).toMatchObject({
         isConfirmed: true,
@@ -854,23 +876,15 @@ describe("ReadyToShipService", () => {
       await move("li-B", 1, 100);
       h.containers.save.mockClear();
 
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
 
       expect(h.containers.save).toHaveBeenCalledTimes(1);
       expect(h.containers.save.mock.calls[0][0]).toHaveLength(2);
     });
 
     it("400s when there is nothing to confirm", async () => {
-      await expect(h.service.confirm(clientActor)).rejects.toBeInstanceOf(
+      await expect(h.confirm(clientActor)).rejects.toBeInstanceOf(
         BadRequestException,
-      );
-    });
-
-    it("is client-only", async () => {
-      await move("li-A", 0, 100);
-
-      await expect(h.service.confirm(opsActor)).rejects.toBeInstanceOf(
-        ForbiddenException,
       );
     });
   });
@@ -880,7 +894,7 @@ describe("ReadyToShipService", () => {
       await h.service.getView(clientActor);
       await move("li-A", 0, 100);
       await move("li-B", 1, 100);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
     });
 
     it("unlocks only the named container and clears its confirmation stamp", async () => {
@@ -936,13 +950,26 @@ describe("ReadyToShipService", () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it("Phase 13: emits container.reopened-for-client with the container's label and customer id", async () => {
+    it("Phase 25: takes the confirmed load list back to draft_ceat for CEAT, journaled — no email", async () => {
       await h.service.unlock(containerId(0), opsActor);
 
-      expect(h.eventEmitter.emit).toHaveBeenCalledWith(
-        "container.reopened-for-client",
-        { label: "Контейнер 1", customerId: "cust-1" },
-      );
+      expect(h.loadListStatus()).toBe(LoadListStatus.DRAFT_CEAT);
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+      expect(h.audit.actions()).toContain("rts.load_list_reopened");
+    });
+
+    it("Phase 25: refused while the client has the load list (sent, editing, submitted)", async () => {
+      for (const status of [
+        LoadListStatus.SENT_TO_CLIENT,
+        LoadListStatus.CLIENT_EDITING,
+        LoadListStatus.SUBMITTED_BY_CLIENT,
+      ]) {
+        h.setLoadListStatus(status);
+        expect(
+          await rejectionBody(h.service.unlock(containerId(0), opsActor)),
+        ).toMatchObject({ code: "LOAD_LIST_WRONG_STATUS", params: { status } });
+      }
+      expect(h.allocations.rows.every((a: any) => a.isLocked)).toBe(true);
     });
 
     it("Phase 13: does not emit when unlock fails (unconfirmed / unknown container)", async () => {
@@ -958,7 +985,7 @@ describe("ReadyToShipService", () => {
       await h.service.getView(clientActor);
       await move("li-A", 0, 50); // 50%
       await move("li-B", 0, 50); // + 25% -> 75%, both land in Контейнер 1
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
     });
 
     const allocationOf = (line: string) =>
@@ -987,7 +1014,7 @@ describe("ReadyToShipService", () => {
     it("the container reads as partially unlocked in the view, not fully confirmed", async () => {
       await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
 
-      const view = await h.service.getView(clientActor);
+      const view = await h.service.getView(opsActor, "cust-1");
 
       expect(view.containers[0]).toMatchObject({
         isConfirmed: false,
@@ -998,10 +1025,10 @@ describe("ReadyToShipService", () => {
     it("move works on the unlocked position and 400s on the still-locked one", async () => {
       await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
 
-      await expect(move("li-A", 0, 5)).resolves.toBeDefined();
+      await expect(move("li-A", 0, 5, opsActor)).resolves.toBeDefined();
       expect(allocationOf("li-A").isLocked).toBe(false);
 
-      await expect(move("li-B", 0, 5)).rejects.toBeInstanceOf(
+      await expect(move("li-B", 0, 5, opsActor)).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
@@ -1012,23 +1039,25 @@ describe("ReadyToShipService", () => {
       await expect(
         h.service.remove(
           { allocationId: allocationOf("li-A").id, qty: 10 },
-          clientActor,
+          opsActor,
+          "cust-1",
         ),
       ).resolves.toBeDefined();
 
       await expect(
         h.service.remove(
           { allocationId: allocationOf("li-B").id, qty: 10 },
-          clientActor,
+          opsActor,
+          "cust-1",
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it("confirm returns the unlocked position to locked, together with any other draft", async () => {
       await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
-      await move("li-A", 0, 5);
+      await move("li-A", 0, 5, opsActor);
 
-      const view = await h.service.confirm(clientActor);
+      const view = await h.confirm(opsActor);
 
       expect(allocationOf("li-A").isLocked).toBe(true);
       expect(view.containers[0]).toMatchObject({
@@ -1052,7 +1081,7 @@ describe("ReadyToShipService", () => {
       );
       await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
 
-      await move("li-A", 0, 5);
+      await move("li-A", 0, 5, opsActor);
 
       expect(h.markings.rows.map((m: any) => m.allocation.id)).toEqual([
         allocationOf("li-B").id,
@@ -1077,13 +1106,11 @@ describe("ReadyToShipService", () => {
       expect(allocationOf("li-A").isLocked).toBe(true);
     });
 
-    it("emits container.reopened-for-client, same as the whole-container unlock", async () => {
+    it("Phase 25: back to draft_ceat for CEAT, no email to the client", async () => {
       await h.service.unlockAllocation(allocationOf("li-A").id, opsActor);
 
-      expect(h.eventEmitter.emit).toHaveBeenCalledWith(
-        "container.reopened-for-client",
-        { label: "Контейнер 1", customerId: "cust-1" },
-      );
+      expect(h.loadListStatus()).toBe(LoadListStatus.DRAFT_CEAT);
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 });

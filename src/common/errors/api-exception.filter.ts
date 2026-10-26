@@ -13,6 +13,7 @@ import {
   ERROR_CODES,
   ErrorCode,
   ErrorContext,
+  ErrorDetail,
   ErrorParams,
   apiError,
 } from "./api-error";
@@ -22,6 +23,7 @@ export interface ApiErrorResponse {
   code: ErrorCode;
   message: string;
   params?: ErrorParams;
+  details?: ErrorDetail[];
 }
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -91,6 +93,23 @@ export function toApiErrorResponse(exception: unknown): ApiErrorResponse {
   };
   if (isParams(body.params)) {
     result.params = body.params;
+  }
+  // Only well-formed items get through: each needs a known code.
+  const details = (body as { details?: unknown }).details;
+  if (Array.isArray(details)) {
+    const valid = details.filter(
+      (d): d is ErrorDetail =>
+        !!d &&
+        typeof d === "object" &&
+        isErrorCode((d as { code?: unknown }).code) &&
+        ((d as { params?: unknown }).params === undefined ||
+          isParams((d as { params?: unknown }).params)) &&
+        ((d as { row?: unknown }).row === undefined ||
+          typeof (d as { row?: unknown }).row === "number"),
+    );
+    if (valid.length > 0) {
+      result.details = valid;
+    }
   }
   return result;
 }

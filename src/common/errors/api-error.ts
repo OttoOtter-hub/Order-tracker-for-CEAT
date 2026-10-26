@@ -86,6 +86,38 @@ export const ERROR_CODES = [
   "OK_TO_MIX_NAME_NOT_ALLOWED",
   "MARKING_REQUIRES_LOCKED_ALLOCATION",
 
+  // --- Load list (Phase 25) ---
+  // An edit while the load list isn't in this role's editing status.
+  "LOAD_LIST_NOT_EDITABLE",
+  // A status change the current status doesn't allow.
+  "LOAD_LIST_WRONG_STATUS",
+  // "Send"/"Submit" with no position that isn't confirmed already.
+  "LOAD_LIST_EMPTY",
+  "REJECTION_COMMENT_REQUIRED",
+  "REJECTION_COMMENT_TOO_LONG",
+  // "OK" on a client version that no longer fits the current backorder;
+  // details list each mismatch.
+  "LOAD_LIST_OUTDATED",
+  "LOAD_LIST_NO_CLIENT_VERSION",
+  // Excel import: the file as a whole, then one detail per bad row.
+  "IMPORT_FILE_UNREADABLE",
+  "IMPORT_INVALID",
+  "IMPORT_CONFIRM_NEW_CONTAINERS",
+  "IMPORT_BAD_QUANTITY",
+  "IMPORT_UNKNOWN_LINE",
+  "IMPORT_ARCHIVED_PI",
+  "IMPORT_UNKNOWN_CONTAINER",
+  "IMPORT_EXCEEDS_AVAILABLE",
+  "IMPORT_CONTAINER_OVERFILLED",
+  "IMPORT_NO_LOADABILITY",
+  "IMPORT_CONFIRMED_CHANGED",
+  "IMPORT_CONTAINER_LOCKED",
+  // Mismatches behind LOAD_LIST_OUTDATED.
+  "OUTDATED_LINE_GONE",
+  "OUTDATED_EXCEEDS_AVAILABLE",
+  "OUTDATED_CONTAINER_OVERFILLED",
+  "OUTDATED_POSITION_CHANGED",
+
   // --- Shipped containers ---
   "ARRIVAL_ALREADY_CONFIRMED",
   "ARRIVAL_NOT_CONFIRMED",
@@ -106,10 +138,23 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type ErrorParams = Record<string, string | number>;
 
+/**
+ * One item of a list an error carries along (Phase 25): a bad row of an
+ * imported file, a mismatch of a client version. Translated by the frontend
+ * like the error itself (errors.<code> with params).
+ */
+export interface ErrorDetail {
+  code: ErrorCode;
+  params?: ErrorParams;
+  /** The spreadsheet row it is about, when it is about one. */
+  row?: number;
+}
+
 export interface ApiErrorBody {
   code: ErrorCode;
   message: string;
   params?: ErrorParams;
+  details?: ErrorDetail[];
 }
 
 export function apiError(

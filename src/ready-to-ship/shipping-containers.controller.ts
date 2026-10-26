@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   StreamableFile,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
@@ -65,9 +66,8 @@ export class ShippingContainersController {
   }
 
   /**
-   * Phase 22: the client names its own numbered container; answers with the
-   * fresh ready-to-ship view. Ops reaches the handler ("ops always allowed")
-   * and is rejected with a 403 in the service.
+   * Phase 22: a name for a numbered container; answers with the fresh
+   * ready-to-ship view. Phase 25: whoever edits the load list now.
    */
   @ClientWriteAllowed()
   @Patch(":id/name")
@@ -75,21 +75,25 @@ export class ShippingContainersController {
     @Param("id", ParseUUIDPipe) id: string,
     @Body() dto: UpdateContainerNameDto,
     @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
   ) {
-    return this.service.rename(id, dto.name, user);
+    return this.service.rename(id, dto.name, user, customerId);
   }
 
   /**
-   * Phase 23: every position of one of the client's own containers back to
-   * the unallocated list at once (the container itself stays). Answers with
-   * the fresh ready-to-ship view; ops is rejected with a 403 in the service.
+   * Phase 23: every position of one container back to the unallocated list
+   * at once (the container itself stays). Phase 25: whoever edits the load
+   * list now.
    */
   @ClientWriteAllowed()
   @Post(":id/clear")
   clear(
     @Param("id", ParseUUIDPipe) id: string,
     @CurrentUser() user: RequestUser,
+    @Query("customerId", new ParseUUIDPipe({ optional: true }))
+    customerId?: string,
   ) {
-    return this.service.clearContainer(id, user);
+    return this.service.clearContainer(id, user, customerId);
   }
 }

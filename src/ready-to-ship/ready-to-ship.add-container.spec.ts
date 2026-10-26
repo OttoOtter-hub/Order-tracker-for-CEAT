@@ -1,10 +1,10 @@
+import { LoadListStatus } from "./load-list.entity";
 import { HttpException } from "@nestjs/common";
 import {
   clientActor,
   Harness,
   makeHarness,
   opsActor,
-  otherClientActor,
   seedLine,
   useControlledClock,
 } from "./testing/ready-to-ship-harness";
@@ -38,7 +38,7 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
 
   beforeEach(() => {
     clock = useControlledClock();
-    h = makeHarness();
+    h = makeHarness({ loadListStatus: LoadListStatus.DRAFT_CEAT });
     seedLine(h, {
       id: "li-A",
       piNumber: "100000001",
@@ -57,13 +57,13 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
   const byLabel = (view: ReadyToShipView, label: string) =>
     view.containers.find((c) => c.label === label)!;
   const move = (containerId: string, qty: number, piLineItemId = "li-A") =>
-    h.service.move({ piLineItemId, containerId, qty }, clientActor);
+    h.service.move({ piLineItemId, containerId, qty }, opsActor, "cust-1");
 
   describe("creating", () => {
     it("adds one container numbered after the plan's slots, flagged manual, before OK to mix", async () => {
-      await h.service.getView(clientActor);
+      await h.service.getView(opsActor, "cust-1");
 
-      const view = await h.service.addContainer(clientActor);
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(labels(view)).toEqual([
         "Контейнер 1",
@@ -87,10 +87,10 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("isn't counted in totalPossibleContainers — manual ones are reported apart", async () => {
-      const before = await h.service.getView(clientActor);
+      const before = await h.service.getView(opsActor, "cust-1");
 
-      await h.service.addContainer(clientActor);
-      const view = await h.service.addContainer(clientActor);
+      await h.service.addContainer(opsActor, "cust-1");
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(before.totalPossibleContainers).toBe(2);
       expect(before.manualContainers).toBe(0);
@@ -107,11 +107,11 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("each next one takes the next number", async () => {
-      await h.service.getView(clientActor);
+      await h.service.getView(opsActor, "cust-1");
 
-      await h.service.addContainer(clientActor);
-      await h.service.addContainer(clientActor);
-      const view = await h.service.addContainer(clientActor);
+      await h.service.addContainer(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1");
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(manual(view).map((c) => c.label)).toEqual([
         "Контейнер 3",
@@ -135,7 +135,7 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
         } as any);
       }
 
-      const view = await h.service.addContainer(clientActor);
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(labels(view)).toEqual([
         "Контейнер 1",
@@ -147,7 +147,7 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("on a page never opened before, the plan's slots are made first and the manual one comes after them", async () => {
-      const view = await h.service.addContainer(clientActor);
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(planned(view).map((c) => c.label)).toEqual([
         "Контейнер 1",
@@ -157,7 +157,7 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("a clash on the label (two clicks at once) is retried with the next number", async () => {
-      await h.service.getView(clientActor);
+      await h.service.getView(opsActor, "cust-1");
       const realSave = h.containers.save.bind(h.containers);
       let clashes = 1;
       h.containers.save = (async (entity: any) => {
@@ -174,7 +174,7 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
         return realSave(entity);
       }) as any;
 
-      const view = await h.service.addContainer(clientActor);
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(manual(view).map((c) => c.label)).toEqual([
         "Контейнер 3",
@@ -183,12 +183,13 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("works like any other container: fill percent, name, confirm", async () => {
-      const added = await h.service.addContainer(clientActor);
+      const added = await h.service.addContainer(opsActor, "cust-1");
       const id = byLabel(added, "Контейнер 3").id;
 
       await move(id, 50);
-      await h.service.rename(id, "Доп", clientActor);
-      const confirmed = await h.service.confirm(clientActor);
+      await h.service.rename(id, "Доп", opsActor, "cust-1");
+      const confirmed = await h.confirm(opsActor);
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT);
 
       expect(byLabel(confirmed, "Контейнер 3")).toMatchObject({
         isManual: true,
@@ -203,15 +204,17 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
   describe("refusals", () => {
     it(`allows ${MAX_MANUAL_CONTAINERS} manual containers and refuses the next with 400 MANUAL_CONTAINER_LIMIT`, async () => {
       for (let i = 0; i < MAX_MANUAL_CONTAINERS; i++) {
-        await h.service.addContainer(clientActor);
+        await h.service.addContainer(opsActor, "cust-1");
       }
 
-      expect(await failure(h.service.addContainer(clientActor))).toEqual({
-        status: 400,
-        code: "MANUAL_CONTAINER_LIMIT",
-        params: { max: MAX_MANUAL_CONTAINERS },
-      });
-      const view = await h.service.getView(clientActor);
+      expect(await failure(h.service.addContainer(opsActor, "cust-1"))).toEqual(
+        {
+          status: 400,
+          code: "MANUAL_CONTAINER_LIMIT",
+          params: { max: MAX_MANUAL_CONTAINERS },
+        },
+      );
+      const view = await h.service.getView(opsActor, "cust-1");
       expect(view.manualContainers).toBe(MAX_MANUAL_CONTAINERS);
       expect(MAX_MANUAL_CONTAINERS).toBe(20);
     });
@@ -219,20 +222,22 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     it("the limit counts manual containers only, not the plan's slots", async () => {
       // 25 slots of the plan — more than the limit already.
       h.lines.rows[0].currentWeekDispatchQty = "2500";
-      const before = await h.service.getView(clientActor);
+      const before = await h.service.getView(opsActor, "cust-1");
 
-      const view = await h.service.addContainer(clientActor);
+      const view = await h.service.addContainer(opsActor, "cust-1");
 
       expect(planned(before)).toHaveLength(25);
       expect(manual(view).map((c) => c.label)).toEqual(["Контейнер 26"]);
     });
 
     it("400 NOTHING_TO_ALLOCATE when every line is fully placed", async () => {
-      const view = await h.service.getView(clientActor);
+      const view = await h.service.getView(opsActor, "cust-1");
       await move(byLabel(view, "Контейнер 1").id, 100);
       await move(byLabel(view, "Контейнер 2").id, 50);
 
-      expect(await failure(h.service.addContainer(clientActor))).toMatchObject({
+      expect(
+        await failure(h.service.addContainer(opsActor, "cust-1")),
+      ).toMatchObject({
         status: 400,
         code: "NOTHING_TO_ALLOCATE",
       });
@@ -242,50 +247,59 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     it("400 NOTHING_TO_ALLOCATE when there are no lines to ship at all", async () => {
       h.lines.rows[0].currentWeekDispatchQty = "0";
 
-      expect(await failure(h.service.addContainer(clientActor))).toMatchObject({
+      expect(
+        await failure(h.service.addContainer(opsActor, "cust-1")),
+      ).toMatchObject({
         status: 400,
         code: "NOTHING_TO_ALLOCATE",
       });
     });
 
     it("allowed again while even one unit is still unallocated", async () => {
-      const view = await h.service.getView(clientActor);
+      const view = await h.service.getView(opsActor, "cust-1");
       await move(byLabel(view, "Контейнер 1").id, 100);
       await move(byLabel(view, "Контейнер 2").id, 49);
 
-      const after = await h.service.addContainer(clientActor);
+      const after = await h.service.addContainer(opsActor, "cust-1");
 
       expect(manual(after)).toHaveLength(1);
     });
   });
 
-  describe("owner check", () => {
-    it("ops can't add a container: 403 CLIENT_ONLY_ACTION", async () => {
-      await h.service.getView(clientActor);
+  describe("who may add (Phase 25: CEAT, in draft_ceat)", () => {
+    it("a client can't: 403 OPS_ONLY_ACTION, whatever the status", async () => {
+      await h.service.getView(opsActor, "cust-1");
+      h.setLoadListStatus(LoadListStatus.CLIENT_EDITING);
 
-      expect(await failure(h.service.addContainer(opsActor))).toMatchObject({
+      expect(await failure(h.service.addContainer(clientActor))).toMatchObject({
         status: 403,
-        code: "CLIENT_ONLY_ACTION",
+        code: "OPS_ONLY_ACTION",
       });
-      expect(
-        await failure(h.service.addContainer(opsActor, "cust-1")),
-      ).toMatchObject({ status: 403, code: "CLIENT_ONLY_ACTION" });
       expect(h.containers.rows.some((c) => c.isManual)).toBe(false);
     });
 
-    it("a client naming another customer gets a 404 and nothing is created", async () => {
-      await h.service.getView(clientActor);
-
-      expect(
-        await failure(h.service.addContainer(otherClientActor, "cust-1")),
-      ).toMatchObject({ status: 404, code: "NOT_FOUND" });
+    it("ops only while CEAT drafts: 400 LOAD_LIST_NOT_EDITABLE otherwise; the customer must be named", async () => {
+      await h.service.getView(opsActor, "cust-1");
+      for (const status of [
+        LoadListStatus.SENT_TO_CLIENT,
+        LoadListStatus.CLIENT_EDITING,
+        LoadListStatus.SUBMITTED_BY_CLIENT,
+        LoadListStatus.CONFIRMED,
+      ]) {
+        h.setLoadListStatus(status);
+        expect(
+          await failure(h.service.addContainer(opsActor, "cust-1")),
+        ).toMatchObject({ status: 400, code: "LOAD_LIST_NOT_EDITABLE" });
+      }
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT);
+      expect(await failure(h.service.addContainer(opsActor))).toMatchObject({
+        status: 400,
+        code: "CUSTOMER_ID_REQUIRED",
+      });
       expect(h.containers.rows.some((c) => c.isManual)).toBe(false);
-      // Naming their own customer is fine.
-      const own = await h.service.addContainer(clientActor, "cust-1");
-      expect(manual(own)).toHaveLength(1);
     });
 
-    it("a client's container goes to their own customer only", async () => {
+    it("the container goes to the customer ops names, nobody else", async () => {
       seedLine(h, {
         id: "li-other",
         piNumber: "100000099",
@@ -293,13 +307,14 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
         loadability: "100",
         dispatchQty: "100",
       });
-      await h.service.getView(clientActor);
+      await h.service.getView(opsActor, "cust-1");
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT, "cust-2");
 
-      const theirs = await h.service.addContainer(otherClientActor);
+      const theirs = await h.service.addContainer(opsActor, "cust-2");
 
       expect(theirs.customerId).toBe("cust-2");
       expect(manual(theirs).map((c) => c.label)).toEqual(["Контейнер 2"]);
-      const mine = await h.service.getView(clientActor);
+      const mine = await h.service.getView(opsActor, "cust-1");
       expect(mine.manualContainers).toBe(0);
       expect(labels(mine)).toEqual(["Контейнер 1", "Контейнер 2", "OK to mix"]);
     });
@@ -307,12 +322,12 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
 
   describe("the plan's slots next to manual ones", () => {
     it("a growing plan still gets every slot it is owed — a manual container doesn't stand in for one", async () => {
-      await h.service.getView(clientActor);
-      await h.service.addContainer(clientActor); // Контейнер 3, manual
+      await h.service.getView(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1"); // Контейнер 3, manual
 
       // Next backorder: 350 units -> 4 slots of the plan.
       h.lines.rows[0].currentWeekDispatchQty = "350";
-      const view = await h.service.getView(clientActor);
+      const view = await h.service.getView(opsActor, "cust-1");
 
       expect(view.totalPossibleContainers).toBe(4);
       expect(planned(view).map((c) => c.label)).toEqual([
@@ -323,17 +338,17 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
       ]);
       expect(manual(view).map((c) => c.label)).toEqual(["Контейнер 3"]);
       // And a second read adds nothing more.
-      expect(labels(await h.service.getView(clientActor))).toEqual(
+      expect(labels(await h.service.getView(opsActor, "cust-1"))).toEqual(
         labels(view),
       );
     });
 
     it("a plan that already has its slots isn't topped up because of manual ones", async () => {
-      await h.service.getView(clientActor);
-      await h.service.addContainer(clientActor);
-      await h.service.addContainer(clientActor);
+      await h.service.getView(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1");
 
-      const view = await h.service.getView(clientActor);
+      const view = await h.service.getView(opsActor, "cust-1");
 
       expect(planned(view)).toHaveLength(2);
       expect(h.containers.rows).toHaveLength(5); // 2 + 2 manual + OK to mix
@@ -342,10 +357,10 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
 
   describe("undo all", () => {
     it("removes an empty manual container along with the other empty drafts", async () => {
-      await h.service.getView(clientActor);
-      await h.service.addContainer(clientActor);
+      await h.service.getView(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1");
 
-      const view = await h.service.undoAll(clientActor);
+      const view = await h.service.undoAll(opsActor, "cust-1");
 
       expect(labels(view)).toEqual(["Контейнер 1", "Контейнер 2", "OK to mix"]);
       expect(view.manualContainers).toBe(0);
@@ -353,15 +368,16 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("rolls back a manual container's positions like any other's, then removes it", async () => {
-      const added = await h.service.addContainer(clientActor);
+      const added = await h.service.addContainer(opsActor, "cust-1");
       await move(byLabel(added, "Контейнер 3").id, 60);
       await h.service.rename(
         byLabel(added, "Контейнер 3").id,
         "Доп",
-        clientActor,
+        opsActor,
+        "cust-1",
       );
 
-      const view = await h.service.undoAll(clientActor);
+      const view = await h.service.undoAll(opsActor, "cust-1");
 
       expect(labels(view)).toEqual(["Контейнер 1", "Контейнер 2", "OK to mix"]);
       expect(view.unallocatedLines).toEqual([
@@ -373,15 +389,16 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("keeps a manual container that holds a confirmed position, and still restores the plan's slots in full", async () => {
-      const added = await h.service.addContainer(clientActor);
+      const added = await h.service.addContainer(opsActor, "cust-1");
       const keptId = byLabel(added, "Контейнер 3").id;
       await move(keptId, 60);
-      await h.service.confirm(clientActor);
+      await h.confirm(opsActor);
+      h.setLoadListStatus(LoadListStatus.DRAFT_CEAT);
       clock.tick();
-      const second = await h.service.addContainer(clientActor); // Контейнер 4
+      const second = await h.service.addContainer(opsActor, "cust-1"); // Контейнер 4
       await move(byLabel(second, "Контейнер 4").id, 10);
 
-      const view = await h.service.undoAll(clientActor);
+      const view = await h.service.undoAll(opsActor, "cust-1");
 
       expect(manual(view).map((c) => [c.label, c.isConfirmed])).toEqual([
         ["Контейнер 3", true],
@@ -393,23 +410,23 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
     });
 
     it("a new manual container after 'undo all' doesn't reuse the removed one's identity", async () => {
-      const added = await h.service.addContainer(clientActor);
+      const added = await h.service.addContainer(opsActor, "cust-1");
       const firstId = byLabel(added, "Контейнер 3").id;
-      await h.service.undoAll(clientActor);
+      await h.service.undoAll(opsActor, "cust-1");
 
-      const again = await h.service.addContainer(clientActor);
+      const again = await h.service.addContainer(opsActor, "cust-1");
 
       expect(manual(again).map((c) => c.label)).toEqual(["Контейнер 3"]);
       expect(byLabel(again, "Контейнер 3").id).not.toBe(firstId);
     });
 
     it("the journal says how many manual containers went", async () => {
-      await h.service.getView(clientActor);
-      await h.service.addContainer(clientActor);
-      await h.service.addContainer(clientActor);
+      await h.service.getView(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1");
+      await h.service.addContainer(opsActor, "cust-1");
 
-      await h.service.undoAll(clientActor);
-      await h.service.undoAll(clientActor); // nothing manual left this time
+      await h.service.undoAll(opsActor, "cust-1");
+      await h.service.undoAll(opsActor, "cust-1"); // nothing manual left this time
 
       const undone = h.audit.entries.filter(
         (e) => e.action === "rts.undone_all",
@@ -422,15 +439,15 @@ describe("ReadyToShipService.addContainer (manual container)", () => {
   });
 
   it("journals rts.container_added with the label, inside the transaction — and nothing when refused", async () => {
-    await h.service.getView(clientActor);
+    await h.service.getView(opsActor, "cust-1");
 
-    const view = await h.service.addContainer(clientActor);
+    const view = await h.service.addContainer(opsActor, "cust-1");
+    await failure(h.service.addContainer(clientActor));
     await failure(h.service.addContainer(opsActor));
-    await failure(h.service.addContainer(otherClientActor, "cust-1"));
 
     expect(h.audit.entries).toEqual([
       expect.objectContaining({
-        actor: clientActor,
+        actor: opsActor,
         action: "rts.container_added",
         entityType: "shipping_container",
         entityId: byLabel(view, "Контейнер 3").id,

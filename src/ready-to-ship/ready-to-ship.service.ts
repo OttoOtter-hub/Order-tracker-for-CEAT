@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { EventEmitter2 } from "@nestjs/event-emitter";
 import { randomUUID } from "node:crypto";
 import { DataSource, EntityManager, In } from "typeorm";
 import { RequestUser } from "../common/auth/request-user.interface";
@@ -20,6 +19,13 @@ import { User } from "../users/user.entity";
 import { AllocationAction } from "./allocation-action.entity";
 import { ContainerLineAllocation } from "./container-line-allocation.entity";
 import { MarkingFile } from "./marking-file.entity";
+import { LoadList, LoadListStatus } from "./load-list.entity";
+import {
+  EDITOR_BY_STATUS,
+  assertEditable,
+  clearUndoLog,
+  findOrCreateLoadList,
+} from "./load-list-state";
 import { ShippingContainer } from "./shipping-container.entity";
 import {
   AllocationView,
@@ -30,6 +36,7 @@ import {
   UnlockedAllView,
   UnlockedContainerView,
   UndoSkippedView,
+  LoadListView,
 } from "./ready-to-ship.types";
 import {
   buildReadyToShipExportWorkbook,
@@ -41,7 +48,6 @@ import {
   isOverfilled,
   toFillPercent,
 } from "./utils/compute-container-fill";
-import { NotificationEvent } from "../notifications/notification-events";
 
 interface ActiveLine {
   item: PiLineItem;
@@ -100,21 +106,22 @@ function describeSkippedUndo(action: AllocationAction): UndoSkippedView {
 }
 
 /**
- * "Ready to ship": a client spreads the current week's dispatch quantities
- * (PiLineItem.currentWeekDispatchQty, across all their active PI cards) over
- * container slots, confirms the plan, and CEAT can unlock single containers.
+ * "Ready to ship": the current week's dispatch quantities
+ * (PiLineItem.currentWeekDispatchQty, across all the customer's active PI
+ * cards) are spread over container slots. Phase 25: CEAT builds the load
+ * list and the client accepts it or edits it — who may edit right now is the
+ * customer's LoadList status (see load-list.entity.ts); every edit below
+ * checks it first (assertEditable), inside its transaction.
  *
  * Every write runs in one transaction and re-checks ownership here, not in
  * an interceptor — same rule as the rest of the client-facing writes (see
- * ProformaInvoicesService.findOwnedByActor). Ops reaches these handlers
- * through RolesGuard's "ops always allowed" rule, so each client-only
- * action rejects a non-client actor explicitly (see requireClient).
+ * ProformaInvoicesService.findOwnedByActor). The customer is the client's
+ * own, or the one ops names (customerId), as for the view.
  */
 @Injectable()
 export class ReadyToShipService {
   constructor(
     private readonly dataSource: DataSource,
-    private readonly eventEmitter: EventEmitter2,
     private readonly audit: AuditLogService,
   ) {}
 
@@ -124,6 +131,7 @@ export class ReadyToShipService {
   ): Promise<ReadyToShipView> {
     return this.loadView(
       this.resolveViewCustomerId(actor, requestedCustomerId),
+      actor.role,
     );
   }
 
@@ -154,8 +162,9 @@ export class ReadyToShipService {
   async move(
     dto: { piLineItemId: string; containerId: string; qty: number },
     actor: RequestUser,
+    requestedCustomerId?: string,
   ): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
     if (!Number.isInteger(dto.qty) || dto.qty <= 0) {
       throw new BadRequestException(
         apiError(
@@ -166,6 +175,7 @@ export class ReadyToShipService {
     }
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const lineRepo = em.getRepository(PiLineItem);
       const allocationRepo = em.getRepository(ContainerLineAllocation);
 
@@ -309,7 +319,7 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   /**
@@ -321,10 +331,14 @@ export class ReadyToShipService {
    * One AllocationAction per line, so undo-last takes back one line at a time
    * and undo-all everything, exactly as after individual moves.
    */
-  async moveRemainingToMix(actor: RequestUser): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+  async moveRemainingToMix(
+    actor: RequestUser,
+    requestedCustomerId?: string,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const allocationRepo = em.getRepository(ContainerLineAllocation);
       const okToMix = await this.ensureOkToMix(em, customerId);
       const lines = await this.loadActiveLines(em, customerId);
@@ -431,7 +445,7 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   /**
@@ -450,10 +464,14 @@ export class ReadyToShipService {
     actor: RequestUser,
     requestedCustomerId?: string,
   ): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
-    if (requestedCustomerId && requestedCustomerId !== customerId) {
-      throw new NotFoundException(apiError("NOT_FOUND", "Customer not found"));
+    // Phase 25: containers are created by CEAT only (the client moves lines
+    // between the existing ones).
+    if (actor.role !== Role.OPS) {
+      throw new ForbiddenException(
+        apiError("OPS_ONLY_ACTION", "Добавить контейнер может только CEAT"),
+      );
     }
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
 
     // Two clicks at once both pick the same next number; the
     // (customer_id, label) unique constraint fails the loser, which then
@@ -471,7 +489,7 @@ export class ReadyToShipService {
       }
     }
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   private async addManualContainer(
@@ -479,6 +497,7 @@ export class ReadyToShipService {
     customerId: string,
     actor: RequestUser,
   ): Promise<void> {
+    await assertEditable(em, customerId, actor);
     const containerRepo = em.getRepository(ShippingContainer);
     const lines = await this.loadActiveLines(em, customerId);
     const lineIds = lines.map((line) => line.item.id);
@@ -588,10 +607,12 @@ export class ReadyToShipService {
   async clearContainer(
     containerId: string,
     actor: RequestUser,
+    requestedCustomerId?: string,
   ): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const container = await this.findOwnedContainer(
         em,
         containerId,
@@ -670,14 +691,15 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   async remove(
     dto: { allocationId: string; qty: number },
     actor: RequestUser,
+    requestedCustomerId?: string,
   ): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
     if (!Number.isInteger(dto.qty) || dto.qty <= 0) {
       throw new BadRequestException(
         apiError(
@@ -688,6 +710,7 @@ export class ReadyToShipService {
     }
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const allocationRepo = em.getRepository(ContainerLineAllocation);
       const found = await allocationRepo.findOne({
         where: { id: dto.allocationId },
@@ -763,15 +786,19 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   /** Rolls back the newest move among this client's currently-unlocked positions. */
-  async undoLast(actor: RequestUser): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+  async undoLast(
+    actor: RequestUser,
+    requestedCustomerId?: string,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
     let undoSkipped: UndoSkippedView[] = [];
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const containers = await em
         .getRepository(ShippingContainer)
         .find({ where: { customer: { id: customerId } } });
@@ -862,7 +889,12 @@ export class ReadyToShipService {
           })
         : [last];
 
-      for (const entry of group) {
+      const ordered = [...group].sort(
+        (a, b) =>
+          Number((toNumberOrNull(a.deltaQty) ?? 0) < 0) -
+          Number((toNumberOrNull(b.deltaQty) ?? 0) < 0),
+      );
+      for (const entry of ordered) {
         const delta = toNumberOrNull(entry.deltaQty) ?? 0;
         if (delta < 0) {
           await this.restoreRemoved(em, entry, -delta);
@@ -913,7 +945,7 @@ export class ReadyToShipService {
       );
     });
 
-    const view = await this.loadView(customerId);
+    const view = await this.loadView(customerId, actor.role);
     return undoSkipped.length > 0 ? { ...view, undoSkipped } : view;
   }
 
@@ -931,10 +963,14 @@ export class ReadyToShipService {
    * total either way — the total is "how many containers this dispatch
    * needs", not "how many empty drafts to show".
    */
-  async undoAll(actor: RequestUser): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+  async undoAll(
+    actor: RequestUser,
+    requestedCustomerId?: string,
+  ): Promise<ReadyToShipView> {
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const containerRepo = em.getRepository(ShippingContainer);
       const allocationRepo = em.getRepository(ContainerLineAllocation);
       const actionRepo = em.getRepository(AllocationAction);
@@ -995,62 +1031,67 @@ export class ReadyToShipService {
         }
       }
 
-      // Recycle a container's slot only if it now has nothing locked on it
-      // at all — the same "pure draft" set the old whole-container model
-      // used, generalized to per-position locking: a container with even
-      // one locked (or partially-unlocked) position is never a deletion
-      // candidate, regardless of what just happened to its other positions.
-      const lockedContainerIds = new Set(
-        allAllocations.filter((a) => a.isLocked).map((a) => a.container.id),
-      );
-      // "OK to mix" is never recycled: it isn't a slot of the plan, and it
-      // keeps its identity (and its place last) even while empty.
-      const pureDraftContainers = numberedOnly(containers).filter(
-        (c) => !lockedContainerIds.has(c.id),
-      );
-      const pureDraftIds = pureDraftContainers.map((c) => c.id);
-      const stillFilled = pureDraftIds.length
-        ? await allocationRepo.find({
-            where: { container: { id: In(pureDraftIds) } },
-            relations: ["container"],
-          })
-        : [];
-      const filledIds = new Set(stillFilled.map((a) => a.container.id));
-      const emptyContainers = pureDraftContainers.filter(
-        (c) => !filledIds.has(c.id),
-      );
-      if (emptyContainers.length) {
-        await containerRepo.delete({
-          id: In(emptyContainers.map((c) => c.id)),
-        });
-      }
-      const kept = numberedOnly(containers).filter(
-        (c) => !emptyContainers.includes(c),
-      );
-      // Phase 22: a recycled slot that comes back under the same label keeps
-      // the name the client gave it.
-      const manualRemoved = emptyContainers.filter((c) => c.isManual).length;
-      // A manual container is not recreated, so its name isn't carried over.
-      const names = new Map(
-        emptyContainers
-          .filter((c) => c.name && !c.isManual)
-          .map((c) => [c.label, c.name as string]),
-      );
+      // Phase 25: containers are CEAT's to create and drop — the client's
+      // "undo all" only takes positions back and leaves every container be.
+      let manualRemoved = 0;
+      if (actor.role === Role.OPS) {
+        // Recycle a container's slot only if it now has nothing locked on it
+        // at all — the same "pure draft" set the old whole-container model
+        // used, generalized to per-position locking: a container with even
+        // one locked (or partially-unlocked) position is never a deletion
+        // candidate, regardless of what just happened to its other positions.
+        const lockedContainerIds = new Set(
+          allAllocations.filter((a) => a.isLocked).map((a) => a.container.id),
+        );
+        // "OK to mix" is never recycled: it isn't a slot of the plan, and it
+        // keeps its identity (and its place last) even while empty.
+        const pureDraftContainers = numberedOnly(containers).filter(
+          (c) => !lockedContainerIds.has(c.id),
+        );
+        const pureDraftIds = pureDraftContainers.map((c) => c.id);
+        const stillFilled = pureDraftIds.length
+          ? await allocationRepo.find({
+              where: { container: { id: In(pureDraftIds) } },
+              relations: ["container"],
+            })
+          : [];
+        const filledIds = new Set(stillFilled.map((a) => a.container.id));
+        const emptyContainers = pureDraftContainers.filter(
+          (c) => !filledIds.has(c.id),
+        );
+        if (emptyContainers.length) {
+          await containerRepo.delete({
+            id: In(emptyContainers.map((c) => c.id)),
+          });
+        }
+        const kept = numberedOnly(containers).filter(
+          (c) => !emptyContainers.includes(c),
+        );
+        // Phase 22: a recycled slot that comes back under the same label keeps
+        // the name the client gave it.
+        manualRemoved = emptyContainers.filter((c) => c.isManual).length;
+        // A manual container is not recreated, so its name isn't carried over.
+        const names = new Map(
+          emptyContainers
+            .filter((c) => c.name && !c.isManual)
+            .map((c) => [c.label, c.name as string]),
+        );
 
-      const total = computeTotalPossibleContainers(
-        await this.loadActiveLines(em, customerId),
-      );
-      // Only the plan's own slots are topped up: an emptied manual
-      // container is gone for good (it was deleted above with the other
-      // empty drafts), and one that survives — it holds a locked position —
-      // doesn't stand in for a slot of the plan.
-      await this.createEmptyContainers(
-        em,
-        customerId,
-        total - plannedOnly(kept).length,
-        kept,
-        names,
-      );
+        const total = computeTotalPossibleContainers(
+          await this.loadActiveLines(em, customerId),
+        );
+        // Only the plan's own slots are topped up: an emptied manual
+        // container is gone for good (it was deleted above with the other
+        // empty drafts), and one that survives — it holds a locked position —
+        // doesn't stand in for a slot of the plan.
+        await this.createEmptyContainers(
+          em,
+          customerId,
+          total - plannedOnly(kept).length,
+          kept,
+          names,
+        );
+      }
 
       await this.audit.record(
         {
@@ -1069,7 +1110,7 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   /**
@@ -1084,104 +1125,126 @@ export class ReadyToShipService {
    * rather than needing its own code path. A single save() of the whole set
    * is one transaction, so a failure can't leave half of them confirmed.
    */
-  async confirm(actor: RequestUser): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
-
-    await this.dataSource.transaction(async (em) => {
-      const containerRepo = em.getRepository(ShippingContainer);
-      const allocationRepo = em.getRepository(ContainerLineAllocation);
-      const containers = await containerRepo.find({
-        where: { customer: { id: customerId } },
-      });
-      const containerIds = containers.map((c) => c.id);
-      const allocations = containerIds.length
-        ? await allocationRepo.find({
-            where: { container: { id: In(containerIds) } },
-            relations: ["container", "piLineItem"],
-          })
-        : [];
-
-      const touchedContainerIds = new Set(
-        allocations.filter((a) => !a.isLocked).map((a) => a.container.id),
-      );
-      const toConfirm = containers
-        .filter((c) => touchedContainerIds.has(c.id))
-        .sort(byLabel);
-
-      if (toConfirm.length === 0) {
-        throw new BadRequestException(
-          apiError(
-            "NOTHING_TO_CONFIRM",
-            "нет контейнеров с незафиксированными позициями для подтверждения",
-          ),
-        );
-      }
-
-      // The overfill check is against the *whole* container (locked and
-      // unlocked positions together) — a physical container doesn't care
-      // which of its rows happen to be editable right now.
-      const touchedAllocations = allocations.filter((a) =>
-        touchedContainerIds.has(a.container.id),
-      );
-      const fillByContainer = this.sumFillByContainer(touchedAllocations);
-      // "OK to mix" has no capacity: it's skipped entirely, however much
-      // it holds (Phase 21).
-      const overfilled = toConfirm.filter(
-        (c) => !c.isOkToMix && isOverfilled(fillByContainer.get(c.id) ?? 0),
-      );
-      if (overfilled.length > 0) {
-        const percentOf = (c: ShippingContainer) =>
-          toFillPercent(fillByContainer.get(c.id) ?? 0);
-        throw new BadRequestException({
-          ...apiError(
-            "CONTAINER_OVERFILLED",
-            `перегружены контейнеры: ${overfilled
-              .map((c) => `${c.label} (${percentOf(c)}%)`)
-              .join(", ")}`,
-            // Slot labels are stored in Russian ("Контейнер N"), so the
-            // translatable param carries only numbers: "#1 (105%), #3 (112%)".
-            {
-              containers: overfilled
-                .map((c) => `#${labelNumber(c.label)} (${percentOf(c)}%)`)
-                .join(", "),
-            },
-          ),
-          overfilledContainers: overfilled.map((c) => ({
-            id: c.id,
-            label: c.label,
-            fillPercent: toFillPercent(fillByContainer.get(c.id) ?? 0),
-          })),
-        });
-      }
-
-      for (const allocation of touchedAllocations) {
-        allocation.isLocked = true;
-      }
-      await allocationRepo.save(touchedAllocations);
-
-      const now = new Date();
-      for (const container of toConfirm) {
-        container.confirmedAt = now;
-        container.confirmedBy = { id: actor.id } as User;
-      }
-      await containerRepo.save(toConfirm);
-
-      await this.audit.record(
-        {
-          actor,
-          action: "rts.confirmed",
-          entityType: "customer",
-          entityId: customerId,
-          metadata: {
-            containerLabels: toConfirm.map((c) => c.label),
-            positionsLocked: touchedAllocations.length,
-          },
-        },
-        em,
-      );
+  /**
+   * Phase 25: the core of "accept" (client) and "OK" (CEAT) — what the old
+   * client "Confirm" did: every not-yet-locked position gets locked, its
+   * containers stamped, all or nothing; refused while a container is over
+   * 100% (CONTAINER_OVERFILLED) or when there is nothing to lock. Runs in the
+   * caller's transaction; the caller journals the status change.
+   */
+  async lockPositions(
+    em: EntityManager,
+    customerId: string,
+    actor: RequestUser,
+    // "Send" / "Submit": the same checks, nothing locked. allowEmpty: the
+    // client accepting a version with nothing left to confirm (a rejection
+    // can cut CEAT's version down to that) — agreeing locks nothing.
+    options: { checkOnly?: boolean; allowEmpty?: boolean } = {},
+  ): Promise<{ containerLabels: string[]; positionsLocked: number }> {
+    const containerRepo = em.getRepository(ShippingContainer);
+    const allocationRepo = em.getRepository(ContainerLineAllocation);
+    const containers = await containerRepo.find({
+      where: { customer: { id: customerId } },
     });
+    const containerIds = containers.map((c) => c.id);
+    const allocations = containerIds.length
+      ? await allocationRepo.find({
+          where: { container: { id: In(containerIds) } },
+          relations: ["container", "piLineItem"],
+        })
+      : [];
 
-    return this.loadView(customerId);
+    const touchedContainerIds = new Set(
+      allocations.filter((a) => !a.isLocked).map((a) => a.container.id),
+    );
+    const toConfirm = containers
+      .filter((c) => touchedContainerIds.has(c.id))
+      .sort(byLabel);
+
+    if (toConfirm.length === 0 && options.allowEmpty) {
+      return { containerLabels: [], positionsLocked: 0 };
+    }
+    if (toConfirm.length === 0) {
+      throw new BadRequestException(
+        apiError("LOAD_LIST_EMPTY", "в load list нет неподтверждённых позиций"),
+      );
+    }
+
+    // The overfill check is against the *whole* container (locked and
+    // unlocked positions together) — a physical container doesn't care
+    // which of its rows happen to be editable right now.
+    const touchedAllocations = allocations.filter((a) =>
+      touchedContainerIds.has(a.container.id),
+    );
+    const fillByContainer = this.sumFillByContainer(touchedAllocations);
+    // "OK to mix" has no capacity: it's skipped entirely, however much
+    // it holds (Phase 21).
+    const overfilled = toConfirm.filter(
+      (c) => !c.isOkToMix && isOverfilled(fillByContainer.get(c.id) ?? 0),
+    );
+    if (overfilled.length > 0) {
+      const percentOf = (c: ShippingContainer) =>
+        toFillPercent(fillByContainer.get(c.id) ?? 0);
+      throw new BadRequestException({
+        ...apiError(
+          "CONTAINER_OVERFILLED",
+          `перегружены контейнеры: ${overfilled
+            .map((c) => `${c.label} (${percentOf(c)}%)`)
+            .join(", ")}`,
+          // Slot labels are stored in Russian ("Контейнер N"), so the
+          // translatable param carries only numbers: "#1 (105%), #3 (112%)".
+          {
+            containers: overfilled
+              .map((c) => `#${labelNumber(c.label)} (${percentOf(c)}%)`)
+              .join(", "),
+          },
+        ),
+        overfilledContainers: overfilled.map((c) => ({
+          id: c.id,
+          label: c.label,
+          fillPercent: toFillPercent(fillByContainer.get(c.id) ?? 0),
+        })),
+      });
+    }
+
+    if (options.checkOnly) {
+      return {
+        containerLabels: toConfirm.map((c) => c.label),
+        positionsLocked: 0,
+      };
+    }
+    for (const allocation of touchedAllocations) {
+      allocation.isLocked = true;
+    }
+    await allocationRepo.save(touchedAllocations);
+
+    const now = new Date();
+    for (const container of toConfirm) {
+      container.confirmedAt = now;
+      container.confirmedBy = { id: actor.id } as User;
+    }
+    await containerRepo.save(toConfirm);
+
+    // Which containers and how many positions — next to the load list's own
+    // accepted / approved entry.
+    await this.audit.record(
+      {
+        actor,
+        action: "rts.confirmed",
+        entityType: "customer",
+        entityId: customerId,
+        metadata: {
+          containerLabels: toConfirm.map((c) => c.label),
+          positionsLocked: touchedAllocations.length,
+        },
+      },
+      em,
+    );
+
+    return {
+      containerLabels: toConfirm.map((c) => c.label),
+      positionsLocked: touchedAllocations.length,
+    };
   }
 
   /**
@@ -1195,12 +1258,14 @@ export class ReadyToShipService {
     containerId: string,
     name: string | null,
     actor: RequestUser,
+    requestedCustomerId?: string,
   ): Promise<ReadyToShipView> {
-    const customerId = this.requireClient(actor);
+    const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
     const trimmed = name === null ? "" : name.trim();
     const newName = trimmed === "" ? null : trimmed;
 
     await this.dataSource.transaction(async (em) => {
+      await assertEditable(em, customerId, actor);
       const container = await this.findOwnedContainer(
         em,
         containerId,
@@ -1237,7 +1302,7 @@ export class ReadyToShipService {
       );
     });
 
-    return this.loadView(customerId);
+    return this.loadView(customerId, actor.role);
   }
 
   /**
@@ -1262,42 +1327,43 @@ export class ReadyToShipService {
       );
     }
 
-    const em = this.dataSource.manager;
-    const container = await em.getRepository(ShippingContainer).findOne({
-      where: { id: containerId },
-      relations: ["customer"],
-    });
-    if (!container) {
-      throw new NotFoundException(
-        apiError("NOT_FOUND", `ShippingContainer ${containerId} not found`),
-      );
-    }
-    const positionsUnlocked = await this.unlockContainerPositions(
-      em,
-      container,
-    );
-    if (positionsUnlocked === 0) {
-      throw new BadRequestException(
-        apiError(
-          "CONTAINER_NOT_LOCKED",
-          "контейнер не подтверждён — разблокировать нечего",
-        ),
-      );
-    }
+    const container = await this.dataSource.transaction(async (em) => {
+      const found = await em.getRepository(ShippingContainer).findOne({
+        where: { id: containerId },
+        relations: ["customer"],
+      });
+      if (!found) {
+        throw new NotFoundException(
+          apiError("NOT_FOUND", `ShippingContainer ${containerId} not found`),
+        );
+      }
+      await this.reopenForUnlock(em, found.customer.id, actor);
+      const positionsUnlocked = await this.unlockContainerPositions(em, found);
+      if (positionsUnlocked === 0) {
+        throw new BadRequestException(
+          apiError(
+            "CONTAINER_NOT_LOCKED",
+            "контейнер не подтверждён — разблокировать нечего",
+          ),
+        );
+      }
 
-    await this.audit.record({
-      actor,
-      action: "rts.container_unlocked",
-      entityType: "shipping_container",
-      entityId: container.id,
-      metadata: {
-        containerLabel: container.label,
-        customerId: container.customer.id,
-        positionsUnlocked,
-      },
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.container_unlocked",
+          entityType: "shipping_container",
+          entityId: found.id,
+          metadata: {
+            containerLabel: found.label,
+            customerId: found.customer.id,
+            positionsUnlocked,
+          },
+        },
+        em,
+      );
+      return found;
     });
-
-    this.emitReopened(container);
 
     return {
       id: container.id,
@@ -1328,6 +1394,7 @@ export class ReadyToShipService {
     const customerId = this.resolveViewCustomerId(actor, requestedCustomerId);
 
     const unlocked = await this.dataSource.transaction(async (em) => {
+      await this.reopenForUnlock(em, customerId, actor);
       const containers = await em.getRepository(ShippingContainer).find({
         where: { customer: { id: customerId } },
         relations: ["customer"],
@@ -1369,13 +1436,6 @@ export class ReadyToShipService {
       return { affected, containers };
     });
 
-    // After the commit, one notice per reopened container — the same event
-    // unlock() sends for a single one.
-    for (const { id } of unlocked.affected) {
-      const container = unlocked.containers.find((c) => c.id === id);
-      if (container) this.emitReopened(container);
-    }
-
     return {
       customerId,
       containersUnlocked: unlocked.affected.length,
@@ -1415,15 +1475,49 @@ export class ReadyToShipService {
   }
 
   /**
-   * Event 3 (Phase 13): no "proposed_to_client" status exists here — an
-   * unlock is the one ops action that puts a container back in front of the
-   * client for review (see notification-events.ts for the reasoning).
+   * Phase 25: an unlock is CEAT taking the load list back to rework it — so
+   * only while it is confirmed (which then becomes draft_ceat, and the old
+   * undo log goes) or already in draft_ceat; never while the client has it.
+   * The client hears of it when CEAT sends the load list again (the old
+   * "container reopened for you" email is gone).
    */
-  private emitReopened(container: ShippingContainer): void {
-    this.eventEmitter.emit(NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT, {
-      label: container.label,
-      customerId: container.customer.id,
-    });
+  private async reopenForUnlock(
+    em: EntityManager,
+    customerId: string,
+    actor: RequestUser,
+  ): Promise<void> {
+    const loadList = await findOrCreateLoadList(em, customerId, true);
+    const from = loadList.status;
+    if (loadList.status === LoadListStatus.DRAFT_CEAT) {
+      return;
+    }
+    if (loadList.status !== LoadListStatus.CONFIRMED) {
+      throw new BadRequestException(
+        apiError(
+          "LOAD_LIST_WRONG_STATUS",
+          `разблокировать нельзя: load list в статусе ${loadList.status}`,
+          { status: loadList.status },
+        ),
+      );
+    }
+    await em
+      .getRepository(LoadList)
+      .update({ id: loadList.id }, { status: LoadListStatus.DRAFT_CEAT });
+    await clearUndoLog(em, customerId);
+    await this.audit.record(
+      {
+        actor,
+        action: "rts.load_list_reopened",
+        entityType: "customer",
+        entityId: customerId,
+        metadata: {
+          reason: "unlock",
+          from,
+          to: LoadListStatus.DRAFT_CEAT,
+        },
+      },
+      em,
+    );
   }
 
   /**
@@ -1446,82 +1540,66 @@ export class ReadyToShipService {
       );
     }
 
-    const allocationRepo = this.dataSource.manager.getRepository(
-      ContainerLineAllocation,
-    );
-    const allocation = await allocationRepo.findOne({
-      where: { id: allocationId },
-      relations: [
-        "container",
-        "container.customer",
-        "piLineItem",
-        "piLineItem.pi",
-      ],
-    });
-    if (!allocation) {
-      throw new NotFoundException(
-        apiError(
-          "NOT_FOUND",
-          `ContainerLineAllocation ${allocationId} not found`,
-        ),
-      );
-    }
-    if (!allocation.isLocked) {
-      throw new BadRequestException(
-        apiError(
-          "ALLOCATION_NOT_LOCKED",
-          "позиция не заблокирована — разблокировать нечего",
-        ),
-      );
-    }
+    return this.dataSource.transaction(async (em) => {
+      const allocationRepo = em.getRepository(ContainerLineAllocation);
+      const allocation = await allocationRepo.findOne({
+        where: { id: allocationId },
+        relations: [
+          "container",
+          "container.customer",
+          "piLineItem",
+          "piLineItem.pi",
+        ],
+      });
+      if (!allocation) {
+        throw new NotFoundException(
+          apiError(
+            "NOT_FOUND",
+            `ContainerLineAllocation ${allocationId} not found`,
+          ),
+        );
+      }
+      if (!allocation.isLocked) {
+        throw new BadRequestException(
+          apiError(
+            "ALLOCATION_NOT_LOCKED",
+            "позиция не заблокирована — разблокировать нечего",
+          ),
+        );
+      }
 
-    allocation.isLocked = false;
-    await allocationRepo.save(allocation);
+      await this.reopenForUnlock(em, allocation.container.customer.id, actor);
+      allocation.isLocked = false;
+      await allocationRepo.save(allocation);
 
-    await this.audit.record({
-      actor,
-      action: "rts.position_unlocked",
-      entityType: "shipping_container",
-      entityId: allocation.container.id,
-      metadata: {
+      await this.audit.record(
+        {
+          actor,
+          action: "rts.position_unlocked",
+          entityType: "shipping_container",
+          entityId: allocation.container.id,
+          metadata: {
+            containerLabel: allocation.container.label,
+            allocationId: allocation.id,
+            piNumber: allocation.piLineItem?.pi?.piNumber ?? null,
+            materialNum: allocation.piLineItem?.materialNum ?? null,
+            qty: toNumberOrNull(allocation.allocatedQty),
+          },
+        },
+        em,
+      );
+
+      return {
+        id: allocation.id,
+        containerId: allocation.container.id,
         containerLabel: allocation.container.label,
-        allocationId: allocation.id,
-        piNumber: allocation.piLineItem?.pi?.piNumber ?? null,
-        materialNum: allocation.piLineItem?.materialNum ?? null,
-        qty: toNumberOrNull(allocation.allocatedQty),
-      },
+        customerId: allocation.container.customer.id,
+        isLocked: false,
+      };
     });
-
-    // Same trigger as unlock()'s Event 3 (Phase 13), just at the finer
-    // grain — freeing even one position is still "the client should look at
-    // this container again".
-    this.eventEmitter.emit(NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT, {
-      label: allocation.container.label,
-      customerId: allocation.container.customer.id,
-    });
-
-    return {
-      id: allocation.id,
-      containerId: allocation.container.id,
-      containerLabel: allocation.container.label,
-      customerId: allocation.container.customer.id,
-      isLocked: false,
-    };
   }
 
-  private requireClient(actor: RequestUser): string {
-    if (actor.role !== Role.CLIENT || !actor.customerId) {
-      throw new ForbiddenException(
-        apiError("CLIENT_ONLY_ACTION", "Действие доступно только клиенту"),
-      );
-    }
-    return actor.customerId;
-  }
-
-  private resolveViewCustomerId(
-    actor: RequestUser,
-    requested?: string,
-  ): string {
+  resolveViewCustomerId(actor: RequestUser, requested?: string): string {
     if (actor.role === Role.CLIENT) {
       if (!actor.customerId) {
         throw new ForbiddenException(
@@ -1707,7 +1785,7 @@ export class ReadyToShipService {
     return fill;
   }
 
-  private async loadActiveLines(
+  async loadActiveLines(
     em: EntityManager,
     customerId: string,
   ): Promise<ActiveLine[]> {
@@ -1760,7 +1838,7 @@ export class ReadyToShipService {
    * (customer_id, label) one — make a concurrent second create fail rather
    * than duplicate it.
    */
-  private async ensureOkToMix(
+  async ensureOkToMix(
     em: EntityManager,
     customerId: string,
   ): Promise<ShippingContainer> {
@@ -1829,7 +1907,12 @@ export class ReadyToShipService {
     }
   }
 
-  private async loadView(customerId: string): Promise<ReadyToShipView> {
+  /**
+   * The ready-to-ship picture for one customer as `viewer` sees it. Phase 25:
+   * with the load list in draft_ceat the client sees only confirmed
+   * positions — CEAT's draft isn't theirs to see yet.
+   */
+  async loadView(customerId: string, viewer?: Role): Promise<ReadyToShipView> {
     // Every view is several independent reads, and each one is a network
     // round trip to Postgres (~100 ms from the VPS to Neon) — so they run
     // side by side on the pool instead of one after another, and the slot
@@ -1861,12 +1944,17 @@ export class ReadyToShipService {
     ).sort(byLabel);
     const containerIds = containers.map((c) => c.id);
 
-    const allocations = containerIds.length
-      ? await em.getRepository(ContainerLineAllocation).find({
-          where: { container: { id: In(containerIds) } },
-          relations: ["container", "piLineItem", "piLineItem.pi"],
-        })
-      : [];
+    const loadList = await findOrCreateLoadList(em, customerId);
+    const hideDraft =
+      viewer === Role.CLIENT && loadList.status === LoadListStatus.DRAFT_CEAT;
+    const allocations = (
+      containerIds.length
+        ? await em.getRepository(ContainerLineAllocation).find({
+            where: { container: { id: In(containerIds) } },
+            relations: ["container", "piLineItem", "piLineItem.pi"],
+          })
+        : []
+    ).filter((a) => !hideDraft || a.isLocked);
     // Only an action whose own position isn't currently locked counts toward
     // "undo can still reach this" (Phase 16: a container can now mix locked
     // and unlocked positions). Keyed off *locked* positions, not unlocked
@@ -2011,9 +2099,10 @@ export class ReadyToShipService {
       totalPossibleContainers,
       manualContainers: containerViews.filter((c) => c.isManual).length,
       canConfirm: drafts.length > 0 && drafts.every((c) => !c.isOverfilled),
-      undoableActions,
+      undoableActions: hideDraft ? 0 : undoableActions,
       unallocatedLines,
       containers: containerViews,
+      loadList: toLoadListView(loadList, viewer),
     };
   }
 }
@@ -2027,4 +2116,22 @@ function byLineOrder(
     (a.materialNum ?? "").localeCompare(b.materialNum ?? "") ||
     (a.soNumber ?? "").localeCompare(b.soNumber ?? "")
   );
+}
+
+/** What the page needs of the load list: where it stands and who acts now. */
+function toLoadListView(loadList: LoadList, viewer?: Role): LoadListView {
+  const editor = EDITOR_BY_STATUS[loadList.status];
+  return {
+    status: loadList.status,
+    editor,
+    canEdit: !!viewer && editor === viewer,
+    sentAt: loadList.sentAt,
+    editRequestedAt: loadList.editRequestedAt,
+    submittedAt: loadList.submittedAt,
+    confirmedAt: loadList.confirmedAt,
+    rejectedAt: loadList.rejectedAt,
+    rejectionComment: loadList.rejectionComment,
+    rejectionAdjustments: loadList.rejectionAdjustments ?? [],
+    hasClientVersion: !!loadList.clientSnapshot,
+  };
 }

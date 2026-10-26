@@ -1,3 +1,4 @@
+import { LoadListStatus } from "./load-list.entity";
 import { HttpException } from "@nestjs/common";
 import {
   clientActor,
@@ -153,7 +154,8 @@ describe("ReadyToShipService.clearContainer", () => {
   describe("refusals", () => {
     it("a confirmed container: 400 CONTAINER_LOCKED, nothing removed", async () => {
       const { c1 } = await fill();
-      await step(() => h.service.confirm(clientActor));
+      await step(() => h.confirm(clientActor));
+      h.clientEditing(); // a next round the client edits
 
       expect(await failure(h.service.clearContainer(c1, clientActor))).toEqual({
         status: 400,
@@ -164,16 +166,16 @@ describe("ReadyToShipService.clearContainer", () => {
 
     it("a partly unlocked container (one position reopened by ops): still refused", async () => {
       const { c1 } = await fill();
-      await step(() => h.service.confirm(clientActor));
+      await step(() => h.confirm(clientActor));
       const position = h.allocations.rows.find(
         (a) => a.container.id === c1 && a.piLineItem.id === "li-A",
       )!;
       await h.service.unlockAllocation(position.id as string, opsActor);
 
-      expect(await failure(h.service.clearContainer(c1, clientActor))).toEqual({
-        status: 400,
-        code: "CONTAINER_LOCKED",
-      });
+      // The unlock hands the load list to CEAT (draft_ceat).
+      expect(
+        await failure(h.service.clearContainer(c1, opsActor, "cust-1")),
+      ).toEqual({ status: 400, code: "CONTAINER_LOCKED" });
     });
 
     it("an empty container: 400 CONTAINER_EMPTY", async () => {
@@ -191,16 +193,15 @@ describe("ReadyToShipService.clearContainer", () => {
       });
     });
 
-    it("another customer's container is a 404; ops gets a 403", async () => {
+    it("another customer's container is a 404; ops can't while the client edits", async () => {
       const { c1 } = await fill();
 
       expect(
         await failure(h.service.clearContainer(c1, otherClientActor)),
       ).toEqual({ status: 404, code: "NOT_FOUND" });
-      expect(await failure(h.service.clearContainer(c1, opsActor))).toEqual({
-        status: 403,
-        code: "CLIENT_ONLY_ACTION",
-      });
+      expect(
+        await failure(h.service.clearContainer(c1, opsActor, "cust-1")),
+      ).toEqual({ status: 400, code: "LOAD_LIST_NOT_EDITABLE" });
       expect(
         await failure(
           h.service.clearContainer("no-such-container", clientActor),
@@ -213,13 +214,13 @@ describe("ReadyToShipService.clearContainer", () => {
 
   it("after ops unlocks a confirmed container, clearing it takes its marking files too", async () => {
     const { c1, c2 } = await fill();
-    await step(() => h.service.confirm(clientActor));
+    await step(() => h.confirm(clientActor));
     for (const a of h.allocations.rows) {
       h.markings.seed({ id: `m-${a.id}`, allocation: { id: a.id } } as any);
     }
-    await h.service.unlock(c1, opsActor);
+    await h.service.unlock(c1, opsActor); // -> draft_ceat: CEAT reworks it
 
-    await step(() => h.service.clearContainer(c1, clientActor));
+    await step(() => h.service.clearContainer(c1, opsActor, "cust-1"));
 
     // Only container 2's marking file is left.
     const left = h.allocations.rows.filter((a) => a.container.id === c2);
@@ -229,17 +230,24 @@ describe("ReadyToShipService.clearContainer", () => {
   });
 
   it("'OK to mix' and a manual container are emptied but keep label, name and flags", async () => {
-    const view = await h.service.getView(clientActor);
+    h.setLoadListStatus(LoadListStatus.DRAFT_CEAT); // CEAT drafts
+    const view = await h.service.getView(opsActor, "cust-1");
     const okToMix = view.containers.find((c) => c.isOkToMix)!;
-    const added = await h.service.addContainer(clientActor);
+    const added = await h.service.addContainer(opsActor, "cust-1");
     const manual = added.containers.find((c) => c.isManual)!;
-    await h.service.rename(manual.id, "Доп", clientActor);
-    await move(okToMix.id, "li-A", 5);
-    await move(manual.id, "li-B", 7);
+    await h.service.rename(manual.id, "Доп", opsActor, "cust-1");
+    for (const [containerId, piLineItemId, qty] of [
+      [okToMix.id, "li-A", 5],
+      [manual.id, "li-B", 7],
+    ] as const) {
+      await step(() =>
+        h.service.move({ piLineItemId, containerId, qty }, opsActor, "cust-1"),
+      );
+    }
 
-    await step(() => h.service.clearContainer(okToMix.id, clientActor));
+    await step(() => h.service.clearContainer(okToMix.id, opsActor, "cust-1"));
     const after = await step(() =>
-      h.service.clearContainer(manual.id, clientActor),
+      h.service.clearContainer(manual.id, opsActor, "cust-1"),
     );
 
     expect(after.containers.find((c) => c.id === okToMix.id)).toMatchObject({

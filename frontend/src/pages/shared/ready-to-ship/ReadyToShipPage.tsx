@@ -39,12 +39,15 @@ import {
   type RemoveTarget,
 } from "@/pages/shared/ready-to-ship/RemoveDialog"
 import { ReadyLinesTable } from "@/pages/shared/ready-to-ship/ReadyLinesTable"
+import { LoadListBar } from "@/pages/shared/ready-to-ship/LoadListBar"
+import { ReadyToShipCustomerContext } from "@/pages/shared/ready-to-ship/customerContext"
 import { formatNumber } from "@/lib/format"
 import { useContainerName, useContainerTitle } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
 
-// Used by /client/ready-to-ship (working tool) and /ops/ready-to-ship (the
-// same picture, read-only, plus "Разблокировать" on confirmed containers).
+// Used by /client/ready-to-ship and /ops/ready-to-ship. Phase 25: who edits
+// is the load list's status — CEAT drafts it, the client accepts it or asks
+// to change it, CEAT approves the change; ops unlocks confirmed containers.
 export function ReadyToShipPage() {
   const { user } = useAuth()
   if (user?.role === "ops") {
@@ -216,394 +219,409 @@ function ReadyToShipContent({
   const filled = [...summary.working, ...summary.confirmed].sort(
     (a, b) => view.containers.indexOf(a) - view.containers.indexOf(b)
   )
+  // The viewer edits the layout now (the server checks it on every write).
+  const canEdit = view.loadList.canEdit
+  // Unlocking reopens the load list for CEAT — not while it's with the client.
+  const canUnlock =
+    !isClient &&
+    (view.loadList.status === "confirmed" || view.loadList.status === "draft_ceat")
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">{t("readyToShip.title")}</h1>
-          <p className="text-sm text-muted-foreground">
-            {isClient
-              ? t("readyToShip.descriptionClient")
-              : t("readyToShip.descriptionOps")}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div
-            className="flex flex-wrap items-center gap-2 text-xs"
-            data-testid="ready-summary"
-          >
-            <Badge variant="secondary">
-              {t("readyToShip.badgeLines", { n: view.unallocatedLines.length })}
-            </Badge>
-            <Badge variant="secondary">
-              {t("readyToShip.badgeRemaining", {
-                qty: formatNumber(String(summary.remainingTotal)),
-              })}
-            </Badge>
-            <Badge variant="secondary">
-              {t("readyToShip.badgeContainers", {
-                n: summary.plannedShown,
-              })}
-            </Badge>
-            {view.manualContainers > 0 && (
-              <Badge variant="secondary" data-testid="manual-count">
-                {t("readyToShip.badgeManual", { n: view.manualContainers })}
-              </Badge>
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isExporting}
-            data-testid="export-xlsx"
-            onClick={() => {
-              setIsExporting(true)
-              exportReadyToShipXlsx(customerId)
-                .catch((error) =>
-                  toast.error(getErrorMessage(error, t("readyToShip.exportFailed")))
-                )
-                .finally(() => setIsExporting(false))
-            }}
-          >
-            <Download />
-            {isExporting ? t("common.exporting") : t("readyToShip.exportExcel")}
-          </Button>
-        </div>
-      </div>
-
-      {isClient && <ActionsBar view={view} />}
-
-      {/* Side by side only from 1400px: below that each panel is too narrow
-          for the list table (it would scroll sideways), so they stack. */}
-      <div className="grid gap-4 min-[1400px]:grid-cols-2 min-[1400px]:items-start">
-        <Card className="min-[1400px]:sticky min-[1400px]:top-4" data-testid="ready-panel">
-          <CardHeader>
-            <CardTitle>{t("readyToShip.list.title")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ReadyLinesTable
-              lines={view.unallocatedLines}
-              canMove={isClient}
-              onMove={setMoveLine}
-              toolbar={
-                isClient &&
-                summary.okToMix && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={view.unallocatedLines.length === 0 || moveRemaining.isPending}
-                    data-testid="move-remaining-to-mix"
-                    onClick={() => setConfirmMoveRemaining(true)}
-                  >
-                    <PackageOpen />
-                    {t("readyToShip.list.moveRemaining")}
-                  </Button>
-                )
-              }
-            />
-          </CardContent>
-        </Card>
-
-        <section className="flex flex-col gap-3" data-testid="containers-panel">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-medium">
-              {t("readyToShip.containers.title")}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                {t("readyToShip.containers.counts", {
-                  working: summary.working.length,
-                  confirmed: summary.confirmed.length,
-                  free: summary.free.length,
-                })}
-              </span>
-              {isClient && (
-                // When the plan's slots ran out before the lines did. No
-                // confirmation: an empty one goes away with "Undo all".
-                <span
-                  title={
-                    view.unallocatedLines.length === 0
-                      ? t("readyToShip.addContainer.nothingToAllocate")
-                      : undefined
-                  }
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      view.unallocatedLines.length === 0 || addContainer.isPending
-                    }
-                    data-testid="add-container"
-                    onClick={() =>
-                      addContainer.mutate(undefined, {
-                        onSuccess: (next) => {
-                          // The new one is the manual container this view
-                          // didn't have yet.
-                          const known = new Set(view.containers.map((c) => c.id))
-                          const added = next.containers.find(
-                            (c) => c.isManual && !known.has(c.id)
-                          )
-                          // The next "Move" offers it first.
-                          if (added) setLastContainerId(added.id)
-                          toast.success(
-                            t("readyToShip.addContainer.done", {
-                              container: added
-                                ? containerTitle(added)
-                                : t("readyToShip.containers.title"),
-                            })
-                          )
-                        },
-                        onError: (error) =>
-                          toast.error(
-                            getErrorMessage(
-                              error,
-                              t("readyToShip.addContainer.failed")
-                            )
-                          ),
-                      })
-                    }
-                  >
-                    <Plus /> {t("readyToShip.addContainer.button")}
-                  </Button>
-                </span>
-              )}
-              {!isClient && (
-                // Next to the per-container "Unlock" on the cards: the same
-                // thing for every container that has a locked line.
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={!summary.hasLocked || unlockAll.isPending}
-                  data-testid="unlock-all"
-                  onClick={() => setConfirmUnlockAll(true)}
-                >
-                  <LockOpen /> {t("readyToShip.unlockAll.button")}
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {filled.length === 0 && !summary.okToMix?.allocations.length && (
+    <ReadyToShipCustomerContext.Provider value={customerId}>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h1 className="text-xl font-semibold">{t("readyToShip.title")}</h1>
             <p className="text-sm text-muted-foreground">
               {isClient
-                ? t("readyToShip.containers.emptyClient")
-                : t("readyToShip.containers.emptyOps")}
+                ? t("readyToShip.descriptionClient")
+                : t("readyToShip.descriptionOps")}
             </p>
-          )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="flex flex-wrap items-center gap-2 text-xs"
+              data-testid="ready-summary"
+            >
+              <Badge variant="secondary">
+                {t("readyToShip.badgeLines", { n: view.unallocatedLines.length })}
+              </Badge>
+              <Badge variant="secondary">
+                {t("readyToShip.badgeRemaining", {
+                  qty: formatNumber(String(summary.remainingTotal)),
+                })}
+              </Badge>
+              <Badge variant="secondary">
+                {t("readyToShip.badgeContainers", {
+                  n: summary.plannedShown,
+                })}
+              </Badge>
+              {view.manualContainers > 0 && (
+                <Badge variant="secondary" data-testid="manual-count">
+                  {t("readyToShip.badgeManual", { n: view.manualContainers })}
+                </Badge>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isExporting}
+              data-testid="export-xlsx"
+              onClick={() => {
+                setIsExporting(true)
+                exportReadyToShipXlsx(customerId)
+                  .catch((error) =>
+                    toast.error(getErrorMessage(error, t("readyToShip.exportFailed")))
+                  )
+                  .finally(() => setIsExporting(false))
+              }}
+            >
+              <Download />
+              {isExporting ? t("common.exporting") : t("readyToShip.exportExcel")}
+            </Button>
+          </div>
+        </div>
 
-          {filled.map((container) => (
-            <ContainerCard
-              key={container.id}
-              container={container}
-              mode={mode}
-              onRemove={setRemoveTarget}
-              onUnlock={setUnlockTarget}
-              onUnlockAllocation={setUnlockAllocationTarget}
-            />
-          ))}
+        <LoadListBar view={view} mode={mode} />
 
-          {summary.okToMix && (
-            <ContainerCard
-              key={summary.okToMix.id}
-              container={summary.okToMix}
-              mode={mode}
-              onRemove={setRemoveTarget}
-              onUnlock={setUnlockTarget}
-              onUnlockAllocation={setUnlockAllocationTarget}
-            />
-          )}
+        {canEdit && <ActionsBar view={view} />}
 
-          {summary.free.length > 0 && (
-            <Card size="sm" data-testid="free-slots">
-              <CardHeader>
-                <CardTitle className="text-sm">
-                  {t("readyToShip.containers.freeSlots", { n: summary.free.length })}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-wrap gap-1.5">
-                {summary.free.map((container) => (
-                  <Badge key={container.id} variant="outline">
-                    {containerTitle(container)}
-                  </Badge>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+        {/* Side by side only from 1400px: below that each panel is too narrow
+            for the list table (it would scroll sideways), so they stack. */}
+        <div className="grid gap-4 min-[1400px]:grid-cols-2 min-[1400px]:items-start">
+          <Card className="min-[1400px]:sticky min-[1400px]:top-4" data-testid="ready-panel">
+            <CardHeader>
+              <CardTitle>{t("readyToShip.list.title")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ReadyLinesTable
+                lines={view.unallocatedLines}
+                canMove={canEdit}
+                onMove={setMoveLine}
+                toolbar={
+                  canEdit &&
+                  summary.okToMix && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={view.unallocatedLines.length === 0 || moveRemaining.isPending}
+                      data-testid="move-remaining-to-mix"
+                      onClick={() => setConfirmMoveRemaining(true)}
+                    >
+                      <PackageOpen />
+                      {t("readyToShip.list.moveRemaining")}
+                    </Button>
+                  )
+                }
+              />
+            </CardContent>
+          </Card>
 
-          {summary.manualEmpty.length > 0 && (
-            <Card size="sm" data-testid="manual-slots">
-              <CardHeader>
-                <CardTitle className="text-sm">
-                  {t("readyToShip.containers.manualSlots", {
-                    n: summary.manualEmpty.length,
+          <section className="flex flex-col gap-3" data-testid="containers-panel">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-base font-medium">
+                {t("readyToShip.containers.title")}
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {t("readyToShip.containers.counts", {
+                    working: summary.working.length,
+                    confirmed: summary.confirmed.length,
+                    free: summary.free.length,
                   })}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-wrap gap-1.5">
-                {summary.manualEmpty.map((container) => (
-                  <Badge key={container.id} variant="outline">
-                    {containerTitle(container)}
-                  </Badge>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </section>
-      </div>
+                </span>
+                {!isClient && canEdit && (
+                  // When the plan's slots ran out before the lines did — CEAT's,
+                  // in its draft. No confirmation: an empty one goes away with
+                  // "Undo all".
+                  <span
+                    title={
+                      view.unallocatedLines.length === 0
+                        ? t("readyToShip.addContainer.nothingToAllocate")
+                        : undefined
+                    }
+                  >
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        view.unallocatedLines.length === 0 || addContainer.isPending
+                      }
+                      data-testid="add-container"
+                      onClick={() =>
+                        addContainer.mutate(undefined, {
+                          onSuccess: (next) => {
+                            // The new one is the manual container this view
+                            // didn't have yet.
+                            const known = new Set(view.containers.map((c) => c.id))
+                            const added = next.containers.find(
+                              (c) => c.isManual && !known.has(c.id)
+                            )
+                            // The next "Move" offers it first.
+                            if (added) setLastContainerId(added.id)
+                            toast.success(
+                              t("readyToShip.addContainer.done", {
+                                container: added
+                                  ? containerTitle(added)
+                                  : t("readyToShip.containers.title"),
+                              })
+                            )
+                          },
+                          onError: (error) =>
+                            toast.error(
+                              getErrorMessage(
+                                error,
+                                t("readyToShip.addContainer.failed")
+                              )
+                            ),
+                        })
+                      }
+                    >
+                      <Plus /> {t("readyToShip.addContainer.button")}
+                    </Button>
+                  </span>
+                )}
+                {canUnlock && (
+                  // Next to the per-container "Unlock" on the cards: the same
+                  // thing for every container that has a locked line.
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!summary.hasLocked || unlockAll.isPending}
+                    data-testid="unlock-all"
+                    onClick={() => setConfirmUnlockAll(true)}
+                  >
+                    <LockOpen /> {t("readyToShip.unlockAll.button")}
+                  </Button>
+                )}
+              </div>
+            </div>
 
-      {isClient && (
-        <>
-          <MoveDialog
-            line={moveLine}
-            containers={summary.visibleContainers}
-            preferredContainerId={lastContainerId}
-            customerId={customerId}
-            onClose={() => setMoveLine(null)}
-            onMoved={setLastContainerId}
-          />
-          <RemoveDialog
-            target={removeTarget}
-            customerId={customerId}
-            onClose={() => setRemoveTarget(null)}
-          />
+            {filled.length === 0 && !summary.okToMix?.allocations.length && (
+              <p className="text-sm text-muted-foreground">
+                {canEdit
+                  ? t("readyToShip.containers.emptyClient")
+                  : t("readyToShip.containers.emptyOps")}
+              </p>
+            )}
+
+            {filled.map((container) => (
+              <ContainerCard
+                key={container.id}
+                container={container}
+                mode={mode}
+                canEdit={canEdit}
+                canUnlock={canUnlock}
+                onRemove={setRemoveTarget}
+                onUnlock={setUnlockTarget}
+                onUnlockAllocation={setUnlockAllocationTarget}
+              />
+            ))}
+
+            {summary.okToMix && (
+              <ContainerCard
+                key={summary.okToMix.id}
+                container={summary.okToMix}
+                mode={mode}
+                canEdit={canEdit}
+                canUnlock={canUnlock}
+                onRemove={setRemoveTarget}
+                onUnlock={setUnlockTarget}
+                onUnlockAllocation={setUnlockAllocationTarget}
+              />
+            )}
+
+            {summary.free.length > 0 && (
+              <Card size="sm" data-testid="free-slots">
+                <CardHeader>
+                  <CardTitle className="text-sm">
+                    {t("readyToShip.containers.freeSlots", { n: summary.free.length })}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-1.5">
+                  {summary.free.map((container) => (
+                    <Badge key={container.id} variant="outline">
+                      {containerTitle(container)}
+                    </Badge>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {summary.manualEmpty.length > 0 && (
+              <Card size="sm" data-testid="manual-slots">
+                <CardHeader>
+                  <CardTitle className="text-sm">
+                    {t("readyToShip.containers.manualSlots", {
+                      n: summary.manualEmpty.length,
+                    })}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-1.5">
+                  {summary.manualEmpty.map((container) => (
+                    <Badge key={container.id} variant="outline">
+                      {containerTitle(container)}
+                    </Badge>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+          </section>
+        </div>
+
+        {canEdit && (
+          <>
+            <MoveDialog
+              line={moveLine}
+              containers={summary.visibleContainers}
+              preferredContainerId={lastContainerId}
+              customerId={customerId}
+              onClose={() => setMoveLine(null)}
+              onMoved={setLastContainerId}
+            />
+            <RemoveDialog
+              target={removeTarget}
+              customerId={customerId}
+              onClose={() => setRemoveTarget(null)}
+            />
+            <ConfirmDialog
+              open={confirmMoveRemaining}
+              onOpenChange={setConfirmMoveRemaining}
+              title={t("readyToShip.list.moveRemainingTitle")}
+              description={t("readyToShip.list.moveRemainingDescription", {
+                lines: view.unallocatedLines.length,
+                qty: formatNumber(String(summary.remainingTotal)),
+              })}
+              confirmLabel={t("readyToShip.list.moveRemainingConfirm")}
+              isPending={moveRemaining.isPending}
+              onConfirm={() =>
+                moveRemaining.mutate(undefined, {
+                  onSuccess: () => {
+                    toast.success(t("readyToShip.list.moveRemainingDone"))
+                    setConfirmMoveRemaining(false)
+                  },
+                  onError: (error) => {
+                    toast.error(
+                      getErrorMessage(error, t("readyToShip.list.moveRemainingFailed"))
+                    )
+                    setConfirmMoveRemaining(false)
+                  },
+                })
+              }
+            />
+          </>
+        )}
+
+        {!isClient && (
           <ConfirmDialog
-            open={confirmMoveRemaining}
-            onOpenChange={setConfirmMoveRemaining}
-            title={t("readyToShip.list.moveRemainingTitle")}
-            description={t("readyToShip.list.moveRemainingDescription", {
-              lines: view.unallocatedLines.length,
-              qty: formatNumber(String(summary.remainingTotal)),
+            open={unlockTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setUnlockTarget(null)
+            }}
+            title={t("readyToShip.unlock.title", {
+              label: unlockTarget ? containerTitle(unlockTarget) : "",
             })}
-            confirmLabel={t("readyToShip.list.moveRemainingConfirm")}
-            isPending={moveRemaining.isPending}
-            onConfirm={() =>
-              moveRemaining.mutate(undefined, {
+            description={t("readyToShip.unlock.description")}
+            confirmLabel={t("readyToShip.unlock.confirm")}
+            destructive
+            isPending={unlock.isPending}
+            onConfirm={() => {
+              if (!unlockTarget) return
+              unlock.mutate(unlockTarget.id, {
                 onSuccess: () => {
-                  toast.success(t("readyToShip.list.moveRemainingDone"))
-                  setConfirmMoveRemaining(false)
+                  toast.success(
+                    t("readyToShip.unlock.done", {
+                      label: containerTitle(unlockTarget),
+                    })
+                  )
+                  setUnlockTarget(null)
                 },
                 onError: (error) => {
                   toast.error(
-                    getErrorMessage(error, t("readyToShip.list.moveRemainingFailed"))
+                    getErrorMessage(error, t("readyToShip.unlock.failed"))
                   )
-                  setConfirmMoveRemaining(false)
+                  setUnlockTarget(null)
+                },
+              })
+            }}
+          />
+        )}
+
+        {!isClient && (
+          <ConfirmDialog
+            open={confirmUnlockAll}
+            onOpenChange={setConfirmUnlockAll}
+            title={t("readyToShip.unlockAll.title")}
+            description={t("readyToShip.unlockAll.description")}
+            confirmLabel={t("readyToShip.unlockAll.confirm")}
+            destructive
+            isPending={unlockAll.isPending}
+            onConfirm={() =>
+              unlockAll.mutate(undefined, {
+                onSuccess: (result) => {
+                  if (result.containersUnlocked === 0) {
+                    toast.info(t("readyToShip.unlockAll.nothing"))
+                  } else {
+                    toast.success(
+                      t("readyToShip.unlockAll.done", {
+                        containers: result.containersUnlocked,
+                        positions: result.positionsUnlocked,
+                      })
+                    )
+                  }
+                  setConfirmUnlockAll(false)
+                },
+                onError: (error) => {
+                  toast.error(getErrorMessage(error, t("readyToShip.unlockAll.failed")))
+                  setConfirmUnlockAll(false)
                 },
               })
             }
           />
-        </>
-      )}
+        )}
 
-      {!isClient && (
-        <ConfirmDialog
-          open={unlockTarget !== null}
-          onOpenChange={(open) => {
-            if (!open) setUnlockTarget(null)
-          }}
-          title={t("readyToShip.unlock.title", {
-            label: unlockTarget ? containerTitle(unlockTarget) : "",
-          })}
-          description={t("readyToShip.unlock.description")}
-          confirmLabel={t("readyToShip.unlock.confirm")}
-          destructive
-          isPending={unlock.isPending}
-          onConfirm={() => {
-            if (!unlockTarget) return
-            unlock.mutate(unlockTarget.id, {
-              onSuccess: () => {
-                toast.success(
-                  t("readyToShip.unlock.done", {
-                    label: containerTitle(unlockTarget),
-                  })
-                )
-                setUnlockTarget(null)
-              },
-              onError: (error) => {
-                toast.error(
-                  getErrorMessage(error, t("readyToShip.unlock.failed"))
-                )
-                setUnlockTarget(null)
-              },
-            })
-          }}
-        />
-      )}
-
-      {!isClient && (
-        <ConfirmDialog
-          open={confirmUnlockAll}
-          onOpenChange={setConfirmUnlockAll}
-          title={t("readyToShip.unlockAll.title")}
-          description={t("readyToShip.unlockAll.description")}
-          confirmLabel={t("readyToShip.unlockAll.confirm")}
-          destructive
-          isPending={unlockAll.isPending}
-          onConfirm={() =>
-            unlockAll.mutate(undefined, {
-              onSuccess: (result) => {
-                if (result.containersUnlocked === 0) {
-                  toast.info(t("readyToShip.unlockAll.nothing"))
-                } else {
+        {!isClient && (
+          <ConfirmDialog
+            open={unlockAllocationTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setUnlockAllocationTarget(null)
+            }}
+            title={t("readyToShip.unlockLine.title", {
+              material: unlockAllocationTarget?.allocation.materialNum ?? "—",
+              container: unlockAllocationTarget
+                ? containerName(unlockAllocationTarget.containerLabel)
+                : "",
+            })}
+            description={t("readyToShip.unlockLine.description")}
+            confirmLabel={t("readyToShip.unlockLine.confirm")}
+            destructive
+            isPending={unlockAllocation.isPending}
+            onConfirm={() => {
+              if (!unlockAllocationTarget) return
+              unlockAllocation.mutate(unlockAllocationTarget.allocation.id, {
+                onSuccess: () => {
                   toast.success(
-                    t("readyToShip.unlockAll.done", {
-                      containers: result.containersUnlocked,
-                      positions: result.positionsUnlocked,
+                    t("readyToShip.unlockLine.done", {
+                      material: unlockAllocationTarget.allocation.materialNum ?? "—",
                     })
                   )
-                }
-                setConfirmUnlockAll(false)
-              },
-              onError: (error) => {
-                toast.error(getErrorMessage(error, t("readyToShip.unlockAll.failed")))
-                setConfirmUnlockAll(false)
-              },
-            })
-          }
-        />
-      )}
-
-      {!isClient && (
-        <ConfirmDialog
-          open={unlockAllocationTarget !== null}
-          onOpenChange={(open) => {
-            if (!open) setUnlockAllocationTarget(null)
-          }}
-          title={t("readyToShip.unlockLine.title", {
-            material: unlockAllocationTarget?.allocation.materialNum ?? "—",
-            container: unlockAllocationTarget
-              ? containerName(unlockAllocationTarget.containerLabel)
-              : "",
-          })}
-          description={t("readyToShip.unlockLine.description")}
-          confirmLabel={t("readyToShip.unlockLine.confirm")}
-          destructive
-          isPending={unlockAllocation.isPending}
-          onConfirm={() => {
-            if (!unlockAllocationTarget) return
-            unlockAllocation.mutate(unlockAllocationTarget.allocation.id, {
-              onSuccess: () => {
-                toast.success(
-                  t("readyToShip.unlockLine.done", {
-                    material: unlockAllocationTarget.allocation.materialNum ?? "—",
-                  })
-                )
-                setUnlockAllocationTarget(null)
-              },
-              onError: (error) => {
-                toast.error(
-                  getErrorMessage(error, t("readyToShip.unlockLine.failed"))
-                )
-                setUnlockAllocationTarget(null)
-              },
-            })
-          }}
-        />
-      )}
-    </div>
+                  setUnlockAllocationTarget(null)
+                },
+                onError: (error) => {
+                  toast.error(
+                    getErrorMessage(error, t("readyToShip.unlockLine.failed"))
+                  )
+                  setUnlockAllocationTarget(null)
+                },
+              })
+            }}
+          />
+        )}
+      </div>
+    </ReadyToShipCustomerContext.Provider>
   )
 }
 

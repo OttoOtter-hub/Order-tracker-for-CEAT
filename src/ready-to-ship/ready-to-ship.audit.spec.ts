@@ -85,12 +85,12 @@ describe("ReadyToShipService / MarkingFilesService — action journal", () => {
     });
   });
 
-  it("confirm, whole-container unlock and single-position unlock are journaled", async () => {
+  it("whole-container and single-position unlocks are journaled, each after the load list's reopening", async () => {
     await move("li-A", 0, 50);
     await move("li-B", 0, 20);
-    await h.service.confirm(clientActor);
+    await h.confirm(clientActor);
     await h.service.unlock(containerId(0), opsActor);
-    await h.service.confirm(clientActor);
+    await h.confirm(clientActor);
     const allocationId = h.allocations.rows[0].id as string;
     await h.service.unlockAllocation(allocationId, opsActor);
 
@@ -98,8 +98,10 @@ describe("ReadyToShipService / MarkingFilesService — action journal", () => {
       "rts.moved",
       "rts.moved",
       "rts.confirmed",
+      "rts.load_list_reopened",
       "rts.container_unlocked",
       "rts.confirmed",
+      "rts.load_list_reopened",
       "rts.position_unlocked",
     ]);
     expect(h.audit.entries[2]).toMatchObject({
@@ -110,10 +112,17 @@ describe("ReadyToShipService / MarkingFilesService — action journal", () => {
     });
     expect(h.audit.entries[3]).toMatchObject({
       actor: opsActor,
+      entityType: "customer",
+      entityId: "cust-1",
+      metadata: { reason: "unlock", from: "confirmed", to: "draft_ceat" },
+      inTransaction: true,
+    });
+    expect(h.audit.entries[4]).toMatchObject({
+      actor: opsActor,
       entityId: containerId(0),
       metadata: { containerLabel: "Контейнер 1", positionsUnlocked: 2 },
     });
-    expect(h.audit.entries[5]).toMatchObject({
+    expect(h.audit.entries[7]).toMatchObject({
       actor: opsActor,
       metadata: { allocationId, piNumber: "100000001", qty: 50 },
     });
@@ -121,7 +130,7 @@ describe("ReadyToShipService / MarkingFilesService — action journal", () => {
 
   it("marking file upload and delete are journaled with the position", async () => {
     await move("li-A", 0, 50);
-    await h.service.confirm(clientActor);
+    await h.confirm(clientActor);
     const allocationId = h.allocations.rows[0].id as string;
     const pdf = {
       originalname: "marking.pdf",
@@ -151,7 +160,7 @@ describe("ReadyToShipService / MarkingFilesService — action journal", () => {
   it("a refused action journals nothing", async () => {
     await move("li-A", 0, 999).catch(() => undefined); // more than the remainder
     await h.service.undoLast(clientActor).catch(() => undefined); // nothing to undo
-    await h.service.confirm(clientActor).catch(() => undefined); // nothing to confirm
+    await h.confirm(clientActor).catch(() => undefined); // nothing to confirm
 
     expect(h.audit.entries).toEqual([]);
   });

@@ -147,7 +147,7 @@ describe("ReadyToShipService — OK to mix", () => {
       });
       expect(full.canConfirm).toBe(true);
 
-      const confirmed = await h.service.confirm(clientActor);
+      const confirmed = await h.confirm(clientActor);
       expect(okToMixOf(confirmed).isConfirmed).toBe(true);
     });
 
@@ -156,7 +156,7 @@ describe("ReadyToShipService — OK to mix", () => {
       await move("li-N", okToMixOf(view).id, 40);
       await move("li-A", numbered(view)[0].id, 150); // 150%
 
-      await expect(h.service.confirm(clientActor)).rejects.toBeInstanceOf(
+      await expect(h.confirm(clientActor)).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
@@ -230,7 +230,8 @@ describe("ReadyToShipService — OK to mix", () => {
     it("refuses a confirmed OK to mix — all or nothing, nothing written", async () => {
       const view = await h.service.getView(clientActor);
       await move("li-N", okToMixOf(view).id, 10);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
+      h.clientEditing();
       const allocationsBefore = JSON.stringify(h.allocations.rows);
       const actionsBefore = h.actions.rows.length;
 
@@ -242,11 +243,11 @@ describe("ReadyToShipService — OK to mix", () => {
       expect(h.actions.rows.length).toBe(actionsBefore);
     });
 
-    it("is client-only", async () => {
+    it("only for the one editing now: ops while the client edits gets LOAD_LIST_NOT_EDITABLE", async () => {
       await h.service.getView(clientActor);
-      expect(await codeOf(h.service.moveRemainingToMix(opsActor))).toBe(
-        "CLIENT_ONLY_ACTION",
-      );
+      expect(
+        await codeOf(h.service.moveRemainingToMix(opsActor, "cust-1")),
+      ).toBe("LOAD_LIST_NOT_EDITABLE");
     });
   });
 
@@ -265,7 +266,7 @@ describe("ReadyToShipService — OK to mix", () => {
     it("marking files work on its positions like on any other", async () => {
       const view = await h.service.getView(clientActor);
       await move("li-N", okToMixOf(view).id, 40);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
       const allocationId = h.allocations.rows[0].id as string;
 
       await h.markingService.upload(allocationId, pdf(), clientActor);
@@ -284,17 +285,18 @@ describe("ReadyToShipService — OK to mix", () => {
       const okId = okToMixOf(view).id;
       await move("li-N", okId, 40);
       await move("li-A", okId, 10);
-      await h.service.confirm(clientActor);
+      await h.confirm(clientActor);
 
       await h.service.unlockAllocation(
         h.allocations.rows[0].id as string,
         opsActor,
       );
-      const partial = await h.service.getView(clientActor);
+      // CEAT reworks it now (draft_ceat): CEAT sees the unlocked part.
+      const partial = await h.service.getView(opsActor, "cust-1");
       expect(okToMixOf(partial).isPartiallyUnlocked).toBe(true);
 
       await h.service.unlock(okId, opsActor);
-      const open = await h.service.getView(clientActor);
+      const open = await h.service.getView(opsActor, "cust-1");
       expect(okToMixOf(open).allocations.every((a) => !a.isLocked)).toBe(true);
     });
   });

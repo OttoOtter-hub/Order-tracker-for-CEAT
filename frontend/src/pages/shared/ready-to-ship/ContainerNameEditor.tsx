@@ -8,6 +8,7 @@ import {
   useRenameContainerMutation,
 } from "@/api/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
+import { useReadyToShipCustomer } from "@/pages/shared/ready-to-ship/customerContext"
 
 interface ContainerNameEditorProps {
   containerId: string
@@ -22,7 +23,7 @@ export function ContainerNameEditor({
   name,
 }: ContainerNameEditorProps) {
   const { t } = useTranslation()
-  const rename = useRenameContainerMutation()
+  const rename = useRenameContainerMutation(useReadyToShipCustomer())
   const [draft, setDraft] = useState(name ?? "")
 
   const trimmed = draft.trim()

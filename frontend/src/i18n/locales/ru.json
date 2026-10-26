@@ -25,7 +25,8 @@
     "qtyPcs": "{{qty}} шт.",
     "equalsContainers": "= {{n}} конт.",
     "all": "Всё ({{max}})",
-    "uploadedAt": "загружено {{date}}"
+    "uploadedAt": "загружено {{date}}",
+    "atRow": "Строка {{row}}: {{text}}"
   },
   "language": {
     "label": "Язык"
@@ -200,7 +201,15 @@
         "container_unlocked": "Контейнер разблокирован",
         "position_unlocked": "Позиция разблокирована",
         "marking_uploaded": "Загружен файл маркировки",
-        "marking_deleted": "Удалён файл маркировки"
+        "marking_deleted": "Удалён файл маркировки",
+        "load_list_sent": "Load list отправлен клиенту",
+        "load_list_accepted": "Клиент принял load list",
+        "load_list_edit_requested": "Клиент начал вносить изменения",
+        "load_list_submitted": "Клиент отправил свою версию на согласование",
+        "load_list_approved": "CEAT согласовал версию клиента",
+        "load_list_rejected": "CEAT отклонил версию клиента",
+        "load_list_reopened": "Load list возвращён в черновик CEAT",
+        "load_list_imported": "Load list загружен из Excel"
       },
       "container": {
         "arrival_confirmed": "Прибытие подтверждено",
@@ -262,11 +271,16 @@
       "email": "Email",
       "role": "Роль",
       "customerName": "Клиент",
-      "isAdmin": "Администратор"
+      "isAdmin": "Администратор",
+      "comment": "Комментарий",
+      "adjustments": "Уменьшено под остатки",
+      "positions": "Позиций"
     },
     "reasons": {
       "absent_from_backorder": "нет в бэкордере",
-      "zero_remaining": "остаток к отправке 0"
+      "zero_remaining": "остаток к отправке 0",
+      "unlock": "разблокировка",
+      "manual": "«Изменить load list»"
     }
   },
   "changePassword": {
@@ -439,8 +453,8 @@
     "loadFailed": "Не удалось загрузить раздел",
     "containerLabel": "Контейнер {{n}}",
     "title": "Готово к отгрузке",
-    "descriptionClient": "Разложите план недели по контейнерам, подтвердите и приложите маркировку.",
-    "descriptionOps": "Состояние плана клиента (только просмотр). Подтверждённый контейнер можно разблокировать.",
+    "descriptionClient": "Load list собирает CEAT: вы принимаете его или вносите изменения и отправляете на согласование. К подтверждённым позициям прикладывается маркировка.",
+    "descriptionOps": "Load list клиента: CEAT собирает его, отправляет клиенту и согласует изменения клиента. Подтверждённое можно разблокировать.",
     "badgeLines": "Строк к распределению: {{n}}",
     "badgeRemaining": "Остаток: {{qty}} шт.",
     "badgeContainers": "Контейнеров: {{n}}",
@@ -452,19 +466,12 @@
       "containersWithItems": "контейнеров с позициями: {{n}}",
       "undoOne": "Отменить одно действие",
       "undoAll": "Отменить всё",
-      "confirm": "Подтвердить",
-      "blockedOver": "Нельзя подтвердить: перегружены {{list}}",
-      "blockedNothing": "Нечего подтверждать: нет контейнеров с позициями",
       "undoneOne": "Последнее действие отменено",
       "undoOneFailed": "Не удалось отменить действие",
       "undoAllTitle": "Отменить все несохранённые изменения?",
       "undoAllDescription": "Все перемещения в незафиксированных контейнерах будут откатаны, позиции вернутся в список готового. Подтверждённые контейнеры не затрагиваются. Действие необратимо для текущей сессии. Пустые контейнеры, добавленные вручную, будут удалены.",
       "undoAllDone": "Все несохранённые изменения отменены",
-      "undoAllFailed": "Не удалось отменить изменения",
-      "confirmTitle": "Подтвердить план?",
-      "confirmDescription": "Будут подтверждены все контейнеры с позициями ({{n}}). После этого состав можно менять только после разблокировки CEAT, а для каждой позиции нужно будет загрузить файл маркировки.",
-      "confirmDone": "План подтверждён",
-      "confirmFailed": "Не удалось подтвердить"
+      "undoAllFailed": "Не удалось отменить изменения"
     },
     "list": {
       "title": "Список готового",
@@ -527,7 +534,7 @@
       "markingCounter_other": "Маркировка: {{count}} файлов из {{total}}",
       "unlock": "Разблокировать",
       "unlockLine": "Разблокировать эту позицию",
-      "overfilledWarning": "Заполнение больше 100% — подтвердить план нельзя, пока контейнер не разгружен.",
+      "overfilledWarning": "Заполнение больше 100% — отправить load list нельзя, пока контейнер не разгружен.",
       "pi": "PI {{title}}",
       "piSo": " · SO {{so}}",
       "shareHint": "Доля контейнера, которую занимает эта строка",
@@ -622,6 +629,122 @@
       "done": "Разблокировано — контейнеров: {{containers}}, позиций: {{positions}}",
       "nothing": "Разблокировать нечего: подтверждённых позиций нет ни в одном контейнере",
       "failed": "Не удалось разблокировать контейнеры"
+    },
+    "loadList": {
+      "title": "Load list",
+      "status": {
+        "draft_ceat": "Черновик CEAT",
+        "sent_to_client": "Отправлен клиенту",
+        "client_editing": "Клиент вносит изменения",
+        "submitted_by_client": "На согласовании у CEAT",
+        "confirmed": "Подтверждён"
+      },
+      "hint": {
+        "ops": {
+          "draft_ceat": "Соберите load list и отправьте клиенту. Клиент пока видит только подтверждённые позиции.",
+          "sent_to_client": "Ждём ответа клиента: принять load list или внести изменения.",
+          "client_editing": "Клиент вносит изменения — они видны здесь по мере работы.",
+          "submitted_by_client": "Клиент отправил свою версию. Сравните её с версией CEAT и согласуйте или отклоните.",
+          "confirmed": "Load list подтверждён. «Изменить load list» вернёт его в черновик CEAT."
+        },
+        "client": {
+          "draft_ceat": "CEAT собирает load list. Пока видны только подтверждённые позиции — маркировку к ним можно загружать.",
+          "sent_to_client": "CEAT отправил load list. Примите его или внесите изменения.",
+          "client_editing": "Внесите изменения и отправьте свою версию на согласование CEAT.",
+          "submitted_by_client": "Ваша версия на согласовании у CEAT.",
+          "confirmed": "Load list подтверждён. Загрузите маркировку для каждой позиции."
+        }
+      },
+      "blockedOver": "Нельзя отправить: перегружены {{list}}",
+      "blockedNothing": "Нечего отправлять: нет контейнеров с неподтверждёнными позициями",
+      "steps": {
+        "send": {
+          "button": "Отправить клиенту",
+          "title": "Отправить load list клиенту?",
+          "description": "Клиент получит письмо и увидит load list (контейнеров с новыми позициями: {{n}}). Пока клиент не ответит, изменять его нельзя.",
+          "done": "Load list отправлен клиенту",
+          "failed": "Не удалось отправить load list"
+        },
+        "accept": {
+          "button": "Принять",
+          "title": "Принять load list?",
+          "description": "Все позиции будут подтверждены как есть, после этого к каждой нужно загрузить файл маркировки. Изменить состав потом можно только через CEAT.",
+          "done": "Load list принят",
+          "failed": "Не удалось принять load list"
+        },
+        "request-edit": {
+          "button": "Внести изменения",
+          "title": "Внести изменения в load list?",
+          "description": "Вы сможете менять неподтверждённые позиции, а затем отправить свою версию на согласование CEAT. CEAT получит уведомление.",
+          "done": "Можно вносить изменения",
+          "failed": "Не удалось перейти к изменениям"
+        },
+        "submit": {
+          "button": "Отправить на согласование",
+          "title": "Отправить вашу версию CEAT?",
+          "description": "CEAT сравнит её со своей и согласует или отклонит с комментарием (контейнеров с позициями: {{n}}). До ответа изменять load list нельзя.",
+          "done": "Версия отправлена на согласование",
+          "failed": "Не удалось отправить на согласование"
+        },
+        "approve": {
+          "button": "OK",
+          "done": "Версия клиента согласована, load list подтверждён",
+          "failed": "Не удалось согласовать версию клиента"
+        },
+        "reopen": {
+          "button": "Изменить load list",
+          "title": "Вернуть load list в черновик CEAT?",
+          "description": "Подтверждённые позиции останутся подтверждёнными; остальное CEAT сможет менять и затем снова отправит load list клиенту.",
+          "done": "Load list снова в черновике CEAT",
+          "failed": "Не удалось вернуть load list в черновик"
+        }
+      },
+      "rejected": {
+        "title": "CEAT отклонил версию клиента",
+        "adjustments": "Часть количеств пришлось уменьшить под текущие остатки:",
+        "adjustment": "{{materialNum}} (PI {{piNumber}}), {{container}}: {{wanted}} → {{placed}} шт."
+      }
+    },
+    "clientVersion": {
+      "open": "Версия клиента",
+      "title": "Версия клиента",
+      "description": "Версия CEAT от {{ceat}} и версия клиента от {{client}}.",
+      "descriptionNoCeat": "Версия клиента от {{client}}. Версии CEAT нет — load list ещё не отправлялся из CEAT, поэтому все позиции показаны как изменения клиента.",
+      "descriptionLoading": "Сравнение версии CEAT с версией клиента.",
+      "loadFailed": "Не удалось загрузить сравнение",
+      "containers": "Заполнение контейнеров",
+      "colContainer": "Контейнер",
+      "colCeat": "CEAT",
+      "colClient": "Клиент",
+      "lines": "Изменённые позиции: {{n}}",
+      "noChanges": "Клиент ничего не изменил.",
+      "colMaterial": "Материал",
+      "colPiSo": "PI / SO",
+      "colChanges": "Изменения",
+      "change": "{{container}}: {{ceat}} → {{client}} шт.",
+      "outdatedTitle": "Версия клиента не сходится с текущими остатками:",
+      "outdatedHint": "Согласовать её нельзя — отклоните с комментарием, load list вернётся к версии CEAT.",
+      "commentLabel": "Комментарий для клиента",
+      "commentPlaceholder": "Что нужно поправить",
+      "downloadXlsx": "Excel версии клиента",
+      "reject": "Отклонить",
+      "rejectConfirm": "Отклонить с комментарием",
+      "rejectDone": "Версия клиента отклонена, load list вернулся к версии CEAT",
+      "rejectFailed": "Не удалось отклонить версию клиента"
+    },
+    "import": {
+      "button": "Загрузить из Excel",
+      "title": "Загрузить load list из Excel",
+      "descriptionOps": "Файл в формате выгрузки (Container / SKU / Proforma (PI) / SO / Quantity). Неподтверждённые позиции заменяются позициями из файла, подтверждённые должны в нём совпадать. Файл проверяется целиком: применяется либо весь, либо ничего. Контейнеры с новыми номерами создаются только после вашего подтверждения.",
+      "descriptionClient": "Файл в формате выгрузки (Container / SKU / Proforma (PI) / SO / Quantity). Неподтверждённые позиции заменяются позициями из файла, подтверждённые должны в нём совпадать. Файл проверяется целиком: применяется либо весь, либо ничего. Контейнеры должны уже быть в load list.",
+      "pick": "Выбрать файл",
+      "noFile": "Файл не выбран",
+      "apply": "Проверить и применить",
+      "createAndApply": "Создать контейнеры и применить",
+      "newContainersHint": "В остальном файл в порядке. Создать эти контейнеры (как добавленные вручную) и применить файл?",
+      "problemsTitle": "Файл не применён — ошибок: {{n}}",
+      "done": "Load list загружен из файла. «Отменить одно действие» вернёт прежнюю раскладку.",
+      "failed": "Не удалось загрузить файл"
     }
   },
   "shipped": {
@@ -805,6 +928,29 @@
     "LAST_ADMIN": "Это последний активный администратор — сначала назначьте администратором кого-то ещё.",
     "CANNOT_RESET_OWN_PASSWORD": "Свой пароль здесь не сбрасывается — используйте «Сменить пароль».",
     "WRONG_CURRENT_PASSWORD": "Текущий пароль указан неверно.",
-    "PASSWORD_TOO_SHORT": "Пароль должен быть не короче {{min}} символов."
+    "PASSWORD_TOO_SHORT": "Пароль должен быть не короче {{min}} символов.",
+    "LOAD_LIST_NOT_EDITABLE": "Сейчас load list изменять нельзя: он у другой стороны или ждёт ответа. Обновите страницу.",
+    "LOAD_LIST_WRONG_STATUS": "Это действие недоступно при текущем статусе load list. Обновите страницу.",
+    "LOAD_LIST_EMPTY": "В load list нет неподтверждённых позиций.",
+    "REJECTION_COMMENT_REQUIRED": "При отклонении нужен комментарий для клиента.",
+    "REJECTION_COMMENT_TOO_LONG": "Комментарий длиннее {{max}} символов.",
+    "LOAD_LIST_OUTDATED": "Версия клиента не сходится с текущими остатками (расхождений: {{count}}) — согласовать её нельзя, отклоните.",
+    "LOAD_LIST_NO_CLIENT_VERSION": "Версии клиента нет.",
+    "IMPORT_FILE_UNREADABLE": "Файл не похож на выгрузку load list: нет строки заголовков Container / SKU / Proforma (PI) / SO / Quantity.",
+    "IMPORT_INVALID": "Файл не применён: ошибок — {{count}}.",
+    "IMPORT_CONFIRM_NEW_CONTAINERS": "Будет создано новых контейнеров: {{count}} ({{containers}}).",
+    "IMPORT_BAD_QUANTITY": "Количество «{{value}}» — не целое неотрицательное число.",
+    "IMPORT_UNKNOWN_LINE": "Позиции {{materialNum}} (PI {{piNumber}}, SO {{soNumber}}) нет в списке готового.",
+    "IMPORT_ARCHIVED_PI": "{{materialNum}} (PI {{piNumber}}, SO {{soNumber}}): проформа в архиве.",
+    "IMPORT_UNKNOWN_CONTAINER": "Контейнера {{container}} нет.",
+    "IMPORT_EXCEEDS_AVAILABLE": "{{materialNum}} (PI {{piNumber}}): в файле {{wanted}} шт., доступно {{available}}.",
+    "IMPORT_CONTAINER_OVERFILLED": "Контейнер {{container}} заполнен на {{percent}}% — больше 100%.",
+    "IMPORT_NO_LOADABILITY": "{{materialNum}} (PI {{piNumber}}) без loadability можно поместить только в OK to mix, не в контейнер {{container}}.",
+    "IMPORT_CONFIRMED_CHANGED": "{{materialNum}} (PI {{piNumber}}) в контейнере {{container}}: подтверждено {{confirmed}} шт., в файле {{file}} — подтверждённые позиции менять нельзя.",
+    "IMPORT_CONTAINER_LOCKED": "Контейнер {{container}} подтверждён целиком — новые позиции в него не добавить.",
+    "OUTDATED_LINE_GONE": "{{materialNum}} (PI {{piNumber}}) в контейнере {{container}}: позиции больше нет в списке готового.",
+    "OUTDATED_EXCEEDS_AVAILABLE": "{{materialNum}} (PI {{piNumber}}): в версии клиента {{wanted}} шт., доступно {{available}}.",
+    "OUTDATED_CONTAINER_OVERFILLED": "Контейнер {{container}} теперь заполнен на {{percent}}%.",
+    "OUTDATED_POSITION_CHANGED": "{{materialNum}} (PI {{piNumber}}) в контейнере {{container}}: было {{was}} шт., сейчас {{now}}."
   }
 }

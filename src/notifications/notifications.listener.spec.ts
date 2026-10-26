@@ -56,24 +56,77 @@ describe("NotificationsListener", () => {
     );
   });
 
-  it("event 3 — container.reopened-for-client goes only to that customer's clients", async () => {
+  it("Phase 25 — CEAT's load-list steps go to that customer's clients only", async () => {
     const { listener, emailService, usersService } = setup();
     usersService.findClientUsers.mockResolvedValue([
       { email: "buyer@mtkrosberg.com" },
     ]);
+    const payload = { customerId: "cust-1", customerName: "MTK" };
 
-    await listener.onContainerReopenedForClient({
-      label: "Контейнер 1",
-      customerId: "cust-1",
+    await listener.onLoadListSent(payload);
+    await listener.onLoadListApproved(payload);
+    await listener.onLoadListRejected({
+      ...payload,
+      comment: "Контейнер 3 перегружен",
+      adjustments: [
+        {
+          containerLabel: "Контейнер 2",
+          piNumber: "100037115",
+          materialNum: "106259",
+          wanted: 10,
+          placed: 8,
+        },
+      ],
     });
 
     expect(usersService.findClientUsers).toHaveBeenCalledWith("cust-1");
     expect(usersService.findOpsUsers).not.toHaveBeenCalled();
-    expect(emailService.send).toHaveBeenCalledWith(
-      ["buyer@mtkrosberg.com"],
-      expect.stringContaining("Контейнер 1 предложен на подтверждение"),
-      expect.any(String),
+    const subjects = (
+      emailService.send.mock.calls as unknown as string[][]
+    ).map((c) => c[1]);
+    expect(subjects).toEqual([
+      "CEAT отправил load list на согласование / CEAT sent you the load list for review",
+      "CEAT подтвердил ваши правки load list / CEAT approved your changes to the load list",
+      "CEAT отклонил ваши правки load list / CEAT rejected your changes to the load list",
+    ]);
+    const rejectionText = (
+      emailService.send.mock.calls as unknown as string[][]
+    )[2][2];
+    expect(rejectionText).toContain("Комментарий CEAT: Контейнер 3 перегружен");
+    expect(rejectionText).toContain(
+      "106259 (PI 100037115), Контейнер 2: 10 → 8",
     );
+  });
+
+  it("Phase 25 — the client's load-list steps go to every ops user, naming the customer", async () => {
+    const { listener, emailService, usersService } = setup();
+    usersService.findOpsUsers.mockResolvedValue([{ email: "ops@ceat.com" }]);
+    const payload = { customerId: "cust-1", customerName: "MTK ROSBERG" };
+
+    await listener.onLoadListAccepted(payload);
+    await listener.onLoadListEditRequested(payload);
+    await listener.onLoadListSubmitted(payload);
+
+    expect(usersService.findClientUsers).not.toHaveBeenCalled();
+    expect(
+      (emailService.send.mock.calls as unknown as string[][]).map((c) => [
+        c[0],
+        c[1],
+      ]),
+    ).toEqual([
+      [
+        ["ops@ceat.com"],
+        "MTK ROSBERG: клиент принял load list / MTK ROSBERG: the client accepted the load list",
+      ],
+      [
+        ["ops@ceat.com"],
+        "MTK ROSBERG: клиент начал редактировать load list / MTK ROSBERG: the client is editing the load list",
+      ],
+      [
+        ["ops@ceat.com"],
+        "MTK ROSBERG: клиент отправил правки load list / MTK ROSBERG: the client submitted changes to the load list",
+      ],
+    ]);
   });
 
   it("event 4 — container.arrival-expected goes to both that customer's clients and all ops", async () => {

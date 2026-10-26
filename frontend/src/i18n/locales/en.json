@@ -25,7 +25,8 @@
     "qtyPcs": "{{qty}} pcs",
     "equalsContainers": "= {{n}} cont.",
     "all": "All ({{max}})",
-    "uploadedAt": "uploaded {{date}}"
+    "uploadedAt": "uploaded {{date}}",
+    "atRow": "Row {{row}}: {{text}}"
   },
   "language": {
     "label": "Language"
@@ -198,7 +199,15 @@
         "container_unlocked": "Container unlocked",
         "position_unlocked": "Position unlocked",
         "marking_uploaded": "Marking file uploaded",
-        "marking_deleted": "Marking file deleted"
+        "marking_deleted": "Marking file deleted",
+        "load_list_sent": "Load list sent to the client",
+        "load_list_accepted": "Client accepted the load list",
+        "load_list_edit_requested": "Client started making changes",
+        "load_list_submitted": "Client submitted their version for approval",
+        "load_list_approved": "CEAT approved the client's version",
+        "load_list_rejected": "CEAT rejected the client's version",
+        "load_list_reopened": "Load list taken back to a CEAT draft",
+        "load_list_imported": "Load list uploaded from Excel"
       },
       "container": {
         "arrival_confirmed": "Arrival confirmed",
@@ -260,11 +269,16 @@
       "email": "Email",
       "role": "Role",
       "customerName": "Customer",
-      "isAdmin": "Administrator"
+      "isAdmin": "Administrator",
+      "comment": "Comment",
+      "adjustments": "Cut to stock",
+      "positions": "Positions"
     },
     "reasons": {
       "absent_from_backorder": "no longer in the backorder",
-      "zero_remaining": "nothing left to ship"
+      "zero_remaining": "nothing left to ship",
+      "unlock": "unlock",
+      "manual": "“Edit load list”"
     }
   },
   "changePassword": {
@@ -437,8 +451,8 @@
     "loadFailed": "Could not load the section",
     "containerLabel": "Container {{n}}",
     "title": "Ready to ship",
-    "descriptionClient": "Distribute the weekly plan across containers, confirm it and attach the marking.",
-    "descriptionOps": "The client's plan (view only). A confirmed container can be unlocked.",
+    "descriptionClient": "CEAT builds the load list: you accept it, or make changes and submit them for approval. Marking is attached to confirmed positions.",
+    "descriptionOps": "The client's load list: CEAT builds it, sends it to the client and approves the client's changes. Confirmed containers can be unlocked.",
     "badgeLines": "Lines to allocate: {{n}}",
     "badgeRemaining": "Remaining: {{qty}} pcs",
     "badgeContainers": "Containers: {{n}}",
@@ -450,19 +464,12 @@
       "containersWithItems": "containers with items: {{n}}",
       "undoOne": "Undo one action",
       "undoAll": "Undo all",
-      "confirm": "Confirm",
-      "blockedOver": "Cannot confirm: overfilled {{list}}",
-      "blockedNothing": "Nothing to confirm: no containers with items",
       "undoneOne": "Last action undone",
       "undoOneFailed": "Could not undo the action",
       "undoAllTitle": "Undo all unsaved changes?",
       "undoAllDescription": "All moves in unconfirmed containers will be rolled back and the items will return to the ready list. Confirmed containers are not affected. This cannot be undone in the current session. Empty containers that were added manually are removed.",
       "undoAllDone": "All unsaved changes undone",
-      "undoAllFailed": "Could not undo the changes",
-      "confirmTitle": "Confirm the plan?",
-      "confirmDescription": "All containers with items will be confirmed ({{n}}). After that the contents can only be changed once CEAT unlocks the container, and a marking file must be uploaded for every item.",
-      "confirmDone": "Plan confirmed",
-      "confirmFailed": "Could not confirm"
+      "undoAllFailed": "Could not undo the changes"
     },
     "list": {
       "title": "Ready list",
@@ -523,7 +530,7 @@
       "markingCounter_other": "Marking: {{count}} of {{total}} files",
       "unlock": "Unlock",
       "unlockLine": "Unlock this line",
-      "overfilledWarning": "Filled over 100% — the plan cannot be confirmed until the container is unloaded.",
+      "overfilledWarning": "Filled over 100% — the load list cannot be sent until this container is unloaded.",
       "pi": "PI {{title}}",
       "piSo": " · SO {{so}}",
       "shareHint": "Share of the container taken by this line",
@@ -614,6 +621,122 @@
       "done": "Unlocked — containers: {{containers}}, lines: {{positions}}",
       "nothing": "Nothing to unlock: no container has a confirmed line",
       "failed": "Could not unlock the containers"
+    },
+    "loadList": {
+      "title": "Load list",
+      "status": {
+        "draft_ceat": "CEAT draft",
+        "sent_to_client": "Sent to the client",
+        "client_editing": "Client is making changes",
+        "submitted_by_client": "Awaiting CEAT approval",
+        "confirmed": "Confirmed"
+      },
+      "hint": {
+        "ops": {
+          "draft_ceat": "Build the load list and send it to the client. Until then the client sees only the confirmed positions.",
+          "sent_to_client": "Waiting for the client to accept the load list or make changes.",
+          "client_editing": "The client is making changes — you can see them here as they go.",
+          "submitted_by_client": "The client has submitted their version. Compare it with CEAT's and approve or reject it.",
+          "confirmed": "The load list is confirmed. “Edit load list” takes it back to a CEAT draft."
+        },
+        "client": {
+          "draft_ceat": "CEAT is building the load list. Only confirmed positions are shown for now — you can upload marking for them.",
+          "sent_to_client": "CEAT has sent the load list. Accept it or make changes.",
+          "client_editing": "Make your changes and submit your version to CEAT for approval.",
+          "submitted_by_client": "Your version is awaiting CEAT approval.",
+          "confirmed": "The load list is confirmed. Upload marking for every position."
+        }
+      },
+      "blockedOver": "Cannot send: overfilled {{list}}",
+      "blockedNothing": "Nothing to send: no containers with unconfirmed positions",
+      "steps": {
+        "send": {
+          "button": "Send to the client",
+          "title": "Send the load list to the client?",
+          "description": "The client gets an email and sees the load list (containers with new positions: {{n}}). It can't be changed until the client answers.",
+          "done": "Load list sent to the client",
+          "failed": "Could not send the load list"
+        },
+        "accept": {
+          "button": "Accept",
+          "title": "Accept the load list?",
+          "description": "All positions are confirmed as they are; a marking file is then needed for each. Changes after that go through CEAT.",
+          "done": "Load list accepted",
+          "failed": "Could not accept the load list"
+        },
+        "request-edit": {
+          "button": "Make changes",
+          "title": "Make changes to the load list?",
+          "description": "You can change the unconfirmed positions and then submit your version for CEAT approval. CEAT is notified.",
+          "done": "You can make changes now",
+          "failed": "Could not switch to editing"
+        },
+        "submit": {
+          "button": "Submit for approval",
+          "title": "Submit your version to CEAT?",
+          "description": "CEAT compares it with its own and approves it or rejects it with a comment (containers with items: {{n}}). The load list can't be changed until then.",
+          "done": "Your version is submitted for approval",
+          "failed": "Could not submit for approval"
+        },
+        "approve": {
+          "button": "OK",
+          "done": "Client's version approved, the load list is confirmed",
+          "failed": "Could not approve the client's version"
+        },
+        "reopen": {
+          "button": "Edit load list",
+          "title": "Take the load list back to a CEAT draft?",
+          "description": "Confirmed positions stay confirmed; CEAT can change the rest and then send the load list to the client again.",
+          "done": "The load list is a CEAT draft again",
+          "failed": "Could not take the load list back to a draft"
+        }
+      },
+      "rejected": {
+        "title": "CEAT rejected the client's version",
+        "adjustments": "Some quantities had to be cut to the current stock:",
+        "adjustment": "{{materialNum}} (PI {{piNumber}}), {{container}}: {{wanted}} → {{placed}} pcs"
+      }
+    },
+    "clientVersion": {
+      "open": "Client's version",
+      "title": "Client's version",
+      "description": "CEAT's version of {{ceat}} and the client's version of {{client}}.",
+      "descriptionNoCeat": "The client's version of {{client}}. There is no CEAT version — the load list was never sent from CEAT, so every position shows as the client's change.",
+      "descriptionLoading": "CEAT's version compared with the client's.",
+      "loadFailed": "Could not load the comparison",
+      "containers": "Container fill",
+      "colContainer": "Container",
+      "colCeat": "CEAT",
+      "colClient": "Client",
+      "lines": "Changed positions: {{n}}",
+      "noChanges": "The client changed nothing.",
+      "colMaterial": "Material",
+      "colPiSo": "PI / SO",
+      "colChanges": "Changes",
+      "change": "{{container}}: {{ceat}} → {{client}} pcs",
+      "outdatedTitle": "The client's version no longer matches the current stock:",
+      "outdatedHint": "It can't be approved — reject it with a comment, and the load list goes back to CEAT's version.",
+      "commentLabel": "Comment for the client",
+      "commentPlaceholder": "What needs fixing",
+      "downloadXlsx": "Client's version in Excel",
+      "reject": "Reject",
+      "rejectConfirm": "Reject with comment",
+      "rejectDone": "Client's version rejected, the load list is back to CEAT's version",
+      "rejectFailed": "Could not reject the client's version"
+    },
+    "import": {
+      "button": "Upload from Excel",
+      "title": "Upload the load list from Excel",
+      "descriptionOps": "A file in the export's format (Container / SKU / Proforma (PI) / SO / Quantity). Unconfirmed positions are replaced by the file's; confirmed ones must match it. The whole file is checked: either all of it applies or nothing. Containers with new numbers are created only after you confirm.",
+      "descriptionClient": "A file in the export's format (Container / SKU / Proforma (PI) / SO / Quantity). Unconfirmed positions are replaced by the file's; confirmed ones must match it. The whole file is checked: either all of it applies or nothing. The containers must already be in the load list.",
+      "pick": "Choose file",
+      "noFile": "No file chosen",
+      "apply": "Check and apply",
+      "createAndApply": "Create containers and apply",
+      "newContainersHint": "Otherwise the file is fine. Create these containers (as added by hand) and apply the file?",
+      "problemsTitle": "File not applied — errors: {{n}}",
+      "done": "Load list uploaded from the file. “Undo one action” brings back the previous layout.",
+      "failed": "Could not upload the file"
     }
   },
   "shipped": {
@@ -797,6 +920,29 @@
     "LAST_ADMIN": "This is the last active administrator — make someone else an administrator first.",
     "CANNOT_RESET_OWN_PASSWORD": "You can't reset your own password here — use “Change password”.",
     "WRONG_CURRENT_PASSWORD": "The current password is incorrect.",
-    "PASSWORD_TOO_SHORT": "The password must be at least {{min}} characters long."
+    "PASSWORD_TOO_SHORT": "The password must be at least {{min}} characters long.",
+    "LOAD_LIST_NOT_EDITABLE": "The load list can't be changed right now: it is with the other side or awaiting an answer. Refresh the page.",
+    "LOAD_LIST_WRONG_STATUS": "This action isn't available in the load list's current status. Refresh the page.",
+    "LOAD_LIST_EMPTY": "The load list has no unconfirmed positions.",
+    "REJECTION_COMMENT_REQUIRED": "A rejection needs a comment for the client.",
+    "REJECTION_COMMENT_TOO_LONG": "The comment is longer than {{max}} characters.",
+    "LOAD_LIST_OUTDATED": "The client's version no longer matches the current stock (mismatches: {{count}}) — it can't be approved, reject it.",
+    "LOAD_LIST_NO_CLIENT_VERSION": "There is no client version.",
+    "IMPORT_FILE_UNREADABLE": "This doesn't look like a load list export: no header row Container / SKU / Proforma (PI) / SO / Quantity.",
+    "IMPORT_INVALID": "File not applied: {{count}} errors.",
+    "IMPORT_CONFIRM_NEW_CONTAINERS": "New containers to create: {{count}} ({{containers}}).",
+    "IMPORT_BAD_QUANTITY": "Quantity “{{value}}” is not a whole non-negative number.",
+    "IMPORT_UNKNOWN_LINE": "{{materialNum}} (PI {{piNumber}}, SO {{soNumber}}) is not in the ready list.",
+    "IMPORT_ARCHIVED_PI": "{{materialNum}} (PI {{piNumber}}, SO {{soNumber}}): the proforma is archived.",
+    "IMPORT_UNKNOWN_CONTAINER": "There is no container {{container}}.",
+    "IMPORT_EXCEEDS_AVAILABLE": "{{materialNum}} (PI {{piNumber}}): {{wanted}} pcs in the file, {{available}} available.",
+    "IMPORT_CONTAINER_OVERFILLED": "Container {{container}} is filled to {{percent}}% — over 100%.",
+    "IMPORT_NO_LOADABILITY": "{{materialNum}} (PI {{piNumber}}) has no loadability, so it can only go into OK to mix, not container {{container}}.",
+    "IMPORT_CONFIRMED_CHANGED": "{{materialNum}} (PI {{piNumber}}) in container {{container}}: {{confirmed}} pcs confirmed, {{file}} in the file — confirmed positions can't be changed.",
+    "IMPORT_CONTAINER_LOCKED": "Container {{container}} is fully confirmed — no new positions can go into it.",
+    "OUTDATED_LINE_GONE": "{{materialNum}} (PI {{piNumber}}) in container {{container}}: the position is no longer in the ready list.",
+    "OUTDATED_EXCEEDS_AVAILABLE": "{{materialNum}} (PI {{piNumber}}): {{wanted}} pcs in the client's version, {{available}} available.",
+    "OUTDATED_CONTAINER_OVERFILLED": "Container {{container}} is now filled to {{percent}}%.",
+    "OUTDATED_POSITION_CHANGED": "{{materialNum}} (PI {{piNumber}}) in container {{container}}: was {{was}} pcs, now {{now}}."
   }
 }

@@ -5,6 +5,13 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:30
 
 export type ApiErrorParams = Record<string, string | number>
 
+/** One item of a list an error carries (Phase 25): a bad row of a file, a mismatch. */
+export interface ApiErrorDetail {
+  code: string
+  params?: ApiErrorParams
+  row?: number
+}
+
 /**
  * `message` is the server's own text; `code`/`params` (the backend's error
  * shape: { code, message, params? }) are what lib/errors.ts translates.
@@ -14,6 +21,7 @@ export class ApiError extends Error {
   readonly body?: unknown
   readonly code?: string
   readonly params?: ApiErrorParams
+  readonly details: ApiErrorDetail[] = []
 
   constructor(message: string, status: number, body?: unknown) {
     super(message)
@@ -27,6 +35,13 @@ export class ApiError extends Error {
       }
       if (params && typeof params === "object" && !Array.isArray(params)) {
         this.params = params as ApiErrorParams
+      }
+      const { details } = body as { details?: unknown }
+      if (Array.isArray(details)) {
+        this.details = details.filter(
+          (d): d is ApiErrorDetail =>
+            !!d && typeof d === "object" && typeof (d as { code?: unknown }).code === "string"
+        )
       }
     }
   }

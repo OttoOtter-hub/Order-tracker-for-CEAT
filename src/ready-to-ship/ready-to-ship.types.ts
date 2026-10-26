@@ -1,3 +1,7 @@
+import type { Role } from "../common/enums/role.enum";
+import type { LoadListStatus } from "./load-list.entity";
+import type { LoadListAdjustment } from "./load-list.types";
+
 export interface UnallocatedLineView {
   piLineItemId: string;
   piId: string;
@@ -88,6 +92,24 @@ export interface ReadyToShipView {
    * their card is archived (still in the log, not undone), newest first.
    */
   undoSkipped?: UndoSkippedView[];
+  /** Phase 25: where the load list stands and who may edit it now. */
+  loadList: LoadListView;
+}
+
+export interface LoadListView {
+  status: LoadListStatus;
+  /** The role that edits in this status ("ops" in draft_ceat, "client" in client_editing). */
+  editor: Role | null;
+  /** The viewer is that role. */
+  canEdit: boolean;
+  sentAt: Date | null;
+  editRequestedAt: Date | null;
+  submittedAt: Date | null;
+  confirmedAt: Date | null;
+  rejectedAt: Date | null;
+  rejectionComment: string | null;
+  rejectionAdjustments: LoadListAdjustment[];
+  hasClientVersion: boolean;
 }
 
 export interface UndoSkippedView {

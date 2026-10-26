@@ -1,7 +1,7 @@
 import { formatPiTitle } from "./format-pi-title";
 import {
   ContainerArrivalExpectedPayload,
-  ContainerReopenedForClientPayload,
+  LoadListEventPayload,
   PiReadyToSignPayload,
   PiReplacementProposedPayload,
 } from "../notification-events";
@@ -53,21 +53,6 @@ export function buildPiReplacementProposedContent(
   };
 }
 
-export function buildContainerReopenedForClientContent(
-  payload: ContainerReopenedForClientPayload,
-): EmailContent {
-  return {
-    subject: bilingualSubject(
-      `Контейнер ${payload.label} предложен на подтверждение`,
-      `Container ${payload.label} is ready for your confirmation`,
-    ),
-    text: bilingual(
-      `Контейнер ${payload.label} предложен на подтверждение.`,
-      `Container ${payload.label} is ready for your confirmation.`,
-    ),
-  };
-}
-
 export function buildContainerArrivalExpectedContent(
   payload: ContainerArrivalExpectedPayload,
 ): EmailContent {
@@ -85,4 +70,88 @@ export function buildContainerArrivalExpectedContent(
 
 function bilingualSubject(ru: string, en: string): string {
   return `${ru} / ${en}`;
+}
+
+const PAGE_HINT_RU = "Откройте раздел «Готово к отгрузке» на loadlist.info.";
+const PAGE_HINT_EN = 'Open "Ready to ship" on loadlist.info.';
+
+function loadListContent(
+  ru: string,
+  en: string,
+  extraRu = "",
+  extraEn = "",
+): EmailContent {
+  return {
+    subject: bilingualSubject(ru, en),
+    text: bilingual(
+      `${ru}.${extraRu}\n${PAGE_HINT_RU}`,
+      `${en}.${extraEn}\n${PAGE_HINT_EN}`,
+    ),
+  };
+}
+
+/** Phase 25, to the client: CEAT sent the load list for review. */
+export function buildLoadListSentContent(): EmailContent {
+  return loadListContent(
+    "CEAT отправил load list на согласование",
+    "CEAT sent you the load list for review",
+  );
+}
+
+/** Phase 25, to the client: CEAT accepted their changes. */
+export function buildLoadListApprovedContent(): EmailContent {
+  return loadListContent(
+    "CEAT подтвердил ваши правки load list",
+    "CEAT approved your changes to the load list",
+  );
+}
+
+/** Phase 25, to the client: CEAT rejected their changes — comment and cuts included. */
+export function buildLoadListRejectedContent(
+  p: LoadListEventPayload,
+): EmailContent {
+  const cuts = (p.adjustments ?? []).map(
+    (a) =>
+      `${a.materialNum ?? "—"} (PI ${a.piNumber}), ${a.containerLabel}: ${a.wanted} → ${a.placed}`,
+  );
+  return loadListContent(
+    "CEAT отклонил ваши правки load list",
+    "CEAT rejected your changes to the load list",
+    `\nКомментарий CEAT: ${p.comment ?? ""}` +
+      (cuts.length
+        ? `\nПо текущим остаткам уменьшено: ${cuts.join("; ")}`
+        : ""),
+    `\nCEAT's comment: ${p.comment ?? ""}` +
+      (cuts.length ? `\nCut to the current stock: ${cuts.join("; ")}` : ""),
+  );
+}
+
+/** Phase 25, to CEAT: the client accepted the load list as sent. */
+export function buildLoadListAcceptedContent(
+  p: LoadListEventPayload,
+): EmailContent {
+  return loadListContent(
+    `${p.customerName}: клиент принял load list`,
+    `${p.customerName}: the client accepted the load list`,
+  );
+}
+
+/** Phase 25, to CEAT: the client asked to edit (editing is open at once). */
+export function buildLoadListEditRequestedContent(
+  p: LoadListEventPayload,
+): EmailContent {
+  return loadListContent(
+    `${p.customerName}: клиент начал редактировать load list`,
+    `${p.customerName}: the client is editing the load list`,
+  );
+}
+
+/** Phase 25, to CEAT: the client submitted their version. */
+export function buildLoadListSubmittedContent(
+  p: LoadListEventPayload,
+): EmailContent {
+  return loadListContent(
+    `${p.customerName}: клиент отправил правки load list`,
+    `${p.customerName}: the client submitted changes to the load list`,
+  );
 }

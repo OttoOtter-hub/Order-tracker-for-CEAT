@@ -1,3 +1,4 @@
+import { LoadListStatus } from "./load-list.entity";
 import { HttpException } from "@nestjs/common";
 import {
   clientActor,
@@ -128,16 +129,15 @@ describe("ReadyToShipService.rename (container name)", () => {
     expect(h.audit.entries).toHaveLength(0);
   });
 
-  it("only the owning client: another customer's client gets a 404, ops a 403, nothing written", async () => {
+  it("only the one editing now: another customer's client gets a 404, ops (while the client edits) a 400, nothing written", async () => {
     const id = numbered(await h.service.getView(clientActor))[0].id;
 
     expect(
       await failure(h.service.rename(id, "Чужой", otherClientActor)),
     ).toEqual({ status: 404, code: "NOT_FOUND" });
-    expect(await failure(h.service.rename(id, "CEAT", opsActor))).toEqual({
-      status: 403,
-      code: "CLIENT_ONLY_ACTION",
-    });
+    expect(
+      await failure(h.service.rename(id, "CEAT", opsActor, "cust-1")),
+    ).toEqual({ status: 400, code: "LOAD_LIST_NOT_EDITABLE" });
     expect(
       nameOf(await h.service.getView(clientActor), "Контейнер 1"),
     ).toBeNull();
@@ -163,7 +163,8 @@ describe("ReadyToShipService.rename (container name)", () => {
       { piLineItemId: "li-A", containerId: id, qty: 100 },
       clientActor,
     );
-    await h.service.confirm(clientActor);
+    await h.confirm(clientActor);
+    h.clientEditing(); // the client's next round
 
     const renamed = await h.service.rename(id, "Ростов", clientActor);
 
@@ -172,17 +173,21 @@ describe("ReadyToShipService.rename (container name)", () => {
     expect(container.name).toBe("Ростов");
   });
 
-  it("undo-all recycles empty slots, but a slot that comes back under the same label keeps its name", async () => {
-    const [first, second] = numbered(await h.service.getView(clientActor));
-    await h.service.rename(first.id, "Ростов", clientActor);
-    await h.service.rename(second.id, "Казань", clientActor);
+  it("CEAT's undo-all recycles empty slots, but a slot that comes back under the same label keeps its name", async () => {
+    h.setLoadListStatus(LoadListStatus.DRAFT_CEAT);
+    const [first, second] = numbered(
+      await h.service.getView(opsActor, "cust-1"),
+    );
+    await h.service.rename(first.id, "Ростов", opsActor, "cust-1");
+    await h.service.rename(second.id, "Казань", opsActor, "cust-1");
     clock.tick();
     await h.service.move(
       { piLineItemId: "li-A", containerId: first.id, qty: 50 },
-      clientActor,
+      opsActor,
+      "cust-1",
     );
 
-    const afterUndo = await h.service.undoAll(clientActor);
+    const afterUndo = await h.service.undoAll(opsActor, "cust-1");
 
     expect(
       numbered(afterUndo).map((c) => [c.label, c.name, c.id === first.id]),

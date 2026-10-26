@@ -87,6 +87,60 @@ export interface ReadyToShipView {
   // Only on the "undo last" reply: removals passed over because their
   // proforma is archived (still in the log, not undone).
   undoSkipped?: UndoSkipped[]
+  // Phase 25: where the load list stands and who may edit it now.
+  loadList: LoadListView
+}
+
+export type LoadListStatus =
+  | "draft_ceat"
+  | "sent_to_client"
+  | "client_editing"
+  | "submitted_by_client"
+  | "confirmed"
+
+export interface LoadListAdjustment {
+  containerLabel: string
+  piNumber: string
+  materialNum: string | null
+  soNumber: string | null
+  wanted: number
+  placed: number
+}
+
+export interface LoadListView {
+  status: LoadListStatus
+  // The role that edits now: "ops" in draft_ceat, "client" in client_editing.
+  editor: "ops" | "client" | null
+  // The viewer is that role.
+  canEdit: boolean
+  sentAt: string | null
+  editRequestedAt: string | null
+  submittedAt: string | null
+  confirmedAt: string | null
+  rejectedAt: string | null
+  rejectionComment: string | null
+  rejectionAdjustments: LoadListAdjustment[]
+  hasClientVersion: boolean
+}
+
+export interface LoadListDiff {
+  ceatTakenAt: string
+  clientTakenAt: string
+  lines: {
+    piNumber: string
+    materialNum: string | null
+    soNumber: string | null
+    materialDesc: string | null
+    changes: { container: string; ceatQty: number; clientQty: number }[]
+  }[]
+  containers: {
+    label: string
+    isOkToMix: boolean
+    ceatQty: number
+    clientQty: number
+    ceatFillPercent: number | null
+    clientFillPercent: number | null
+  }[]
 }
 
 export interface UndoSkipped {
@@ -120,7 +174,14 @@ export function useReadyToShipQuery(customerId?: string, enabled = true) {
   })
 }
 
-// move / remove / undo-* / confirm all answer with the complete, fresh view —
+// ops names the customer on every write too (the client is scoped by the
+// token): "?customerId=" when there is one.
+function withCustomer(path: string, customerId?: string): string {
+  if (!customerId) return path
+  return `${path}${path.includes("?") ? "&" : "?"}customerId=${encodeURIComponent(customerId)}`
+}
+
+// move / remove / undo-* / load-list steps all answer with the complete, fresh view —
 // writing it straight into the cache shows the result immediately without a
 // second round trip to reload 200+ rows; other queries never depend on it.
 function useViewMutation<TVariables>(
@@ -140,22 +201,26 @@ export function useMoveMutation(customerId?: string) {
   return useViewMutation(
     customerId,
     (input: { piLineItemId: string; containerId: string; qty: number }) =>
-      apiClient.post<ReadyToShipView>("/ready-to-ship/move", input)
+      apiClient.post<ReadyToShipView>(withCustomer("/ready-to-ship/move", customerId), input)
   )
 }
 
 // Phase 21: every line's whole remainder into "OK to mix", all or nothing.
 export function useMoveRemainingToMixMutation(customerId?: string) {
   return useViewMutation(customerId, () =>
-    apiClient.post<ReadyToShipView>("/ready-to-ship/move-remaining-to-mix")
+    apiClient.post<ReadyToShipView>(
+      withCustomer("/ready-to-ship/move-remaining-to-mix", customerId)
+    )
   )
 }
 
 // One more numbered container, by hand, when the plan's slots ran out
-// before the unallocated lines did. Client-only; no body.
+// before the unallocated lines did. Phase 25: CEAT's, in draft_ceat.
 export function useAddContainerMutation(customerId?: string) {
   return useViewMutation(customerId, () =>
-    apiClient.post<ReadyToShipView>("/ready-to-ship/add-container")
+    apiClient.post<ReadyToShipView>(
+      withCustomer("/ready-to-ship/add-container", customerId)
+    )
   )
 }
 
@@ -163,7 +228,9 @@ export function useAddContainerMutation(customerId?: string) {
 // (client-only; the container itself stays). One "undo last" puts it back.
 export function useClearContainerMutation(customerId?: string) {
   return useViewMutation(customerId, (containerId: string) =>
-    apiClient.post<ReadyToShipView>(`/containers/${containerId}/clear`)
+    apiClient.post<ReadyToShipView>(
+      withCustomer(`/containers/${containerId}/clear`, customerId)
+    )
   )
 }
 
@@ -175,7 +242,7 @@ export function useRenameContainerMutation(customerId?: string) {
   return useViewMutation(
     customerId,
     ({ containerId, name }: { containerId: string; name: string | null }) =>
-      apiClient.patch<ReadyToShipView>(`/containers/${containerId}/name`, {
+      apiClient.patch<ReadyToShipView>(withCustomer(`/containers/${containerId}/name`, customerId), {
         name,
       })
   )
@@ -185,25 +252,93 @@ export function useRemoveMutation(customerId?: string) {
   return useViewMutation(
     customerId,
     (input: { allocationId: string; qty: number }) =>
-      apiClient.post<ReadyToShipView>("/ready-to-ship/remove", input)
+      apiClient.post<ReadyToShipView>(withCustomer("/ready-to-ship/remove", customerId), input)
   )
 }
 
 export function useUndoLastMutation(customerId?: string) {
   return useViewMutation(customerId, () =>
-    apiClient.post<ReadyToShipView>("/ready-to-ship/undo-last")
+    apiClient.post<ReadyToShipView>(withCustomer("/ready-to-ship/undo-last", customerId))
   )
 }
 
 export function useUndoAllMutation(customerId?: string) {
   return useViewMutation(customerId, () =>
-    apiClient.post<ReadyToShipView>("/ready-to-ship/undo-all")
+    apiClient.post<ReadyToShipView>(withCustomer("/ready-to-ship/undo-all", customerId))
   )
 }
 
-export function useConfirmMutation(customerId?: string) {
-  return useViewMutation(customerId, () =>
-    apiClient.post<ReadyToShipView>("/ready-to-ship/confirm")
+// Phase 25: the load list's steps. Who may take which, from which status, is
+// the server's call (and the page only offers what applies).
+export type LoadListStep =
+  | "send"
+  | "accept"
+  | "request-edit"
+  | "submit"
+  | "approve"
+  | "reopen"
+
+export function useLoadListStepMutation(customerId?: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (step: LoadListStep) =>
+      apiClient.post<ReadyToShipView>(
+        withCustomer(`/ready-to-ship/load-list/${step}`, customerId)
+      ),
+    onSuccess: (view) => {
+      queryClient.setQueryData(readyToShipQueryKey(customerId), view)
+      queryClient.removeQueries({ queryKey: [READY_TO_SHIP_KEY, "diff"] })
+    },
+  })
+}
+
+export function useRejectLoadListMutation(customerId?: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (comment: string) =>
+      apiClient.post<ReadyToShipView>(
+        withCustomer("/ready-to-ship/load-list/reject", customerId),
+        { comment }
+      ),
+    onSuccess: (view) => {
+      queryClient.setQueryData(readyToShipQueryKey(customerId), view)
+      queryClient.removeQueries({ queryKey: [READY_TO_SHIP_KEY, "diff"] })
+    },
+  })
+}
+
+// CEAT's version against the client's (ops, while the client's version waits).
+export function useLoadListDiffQuery(customerId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: [READY_TO_SHIP_KEY, "diff", customerId ?? "me"],
+    queryFn: () =>
+      apiClient.get<LoadListDiff>(withCustomer("/ready-to-ship/load-list/diff", customerId)),
+    enabled,
+  })
+}
+
+export function downloadClientVersionXlsx(customerId?: string): Promise<void> {
+  return downloadFile(
+    withCustomer("/ready-to-ship/load-list/client-version.xlsx", customerId),
+    "LoadList_client_version.xlsx"
+  )
+}
+
+// Excel upload in the export's own format: ops in draft_ceat, the client in
+// client_editing. confirmNewContainers: create the numbered containers the
+// file names that don't exist yet (ops; asked for first).
+export function useImportLoadListMutation(customerId?: string) {
+  return useViewMutation(
+    customerId,
+    ({ file, confirmNewContainers }: { file: File; confirmNewContainers: boolean }) => {
+      const formData = new FormData()
+      formData.append("file", file)
+      const path = withCustomer("/ready-to-ship/load-list/import-xlsx", customerId)
+      return apiClient.post<ReadyToShipView>(
+        confirmNewContainers ? `${path}${path.includes("?") ? "&" : "?"}confirmNewContainers=true` : path,
+        formData
+      )
+    }
   )
 }
 

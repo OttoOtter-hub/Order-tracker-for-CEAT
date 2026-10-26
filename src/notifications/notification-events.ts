@@ -8,8 +8,15 @@
 export const NotificationEvent = {
   PI_READY_TO_SIGN: "pi.ready-to-sign",
   PI_REPLACEMENT_PROPOSED: "pi.replacement-proposed",
-  CONTAINER_REOPENED_FOR_CLIENT: "container.reopened-for-client",
   CONTAINER_ARRIVAL_EXPECTED: "container.arrival-expected",
+  // Phase 25: the load list going back and forth. To the client:
+  LOAD_LIST_SENT: "load-list.sent",
+  LOAD_LIST_APPROVED: "load-list.approved",
+  LOAD_LIST_REJECTED: "load-list.rejected",
+  // To CEAT (every ops user):
+  LOAD_LIST_ACCEPTED: "load-list.accepted",
+  LOAD_LIST_EDIT_REQUESTED: "load-list.edit-requested",
+  LOAD_LIST_SUBMITTED: "load-list.submitted",
 } as const;
 
 /** Ops uploaded the original PI file — event 1 (uploadPi, both branches). */
@@ -27,17 +34,21 @@ export interface PiReplacementProposedPayload {
 }
 
 /**
- * Event 3: no "proposed_to_client" status exists on ShippingContainer (it's
- * just a boolean is_confirmed, entirely client-driven — client allocates and
- * confirms on their own, with no ops "proposal" step in the happy path). The
- * one point where ops action puts a container back in front of the client
- * for review is unlock(): it reverts a previously-confirmed container to
- * draft, so the client needs to look at it again and re-confirm. See the
- * README ("Фаза 13") for the full reasoning.
+ * Phase 25: every load-list notice names the customer (CEAT may have more
+ * than one); a rejection carries CEAT's comment and what the rollback had to
+ * cut to the current stock.
  */
-export interface ContainerReopenedForClientPayload {
-  label: string;
+export interface LoadListEventPayload {
   customerId: string;
+  customerName: string;
+  comment?: string;
+  adjustments?: {
+    containerLabel: string;
+    piNumber: string;
+    materialNum: string | null;
+    wanted: number;
+    placed: number;
+  }[];
 }
 
 /** Event 4: ArrivalNotificationsService's daily cron, on first transition into "expected". */

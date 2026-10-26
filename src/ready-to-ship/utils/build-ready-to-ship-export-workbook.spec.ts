@@ -98,6 +98,7 @@ describe("buildReadyToShipExportRows", () => {
         piNumber: "100037320",
         piLabel: "Орел",
         soNumber: "300029159",
+        confirmed: false,
       },
       {
         container: null,
@@ -109,6 +110,7 @@ describe("buildReadyToShipExportRows", () => {
         piNumber: "100037321",
         piLabel: "Сокол",
         soNumber: "300029160",
+        confirmed: null,
       },
     ]);
   });
@@ -299,6 +301,7 @@ describe("buildReadyToShipExportWorkbook", () => {
       "Proforma (PI)",
       "Name",
       "SO",
+      "Confirmed",
     ]);
     expect(values(2)).toEqual([
       3,
@@ -310,6 +313,7 @@ describe("buildReadyToShipExportWorkbook", () => {
       "100000001",
       "Орел",
       "300000001",
+      "No",
     ]);
     const noLoad = sheet.getRow(3);
     expect(noLoad.getCell(1).value).toBeNull(); // placed nowhere -> empty

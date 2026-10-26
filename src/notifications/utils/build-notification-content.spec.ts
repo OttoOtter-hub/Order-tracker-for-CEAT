@@ -1,6 +1,5 @@
 import {
   buildContainerArrivalExpectedContent,
-  buildContainerReopenedForClientContent,
   buildPiReadyToSignContent,
   buildPiReplacementProposedContent,
 } from "./build-notification-content";
@@ -46,20 +45,6 @@ describe("buildPiReplacementProposedContent", () => {
     expect(content.text).toContain(
       "CEAT proposed a replacement file for proforma 100037115.",
     );
-  });
-});
-
-describe("buildContainerReopenedForClientContent", () => {
-  it("builds bilingual subject and text", () => {
-    const content = buildContainerReopenedForClientContent({
-      label: "Контейнер 3",
-      customerId: "cust-1",
-    });
-    expect(content.subject).toBe(
-      "Контейнер Контейнер 3 предложен на подтверждение / Container Контейнер 3 is ready for your confirmation",
-    );
-    expect(content.text).toContain("предложен на подтверждение.");
-    expect(content.text).toContain("is ready for your confirmation.");
   });
 });
 

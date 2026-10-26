@@ -1,3 +1,4 @@
+import { LoadListStatus } from "./load-list.entity";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import {
   clientActor,
@@ -76,7 +77,7 @@ describe("ready-to-ship scenario", () => {
     await move("li-A", "Контейнер 1", 90);
     await move("li-A", "Контейнер 2", 50);
     await move("li-B", "Контейнер 2", 100);
-    return h.service.confirm(clientActor);
+    return h.confirm(clientActor);
   }
 
   it("runs the full flow", async () => {
@@ -126,7 +127,7 @@ describe("ready-to-ship scenario", () => {
       isOverfilled: true,
     });
     expect(overfull.canConfirm).toBe(false);
-    await expect(h.service.confirm(clientActor)).rejects.toBeInstanceOf(
+    await expect(h.confirm(clientActor)).rejects.toBeInstanceOf(
       BadRequestException,
     );
     expect(h.containers.rows.every((c) => !c.isConfirmed)).toBe(true);
@@ -140,7 +141,7 @@ describe("ready-to-ship scenario", () => {
     expect(fixed.canConfirm).toBe(true);
 
     // Confirm: one action, every container of the session.
-    const confirmed = await h.service.confirm(clientActor);
+    const confirmed = await h.confirm(clientActor);
     expect(slots(confirmed.containers).every((c) => c.isConfirmed)).toBe(true);
     await expect(move("li-A", "Контейнер 1", 10)).rejects.toBeInstanceOf(
       BadRequestException,
@@ -164,18 +165,32 @@ describe("ready-to-ship scenario", () => {
       [2, 2],
     ]);
 
-    // Ops unlocks C1 only. Its file is still there.
+    // Ops unlocks C1 only: the load list goes back to CEAT (draft_ceat).
+    // Its file is still there; the client sees only the confirmed C2 now.
     await h.service.unlock(containerIdByLabel("Контейнер 1"), opsActor);
-    const unlocked = await h.service.getView(clientActor);
+    expect(h.loadListStatus()).toBe(LoadListStatus.DRAFT_CEAT);
+    const forClient = await h.service.getView(clientActor);
+    expect(
+      slots(forClient.containers).map((c) => c.allocations.length),
+    ).toEqual([0, 2]);
+    const unlocked = await h.service.getView(opsActor, "cust-1");
     expect(slots(unlocked.containers).map((c) => c.isConfirmed)).toEqual([
       false,
       true,
     ]);
     expect(slots(unlocked.containers)[0].markingFilesUploaded).toBe(1);
 
-    // The client changes the quantity: 10 units of A were never placed.
+    // CEAT changes the quantity: 10 units of A were never placed.
     clock.tick();
-    const changed = await move("li-A", "Контейнер 1", 10);
+    const changed = await h.service.move(
+      {
+        piLineItemId: "li-A",
+        containerId: containerIdByLabel("Контейнер 1"),
+        qty: 10,
+      },
+      opsActor,
+      "cust-1",
+    );
     expect(allocationOf("Контейнер 1", "li-A")!.allocatedQty).toBe("100");
     expect(remaining(changed, "li-A")).toBe(0);
 
@@ -186,50 +201,41 @@ describe("ready-to-ship scenario", () => {
       [a2A.id, a2B.id].sort(),
     );
 
-    // And the client can undo that move, then confirm C1 again.
-    await h.service.undoLast(clientActor);
+    // CEAT undoes that move, sends the load list; the client accepts it.
+    await h.service.undoLast(opsActor, "cust-1");
     expect(allocationOf("Контейнер 1", "li-A")!.allocatedQty).toBe("90");
-    const reconfirmed = await h.service.confirm(clientActor);
+    await h.loadListService.send(opsActor, "cust-1");
+    const reconfirmed = await h.loadListService.accept(clientActor);
     expect(slots(reconfirmed.containers).map((c) => c.isConfirmed)).toEqual([
       true,
       true,
     ]);
+    expect(h.loadListStatus()).toBe(LoadListStatus.CONFIRMED);
   });
 
-  it("undo-all after an unlock wipes the unlocked container (files included) but never a confirmed one", async () => {
+  it("Phase 25: an unlock drops the client's undo log — nothing of their moves can be undone by CEAT", async () => {
     await arrangeConfirmedPlan();
-    const a1 = allocationOf("Контейнер 1", "li-A")!;
-    const a2A = allocationOf("Контейнер 2", "li-A")!;
-    await h.markingService.upload(a1.id, pdf(), clientActor);
-    await h.markingService.upload(a2A.id, pdf(), clientActor);
     await h.service.unlock(containerIdByLabel("Контейнер 1"), opsActor);
 
-    const view = await h.service.undoAll(clientActor);
-
+    expect(h.actions.rows).toHaveLength(0);
+    await expect(h.service.undoLast(opsActor, "cust-1")).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    // CEAT empties the reopened container instead; files go with it, C2 stays.
+    const view = await h.service.clearContainer(
+      containerIdByLabel("Контейнер 1"),
+      opsActor,
+      "cust-1",
+    );
     expect(
-      view.containers.map((c) => [
+      slots(view.containers).map((c) => [
         c.label,
         c.isConfirmed,
         c.allocations.length,
       ]),
     ).toEqual([
+      ["Контейнер 1", false, 0],
       ["Контейнер 2", true, 2],
-      ["Контейнер 3", false, 0],
-      ["OK to mix", false, 0],
     ]);
-    expect(h.markings.rows.map((m) => m.allocation.id)).toEqual([a2A.id]);
-  });
-
-  it("undo-last after an unlock can step back through the unlocked container's earlier moves", async () => {
-    await arrangeConfirmedPlan();
-    await h.service.unlock(containerIdByLabel("Контейнер 1"), opsActor);
-
-    const view = await h.service.undoLast(clientActor);
-
-    expect(allocationOf("Контейнер 1", "li-A")).toBeUndefined();
-    expect(remaining(view, "li-A")).toBe(100);
-    await expect(h.service.undoLast(clientActor)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
   });
 });

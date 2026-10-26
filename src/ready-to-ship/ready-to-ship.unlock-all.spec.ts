@@ -1,5 +1,5 @@
+import { LoadListStatus } from "./load-list.entity";
 import { HttpException } from "@nestjs/common";
-import { NotificationEvent } from "../notifications/notification-events";
 import {
   clientActor,
   Harness,
@@ -73,11 +73,11 @@ describe("ReadyToShipService.unlockAll", () => {
     await move("li-B", byLabel(view, "Контейнер 2").id, 100);
     await move("li-A", byLabel(view, "OK to mix").id, 50);
     await move("li-N", byLabel(view, "OK to mix").id, 40);
-    view = await h.service.confirm(clientActor);
+    view = await h.confirm(clientActor);
 
     const other = await h.service.getView(otherClientActor);
     await move("li-X", other.containers[0].id, 50, otherClientActor);
-    await h.service.confirm(otherClientActor);
+    await h.confirm(otherClientActor);
 
     h.audit.entries.length = 0;
     h.eventEmitter.emit.mockClear();
@@ -114,7 +114,7 @@ describe("ReadyToShipService.unlockAll", () => {
     });
     expect(lockedCount("cust-1")).toBe(0);
 
-    const after = await h.service.getView(clientActor);
+    const after = await h.service.getView(opsActor, "cust-1");
     for (const label of ["Контейнер 1", "Контейнер 2", "OK to mix"]) {
       const container = byLabel(after, label);
       expect(container.isConfirmed).toBe(false);
@@ -123,12 +123,16 @@ describe("ReadyToShipService.unlockAll", () => {
       expect(container.allocations.every((a) => !a.isLocked)).toBe(true);
     }
 
-    // The client can edit again — including inside OK to mix.
+    // CEAT can edit again (draft_ceat) — including inside OK to mix.
     const okAllocation = byLabel(after, "OK to mix").allocations.find(
       (a) => a.piLineItemId === "li-N",
     )!;
     await expect(
-      h.service.remove({ allocationId: okAllocation.id, qty: 10 }, clientActor),
+      h.service.remove(
+        { allocationId: okAllocation.id, qty: 10 },
+        opsActor,
+        "cust-1",
+      ),
     ).resolves.toBeDefined();
   });
 
@@ -163,7 +167,9 @@ describe("ReadyToShipService.unlockAll", () => {
   it("journals one rts.unlocked_all, in the transaction, with the right counts and labels", async () => {
     await h.service.unlockAll(opsActor, "cust-1");
 
-    expect(h.audit.entries).toEqual([
+    expect(
+      h.audit.entries.filter((e) => e.action !== "rts.load_list_reopened"),
+    ).toEqual([
       expect.objectContaining({
         action: "rts.unlocked_all",
         entityType: "customer",
@@ -179,19 +185,11 @@ describe("ReadyToShipService.unlockAll", () => {
     ]);
   });
 
-  it("sends the same 'reopened for the client' notice unlock() does, once per reopened container", async () => {
+  it("Phase 25: no email to the client — unlocking is CEAT reworking the load list, which goes back to draft_ceat", async () => {
     await h.service.unlockAll(opsActor, "cust-1");
 
-    const reopened = h.eventEmitter.emit.mock.calls
-      .filter(
-        ([event]) => event === NotificationEvent.CONTAINER_REOPENED_FOR_CLIENT,
-      )
-      .map(([, payload]) => payload);
-    expect(reopened).toEqual([
-      { label: "Контейнер 1", customerId: "cust-1" },
-      { label: "Контейнер 2", customerId: "cust-1" },
-      { label: "OK to mix", customerId: "cust-1" },
-    ]);
+    expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+    expect(h.loadListStatus()).toBe(LoadListStatus.DRAFT_CEAT);
   });
 
   it("nothing locked is not an error: zeros, an empty list, no journal entry, no notice", async () => {
@@ -239,14 +237,24 @@ describe("ReadyToShipService.unlockAll", () => {
     await h.markingService.upload(changed.id, pdf(), clientActor);
 
     await h.service.unlockAll(opsActor, "cust-1");
-    const unlocked = byLabel(await h.service.getView(clientActor), "OK to mix");
+    const unlocked = byLabel(
+      await h.service.getView(opsActor, "cust-1"),
+      "OK to mix",
+    );
     expect(unlocked.allocations.every((a) => a.markingFile !== null)).toBe(
       true,
     );
 
     clock.tick();
-    await h.service.remove({ allocationId: changed.id, qty: 1 }, clientActor);
-    const edited = byLabel(await h.service.getView(clientActor), "OK to mix");
+    await h.service.remove(
+      { allocationId: changed.id, qty: 1 },
+      opsActor,
+      "cust-1",
+    );
+    const edited = byLabel(
+      await h.service.getView(opsActor, "cust-1"),
+      "OK to mix",
+    );
     expect(
       edited.allocations.find((a) => a.id === kept.id)!.markingFile,
     ).not.toBeNull();

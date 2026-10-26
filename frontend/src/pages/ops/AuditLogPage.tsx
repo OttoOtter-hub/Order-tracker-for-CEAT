@@ -63,6 +63,8 @@ const FIELD_ORDER = [
   "undoneDelta",
   "from",
   "to",
+  "comment",
+  "adjustments",
   "overrideEtd",
   "overrideEta",
   "fileName",
@@ -76,6 +78,7 @@ const FIELD_ORDER = [
   "confirmedAt",
   "confirmedBy",
   "positionsLocked",
+  "positions",
   "containersUnlocked",
   "positionsUnlocked",
   "positionsRolledBack",
@@ -464,6 +467,24 @@ function FieldValue({ name, value }: { name: string; value: unknown }): ReactNod
   }
   if (name === "containerLabels" && Array.isArray(value)) {
     return value.map((label) => containerName(String(label))).join(", ")
+  }
+  // Phase 25: a load list moving from one status to another.
+  if ((name === "from" || name === "to") && typeof value === "string") {
+    const key = `readyToShip.loadList.status.${value}`
+    if (i18n.exists(key)) return t(key)
+  }
+  // A rejection's cuts: one per line, as the client was shown them.
+  if (name === "adjustments" && Array.isArray(value)) {
+    return (
+      <ul className="grid">
+        {value.map((item, index) => (
+          <li key={index}>{String(item)}</li>
+        ))}
+      </ul>
+    )
+  }
+  if (name === "comment" && typeof value === "string") {
+    return <span className="whitespace-pre-wrap break-words">{value}</span>
   }
   if (name === "role" && typeof value === "string") {
     const key = `users.roles.${value}`

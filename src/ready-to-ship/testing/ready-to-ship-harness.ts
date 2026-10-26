@@ -11,6 +11,9 @@ import { MarkingFile } from "../marking-file.entity";
 import { MarkingFilesService } from "../marking-files.service";
 import { ReadyToShipService } from "../ready-to-ship.service";
 import { ShippingContainer } from "../shipping-container.entity";
+import { LoadList, LoadListStatus } from "../load-list.entity";
+import { Customer } from "../../customers/customer.entity";
+import { LoadListService } from "../load-list.service";
 
 export const opsActor: RequestUser = {
   id: "ops-1",
@@ -61,7 +64,12 @@ export function useControlledClock(): {
   };
 }
 
-export function makeHarness() {
+/**
+ * Phase 25: the customers' load lists start in client_editing by default —
+ * the client edits, as the specs written before the load-list flow expect.
+ * Pass another status to start elsewhere.
+ */
+export function makeHarness(options: { loadListStatus?: LoadListStatus } = {}) {
   const containers = makeFakeRepo();
   const lines = makeFakeRepo();
   const allocations = makeFakeRepo({
@@ -73,6 +81,19 @@ export function makeHarness() {
     piLineItem: () => lines,
   });
   const markings = makeFakeRepo({ allocation: () => allocations });
+  const loadLists = makeFakeRepo();
+  const customers = makeFakeRepo();
+  customers.seed({ id: "cust-1", name: "MTK ROSBERG" } as any);
+  customers.seed({ id: "cust-2", name: "Other customer" } as any);
+  for (const customerId of ["cust-1", "cust-2"]) {
+    loadLists.seed({
+      id: `ll-${customerId}`,
+      customerId,
+      status: options.loadListStatus ?? LoadListStatus.CLIENT_EDITING,
+      ceatSnapshot: null,
+      clientSnapshot: null,
+    } as any);
+  }
   const dataSource = makeFakeDataSource(
     new Map<unknown, unknown>([
       [ShippingContainer, containers],
@@ -80,6 +101,8 @@ export function makeHarness() {
       [AllocationAction, actions],
       [MarkingFile, markings],
       [PiLineItem, lines],
+      [LoadList, loadLists],
+      [Customer, customers],
     ]),
   );
 
@@ -115,6 +138,7 @@ export function makeHarness() {
   };
   const eventEmitter = { emit: jest.fn() };
   const audit = makeFakeAudit();
+  const service = new ReadyToShipService(dataSource as any, audit as any);
 
   return {
     containers,
@@ -127,11 +151,41 @@ export function makeHarness() {
     storedFiles,
     eventEmitter,
     audit,
-    service: new ReadyToShipService(
+    service,
+    loadListService: new LoadListService(
       dataSource as any,
+      service,
       eventEmitter as any,
       audit as any,
     ),
+    loadLists,
+    /** The customer's load list status, as stored. */
+    loadListStatus: (customerId = "cust-1") =>
+      loadLists.rows.find((r) => r.customerId === customerId)!
+        .status as LoadListStatus,
+    /** A next round in which the client edits (after an earlier confirmation). */
+    clientEditing: (customerId = "cust-1") => {
+      loadLists.rows.find((r) => r.customerId === customerId)!.status =
+        LoadListStatus.CLIENT_EDITING;
+    },
+    setLoadListStatus: (status: LoadListStatus, customerId = "cust-1") => {
+      loadLists.rows.find((r) => r.customerId === customerId)!.status = status;
+    },
+    /**
+     * What the old client "Confirm" did, now the core of accept/approve:
+     * every editable position locked — and the load list confirmed.
+     */
+    confirm: async (
+      actor: RequestUser,
+      customerId = actor.customerId ?? "cust-1",
+    ) => {
+      await dataSource.transaction((em) =>
+        service.lockPositions(em as any, customerId, actor),
+      );
+      loadLists.rows.find((r) => r.customerId === customerId)!.status =
+        LoadListStatus.CONFIRMED;
+      return service.loadView(customerId, actor.role);
+    },
     markingService: new MarkingFilesService(
       dataSource as any,
       filesService as any,

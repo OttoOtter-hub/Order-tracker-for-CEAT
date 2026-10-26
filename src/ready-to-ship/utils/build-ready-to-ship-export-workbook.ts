@@ -15,6 +15,9 @@ export const READY_TO_SHIP_EXPORT_HEADERS = [
   "Proforma (PI)",
   "Name",
   "SO",
+  // Phase 25: "Yes" for a confirmed position — an uploaded file must show it
+  // unchanged; empty for the unallocated remainder.
+  "Confirmed",
 ] as const;
 
 export interface ReadyToShipExportRow {
@@ -35,6 +38,8 @@ export interface ReadyToShipExportRow {
   /** The card's name, null (an empty cell) when it has none. */
   piLabel: string | null;
   soNumber: string | null;
+  /** The position is confirmed (locked); null for the unallocated remainder. */
+  confirmed: boolean | null;
 }
 
 const CONTAINER_LABEL = /^\s*Контейнер\s+(\d+)\s*$/i;
@@ -108,6 +113,7 @@ export function buildReadyToShipExportRows(
         piNumber: allocation.piNumber,
         piLabel: allocation.piLabel ?? null,
         soNumber: allocation.soNumber,
+        confirmed: allocation.isLocked ?? false,
       });
     }
   }
@@ -126,6 +132,7 @@ export function buildReadyToShipExportRows(
       piNumber: line.piNumber,
       piLabel: line.piLabel ?? null,
       soNumber: line.soNumber,
+      confirmed: null,
     });
   }
 
@@ -153,11 +160,12 @@ export function buildReadyToShipExportWorkbook(
       row.piNumber,
       row.piLabel,
       row.soNumber,
+      row.confirmed === null ? null : row.confirmed ? "Yes" : "No",
     ]);
   }
 
   sheet.getColumn(6).numFmt = "0.0000";
-  const widths = [12, 22, 14, 44, 12, 12, 16, 22, 14];
+  const widths = [12, 22, 14, 44, 12, 12, 16, 22, 14, 11];
   widths.forEach((width, index) => {
     sheet.getColumn(index + 1).width = width;
   });

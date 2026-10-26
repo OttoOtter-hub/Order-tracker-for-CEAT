@@ -72,8 +72,9 @@ describe("ReadyToShipService.exportXlsx", () => {
         "Proforma (PI)",
         "Name",
         "SO",
+        "Confirmed",
       ],
-      [1, "Ростов", "M1", "desc l1", 30, 0.6, "100037320", "Орел", "S1"],
+      [1, "Ростов", "M1", "desc l1", 30, 0.6, "100037320", "Орел", "S1", "No"],
       // really in the OK to mix container -> its label, no name
       [
         "OK to mix",
@@ -85,6 +86,7 @@ describe("ReadyToShipService.exportXlsx", () => {
         "100037321",
         undefined,
         "S2",
+        "No",
       ],
       // placed nowhere -> empty Container (not "OK to mix")
       [

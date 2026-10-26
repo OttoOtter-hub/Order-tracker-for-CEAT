@@ -35,6 +35,7 @@ import { formatNumber, formatPiTitle } from "@/lib/format"
 import { useContainerTitle } from "@/lib/readyToShip"
 import { getErrorMessage } from "@/lib/errors"
 import { cn } from "@/lib/utils"
+import { useReadyToShipCustomer } from "@/pages/shared/ready-to-ship/customerContext"
 
 export type ReadyToShipMode = "client" | "ops"
 
@@ -50,8 +51,9 @@ interface MarkingCellProps {
 }
 
 // One marking file per allocation row. The client uploads/replaces (only once
-// the container is confirmed — a draft's quantity can still change, and a
-// change deletes the file) and deletes; both roles can download.
+// the position is confirmed — a draft's quantity can still change, and a
+// change deletes the file) and deletes, whatever the load list's status;
+// both roles can download.
 function MarkingCell({ allocation, container, mode }: MarkingCellProps) {
   const { t } = useTranslation()
   const containerTitle = useContainerTitle()
@@ -199,6 +201,10 @@ export interface UnlockAllocationTarget {
 interface ContainerCardProps {
   container: ShippingContainer
   mode: ReadyToShipMode
+  // Phase 25: the viewer edits the load list now (its status says who).
+  canEdit: boolean
+  // ops, while the load list is confirmed or CEAT's draft.
+  canUnlock: boolean
   onRemove: (target: RemoveTarget) => void
   onUnlock: (container: ShippingContainer) => void
   onUnlockAllocation: (target: UnlockAllocationTarget) => void
@@ -207,6 +213,8 @@ interface ContainerCardProps {
 export function ContainerCard({
   container,
   mode,
+  canEdit,
+  canUnlock,
   onRemove,
   onUnlock,
   onUnlockAllocation,
@@ -214,8 +222,6 @@ export function ContainerCard({
   const { t } = useTranslation()
   const containerTitle = useContainerTitle()
   const level = fillLevel(container.fillPercent)
-  const isClient = mode === "client"
-  const isOps = mode === "ops"
   // "OK to mix" has no capacity: no meter, no fill colour, no percentages —
   // just how much it holds.
   const isOkToMix = container.isOkToMix
@@ -256,11 +262,11 @@ export function ContainerCard({
     </Button>
   )
 
-  // Phase 23: only the client, and only while none of the positions is
-  // locked (a draft, or a container ops has unlocked as a whole). With
-  // nothing in it the button is there but off.
+  // Phase 23: only the one editing now, and only while none of the
+  // positions is locked (a draft, or a container ops has unlocked as a
+  // whole). With nothing in it the button is there but off.
   const canClear =
-    isClient && !container.isConfirmed && !container.isPartiallyUnlocked
+    canEdit && !container.isConfirmed && !container.isPartiallyUnlocked
 
   const cardProps = {
     "data-container-id": container.id,
@@ -308,7 +314,7 @@ export function ContainerCard({
                 {containerTitle(container)}
               </CardTitle>
             </div>
-            {isClient && !isOkToMix && (
+            {canEdit && !isOkToMix && (
               <ContainerNameEditor
                 // A name changed elsewhere (another tab) resets the field.
                 key={container.name ?? ""}
@@ -356,7 +362,7 @@ export function ContainerCard({
         </div>
 
         {(showCounter ||
-          (isOps && hasAnyLockedPosition) ||
+          (canUnlock && hasAnyLockedPosition) ||
           container.allocations.length > 0) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             {showCounter ? (
@@ -376,7 +382,7 @@ export function ContainerCard({
               {container.allocations.length > 0 && (
                 <MarkingZipButton container={container} />
               )}
-              {isOps && hasAnyLockedPosition && (
+              {canUnlock && hasAnyLockedPosition && (
                 <Button
                   type="button"
                   size="sm"
@@ -456,7 +462,7 @@ export function ContainerCard({
                         {formatPercent(allocation.fillContribution * 100)}
                       </div>
                     )}
-                    {isClient && !allocation.isLocked && (
+                    {canEdit && !allocation.isLocked && (
                       <Button
                         type="button"
                         size="xs"
@@ -468,7 +474,7 @@ export function ContainerCard({
                         {t("readyToShip.card.remove")}
                       </Button>
                     )}
-                    {isOps && allocation.isLocked && (
+                    {canUnlock && allocation.isLocked && (
                       <Button
                         type="button"
                         size="xs"
@@ -503,11 +509,10 @@ export function ContainerCard({
 
 // Phase 23: "Clear container" — every position back to the list, after a
 // confirmation; one "undo last" brings them back.
-// Client-only, so the view to refresh is the client's own (no customerId).
 function ClearContainerButton({ container }: { container: ShippingContainer }) {
   const { t } = useTranslation()
   const containerTitle = useContainerTitle()
-  const clear = useClearContainerMutation()
+  const clear = useClearContainerMutation(useReadyToShipCustomer())
   const [open, setOpen] = useState(false)
   const isEmpty = container.allocations.length === 0
 
