@@ -33,3 +33,4 @@ uploads/
 # local tool state (per-machine permissions and locks may hold credentials)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/launch.json
